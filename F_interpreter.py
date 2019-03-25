@@ -1,63 +1,145 @@
 import operator  # used for the aggregator ops
 import inspect   # used for assert statements only
 from pprint import pprint, pformat  # for demo in main
+
 from collections import defaultdict
+from textwrap import dedent
 import itertools
 from functools import reduce
 
+from typing import *
+
+import cython
+
 slower_checks = False
-try:
-    # wall clock: (best) cpython (without slower checks) < pypy < cython < cpython (with slow checks)  ...anyways, it is not that /fast/ even on small problems regardless
 
-    import platform
-    slower_checks &= platform.python_implementation() != 'PyPy'  # these checks prevent pypy's jit
 
-    # to make cython work well, would probably require cclass annotations etc on everything
-    import cython
-    slower_checks &= not cython.compiled
+########################################
+# Frame
 
-except ImportError:
+@cython.final
+@cython.cclass
+class ConstantVariable:
+    value : object
+    def __init__(self, var, value):
+        self.value = value
+    # I suppose that if we have two variables that take on the same value, even if they weren't unified together
+    # we /could/ consider them the same variable?  There isn't that much of a difference in this case
+    def __str__(self):
+        return f'={self.value}'
+    def __repr__(self):
+        return str(self)
+    def __eq__(self, other):
+        return (self is other) or (type(self) is type(other) and self.value == other.value)
+    def __hash__(self):
+        return hash(type(self)) ^ hash(self.value)
+
+@cython.cclass
+class Frame(dict):
+    def setVariable(self, variable, value):
+        assert not isinstance(value, Iterator)
+        if isinstance(variable, ConstantVariable):
+            if variable.value == value:
+                return self
+            else:
+                return failedFrame
+        elif variable in self:
+            if self[variable] == value:
+                return self
+            else:
+                return failedFrame
+        else:
+            f = Frame(self)
+            f[variable] = value
+            return f
+
+    def getVariable(self, variable):
+        if isinstance(variable, ConstantVariable):
+            return variable.value
+        return self.get(variable, None)
+
+    # short cut for this particular operation
+    def isBound(self, variable):
+        return isinstance(variable, ConstantVariable) or variable in self
+
+    # need to clear the slot, or maybe we are just trying to be tidy in this implementation
+    def remove(self, variable):
+        self.pop(variable, None)
+
+    def isFailed(self):
+        return False
+
+    def __repr__(self):
+        nice = {str(k).split('\n')[0]: v for k,v in self.items()}
+        return pformat(nice, indent=1)
+
+    def merge(self, other):
+        if not other:
+            return self
+        if not self:
+            return other
+        r = Frame(self)
+        r.update(other)
+        return r
+
+@cython.cclass
+class _EmptyFrame(Frame):
+    def __setitem__(self, var, val):
+        assert False  # don't set on this frame directly, can return a new instance that will
+    # this is an empty dict, so bool(self) == False
+    def update(self, *args, **kwargs):
+        assert False
+
+emptyFrame = _EmptyFrame()
+
+@cython.cclass
+class _FailedFrame(Frame):
+    def setVariable(self, variable, value):
+        return self
+    def isFailed(self):
+        return True
+    def remove(self, variable):
+        pass
+    def __setitem__(self, var, val):
+        assert False  # don't set values on the failed frame
+    def __repr__(self):
+        return '{FailedFrame, ...=...}'
+
+failedFrame = _FailedFrame()
+
+##################################################
+
+class InterpreterContext:
+    # Track which operations are performed when evaluating F so that we can
+    # generate a trace and use that to compile the F structure into something
+    # that can run /efficiently/.  Going to want to track which operation is
+    # /called/ next so that those can be transformed into some form of a jump
+    # operation?
+    #
+    # if we are generating cython, then building the jump table would probably
+    # be somewhat difficult, so need to think a bit more about what the
+    # interpreter expression is going to look like.
+    #
+    # during tracing this should generate some code which is able to handle the
+    # moded case that we have encountered.  But this is going to potentially
+    # have some complications with ending up in new states?
     pass
 
 
-use_trace = False  # set to true to get printout of all of the operations
+##################################################
 
-trace_indent = 0
-def trace(method, name=''):
-    if not use_trace:
-        return method
-    def wrapped(*args, **kwargs):
-        global trace_indent
-        print('\t' * trace_indent + f'Calling {name} {method} with {args}')
-        trace_indent += 1
-        res = method(*args, **kwargs)
-        trace_indent -= 1
-        print('\t'*trace_indent + f'Returning {name} {method} with {res}')
-        if res is method:
-            return wrapped
-        if callable(res) and res is not done and res is not failure:
-            res = trace(res, method.__name__)
-        return res
-    wrapped.vars = getattr(method, 'vars', None)
-    wrapped.children = getattr(method, 'children', None)
-    return wrapped
 
-########################################################################################################################
-# Base classes and objects used by the interpreter
-#
-# this includes the frame object which is the current binding of any variables
-# and the `done` and `failed` functions which indicate if some operation has failed
-#
-# Iterators are placed in the frame to indicate that they /would/ bind that variable to one or more ground values if
-# they were run
-
+@cython.cclass
 class FBaseType:
-    def __call__(self):
+    _hashcache : int
+    def __init__(self):
+        self._hashcache = 0
+    def __call__(self, frame:Frame=emptyFrame) -> Tuple[Frame,'FBaseType']:
         # note that always calling with an empty frame, this is going to have to do rewrites
         # going to have to do rewrites to store values long term
 
-        return self.run(emptyFrame)
-    def run(self, frame):
+        return self.run(frame)
+    def run(self, frame:Frame) -> Tuple[Frame,'FBaseType']:
         raise NotImplementedError()
     @property
     def vars(self):
@@ -75,8 +157,8 @@ class FBaseType:
                                    self.children == other.children and
                                    self.vars == other.vars)
     def __hash__(self):
-        hv = getattr(self, '_hashcache', None)
-        if hv is not None:
+        hv = self._hashcache
+        if hv != 0:  # this would just keep getting recomputed...
             return hv
         hv = (hash(self.__class__) ^
               hash(self.children) ^
@@ -121,10 +203,10 @@ class FBaseType:
         return frame, r
 
 class Ffunction(FBaseType):
-    def __init__(self, func):
+    def __init__(self, func:Callable[[Frame],Tuple[Frame,FBaseType]]):
         super().__init__()
         self.func = func
-    def run(self, frame):
+    def run(self, frame:Frame):
         return self.func(frame)
     def __eq__(self, other):
         return type(self) is type(other) and self.func is other.func
@@ -160,8 +242,8 @@ def error(frame):
     # the aggregator will have to deal with this eventually
     return frame, error
 
-########################################
-# Iterators
+
+
 
 def my_hash(obj):
     # make set, dict, list and general iterables hashable
@@ -172,9 +254,10 @@ def my_hash(obj):
             obj = obj.items()
         r = hash(type(obj))
         for v in obj:
-            r ^= my_hash(v)
+            r ^= my_hash(v)  # order is not going to matter as this is just xor
         return r
 
+@cython.cclass
 class Iterator:
     def add_alternate(self, alternate):
         # if there are more than one way to iterate a variable, then we want to track that
@@ -203,6 +286,8 @@ class Iterator:
     def __hash__(self):
         return object.__hash__(self)
 
+@cython.final
+@cython.cclass
 class UnionIterator(Iterator):
     def __init__(self, switching_variable, variable, a, b):
         assert isinstance(a, Iterator) and isinstance(b, Iterator)
@@ -265,6 +350,8 @@ class UnionIterator(Iterator):
         return hash(type(self)) ^ hash(self.switching_variable) ^ hash(self.a) ^ hash(self.b)
 
 # for wrapping python iterators into our frame aware iterator
+@cython.final
+@cython.cclass
 class IteratorFromIterable(Iterator):
     def __init__(self, variable, iterable):
         self.iterable = iterable
@@ -287,6 +374,8 @@ class IteratorFromIterable(Iterator):
     def __hash__(self):
         return hash(type(self)) ^ hash(self.variable) ^ my_hash(self.iterable)
 
+@cython.final
+@cython.cclass
 class SingleIterator(Iterator):
     def __init__(self, variable, value):
         self.variable = variable
@@ -308,6 +397,8 @@ class SingleIterator(Iterator):
     def __hash__(self):
         return hash(type(self)) ^ hash(self.variable) ^ hash(self.value)
 
+@cython.final
+@cython.cclass
 class RemapVarIterator(Iterator):
     def __init__(self, remap, wrapped):
         self.remap = remap
@@ -329,93 +420,6 @@ class RemapVarIterator(Iterator):
         return hash(type(self)) ^ my_hash(self.remap) ^ hash(self.wrapped)
 
 
-########################################
-# Frame
-
-class ConstantVariable:
-    def __init__(self, var, value):
-        self.value = value
-    # I suppose that if we have two variables that take on the same value, even if they weren't unified together
-    # we /could/ consider them the same variable?  There isn't that much of a difference in this case
-    def __str__(self):
-        return f'={self.value}'
-    def __repr__(self):
-        return str(self)
-    def __eq__(self, other):
-        return (self is other) or (type(self) is type(other) and self.value == other.value)
-    def __hash__(self):
-        return hash(type(self)) ^ hash(self.value)
-
-class Frame(dict):
-    def setVariable(self, variable, value):
-        assert not isinstance(value, Iterator)
-        if isinstance(variable, ConstantVariable):
-            if variable.value == value:
-                return self
-            else:
-                return failedFrame
-        elif variable in self:
-            if self[variable] == value:
-                return self
-            else:
-                return failedFrame
-        else:
-            f = Frame(self)
-            f[variable] = value
-            return f
-
-    def getVariable(self, variable):
-        if isinstance(variable, ConstantVariable):
-            return variable.value
-        return self.get(variable, None)
-
-    # short cut for this particular operation
-    def isBound(self, variable):
-        return isinstance(variable, ConstantVariable) or variable in self
-
-    # need to clear the slot, or maybe we are just trying to be tidy in this implementation
-    def remove(self, variable):
-        self.pop(variable, None)
-
-    def isFailed(self):
-        return False
-
-    def __repr__(self):
-        nice = {str(k).split('\n')[0]: v for k,v in self.items()}
-        return pformat(nice, indent=1)
-
-    def merge(self, other):
-        if not other:
-            return self
-        if not self:
-            return other
-        r = Frame(self)
-        r.update(other)
-        return r
-
-class _EmptyFrame(Frame):
-    def __setitem__(self, var, val):
-        assert False  # don't set on this frame directly, can return a new instance that will
-    # this is an empty dict, so bool(self) == False
-    def update(self, *args, **kwargs):
-        assert False
-
-emptyFrame = _EmptyFrame()
-
-class _FailedFrame(Frame):
-    def setVariable(self, variable, value):
-        return self
-    def isFailed(self):
-        return True
-    def remove(self, variable):
-        pass
-    def __setitem__(self, var, val):
-        assert False  # don't set values on the failed frame
-    def __repr__(self):
-        return '{FailedFrame, ...=...}'
-
-failedFrame = _FailedFrame()
-
 ########################################################################################################################
 # Main included operations
 #
@@ -425,8 +429,10 @@ failedFrame = _FailedFrame()
 # The aggregator is split into two parts which differentate between where we compute the final result and the computation
 # that takes place inside of the loop on each iteration that add the result to the aggregators internal state
 
+@cython.final
+@cython.cclass
 class Intersect(FBaseType):
-    def __init__(self, a,b):
+    def __init__(self, a :FBaseType, b :FBaseType):
         super().__init__()
         assert a and b
         self.a = a
@@ -472,9 +478,10 @@ def intersect(a,b,*other):
         return error
     return Intersect(a,b)
 
-
+@cython.final
+@cython.cclass
 class Union(FBaseType):
-    def __init__(self, unioned_vars :tuple, a,b, switching_var_name=None):
+    def __init__(self, unioned_vars :tuple, a :FBaseType, b :FBaseType, switching_var_name=None):
         super().__init__()
         assert isinstance(unioned_vars, tuple)
         self.unioned_vars = unioned_vars
@@ -586,6 +593,10 @@ def union(unioned_vars, a,b, *other):
     if b is failure:
         return a
 
+    assert False  # TODO: rewrite to handle renaming the variables in children.
+                  # This is going to make the above implementation simpler, and
+                  # a frame object easier to pass around hopefully
+
     return Union(unioned_vars, a, b)
 
 
@@ -594,7 +605,8 @@ class UnboundLoopedVariablesError(RuntimeError):
         super().__init__(*args)
         self.vars = vars
 
-def loop(loops, F, callback, *, bind_all=False):
+
+def loop(loops :Tuple, frame :Frame, F :FBaseType, callback :Callable[[Frame], Tuple[Frame, FBaseType]], *, bind_all: bool=False):
     # loop represents a strategy for binding variables that are defined in the F
     # we are going to collect iterables from the frame and use those to drive the loop, we are going to recurse
     # calling ourselves on nested versions
@@ -604,7 +616,7 @@ def loop(loops, F, callback, *, bind_all=False):
     #
     # callback(frame, F).  Returned value is ignored
 
-    frame, res = F()
+    frame, res = F(frame)
     if frame.isFailed():
         return failedFrame, failure
 
@@ -685,7 +697,7 @@ def loop(loops, F, callback, *, bind_all=False):
         else:
             return frame, res
 
-def build_index_over_variables(frame, F, vars):
+def build_index_over_variables(frame :Frame, F :FBaseType, vars :Tuple):
     # the idea here is that we need /some/ index over one of the variables in the head of the expression but it is still free
     # and so we are unable to drive the expression
     # we can switch to a /prolog mode/ where we are going to get unconsolidated streams of values
@@ -883,6 +895,7 @@ def saturate(frame, F):
     return r, F
 
 
+
 ########################################################################################################################
 # the above methods I would consider part of the core
 # the methods below are for writing simple wrappers
@@ -890,9 +903,10 @@ def saturate(frame, F):
 # also common operators like quote and runtime unify, and constraints for constants
 
 class ModedOp(FBaseType):
-    def __init__(self, name, ops, vars):
+    def __init__(self, name, ops, ops_strs, vars):
         self.vars_ = vars
         self.ops = ops
+        self.ops_strs = ops_strs  # for compiling, we are going to require the string representation of the python code
         self.name = name
     @property
     def vars(self):
@@ -928,28 +942,49 @@ class ModedOp(FBaseType):
                 frame = frame.setVariable(var, val)
         return frame, ((failure if frame.isFailed() else done) if done_c else self)
     def rename_vars(self, remap):
-        return ModedOp(self.name, self.ops, tuple(map(remap, self.vars)))
+        return ModedOp(self.name, self.ops, self.ops_strs, tuple(map(remap, self.vars)))
     def possibly_equal(self, other):
         return type(self) is type(other) and self.op is other.op
     def _get_iterators(self, ret):
         for var, val in zip(self.vars, self.execute(emptyFrame)):
             if hasattr(val, '__iter__'):
                 ret[var].add(IteratorFromIterable(var, val))
+    def cython_string(self):
+        ret = f"""
+        result = ({self.ops_strs[...]})({','.join(map(..., self.vars))})
+        if result == error:
+            goto error state
+        """
+        for v in self.vars:
+            if this is bound:
+                # check the equality between the expressions
+                pass
+            else:
+                # then we are going to assign a value to the variable
+                pass
+
+        ret += f"""
+        # need to check that the currently assigned variables are equal with the returned result
+        # then we need to assign the resulting variables
+        ({','.join(map(..., self.vars))} ,) = result
+        """
 
 def moded_op(name, op):
     arity = max(map(len, op.keys()))
     assert arity == min(map(len, op.keys()))
+    op_e = {k: eval(v, globals()) for k,v in op.items()}
     def method_locations(*locs):
         assert len(locs) == arity
-        return ModedOp(name, op, locs)
+        return ModedOp(name, op_e, op, locs)
     return method_locations
 
 
 class CheckOp(FBaseType):
-    def __init__(self, name, op, vars):
+    def __init__(self, name, op, op_str, vars):
         self.vars_ = vars
         self.name = name
         self.op = op
+        self.op_str = op_str
     @property
     def vars(self):
         return self.vars_
@@ -964,18 +999,28 @@ class CheckOp(FBaseType):
                 return failedFrame, failure
         return frame, self
     def rename_vars(self, remap):
-        return CheckOp(self.name, self.op, tuple(map(remap, self.vars)))
+        return CheckOp(self.name, self.op, self.op_str, tuple(map(remap, self.vars)))
     def possibly_equal(self, other):
         return type(self) is type(other) and self.op is other.op
+    def cython_string(self):
+        return f"""
+        result = ({self.op_str})({','.join(map(..., self.vars))})
+        if result == done:
+            goto done state
+        else:
+            goto failure state
+        """
+
 
 # check only works in the fully ground case, so we don't care about any other modes atm
 def check_op(name, op):
     if slower_checks:
         arity = len(inspect.getfullargspec(op).args)
+    op_e = eval(op, globals())
     def method_locations(*locs):
         if slower_checks:
             assert len(locs) == arity
-        return CheckOp(name, op, locs)
+        return CheckOp(name, op_e, op, locs)
     return method_locations
 
 class Constant(FBaseType):
@@ -1135,7 +1180,65 @@ not_equal = NotEqual
 
 
 ########################################################################################################################
-# everything above this line should deal with some internal representation about the interpreter
+# everything above this line should deal with some internal representation about the backchaining interpreter
+
+
+
+class OptionalFailFast(FBaseType):
+    # these are for infered constraints that we are allowed to not check, and for
+    def __init__(self, wrapped):
+        self.wrapped = wrapped
+    @property
+    def children(self):
+        return (self.wrapped,)
+    def run(self, frame):
+        # randomly choose if it wants to run it?
+        frame, res = self.wrapped(frame)
+        if res is self.wrapped:
+            return frame, self
+        if res is done or res is failure:
+            return frame, res
+        if res is error:
+            return frame, done
+        return frame, OptionalFailFast(res)
+    def disp(self, indent):
+        return f'opt({self.wrapped.disp(indent+"    ")})'
+    def _get_iterators(self, ret):
+        # in the case of getting iterators, we are already allowed to pick between these
+        # so we are just going to always include these objects
+        self.wrapped._get_iterators(ret)
+
+
+class Speculate(FBaseType):
+    def __init__(self, wrapped :FBaseType):
+        self.wrapped = wrapped
+    def children(self):
+        return (self.wrapped,)
+    def run(self, frame):
+        # we are not going to run this expression directly.  We are going to
+        # look for a memoized expression where we can lookup a given expression
+        return frame, self
+    def disp(self, indent):
+        return f'speculate({self.wrapped.disp(indent+" "*10)})'
+    def _get_iterators(self, ret):
+        # we do not get iterators unless
+        pass
+
+class SpeculateLookup(FBaseType):
+    def __init__(self, wrapped :FBaseType):
+        self.wrapped = wrapped
+    def children(self):
+        return (self.wrapped,)
+    def run(self, frame):
+        pass
+    def disp(self, indent):
+        return f'lookup(....)'
+    def _get_iterators(self, ret):
+        # this needs to return the iterators over the internal stored memoization table
+        pass
+
+
+########################################################################################################################
 
 
 
@@ -1144,37 +1247,37 @@ not_equal = NotEqual
 # because we are representing the expressions as being attached to variables, there is not "proper" return variable
 # instead I am just using this as a convention in this file
 add = moded_op('add', {
-    (True, True, True):  lambda a,b,c: (b+c, b, c) ,
-    (True, True, False): lambda a,b,c: (a, b, a-b) ,
-    (True, False, True): lambda a,b,c: (a, a-c, c) ,
-    (False, True, True): lambda a,b,c: (b+c, b, c) ,
+    (True, True, True):  'lambda a,b,c: (b+c, b, c)' ,
+    (True, True, False): 'lambda a,b,c: (a, b, a-b)' ,
+    (True, False, True): 'lambda a,b,c: (a, a-c, c)' ,
+    (False, True, True): 'lambda a,b,c: (b+c, b, c)' ,
 })
 
 sub = lambda a,b,c: add(b,a,c)
 
 mul = moded_op('mul', {
-    (True, True, True):  lambda a,b,c: (b*c, b, c) ,
-    (True, True, False): lambda a,b,c: (a, b, a/b) if b != 0 else error ,  # use the error state in div by 0
-    (True, False, True): lambda a,b,c: (a, a/c, c) if c != 0 else error ,
-    (False, True, True): lambda a,b,c: (b*c, b, c) ,
+    (True, True, True):  'lambda a,b,c: (b*c, b, c)' ,
+    (True, True, False): 'lambda a,b,c: (a, b, a/b) if b != 0 else error' ,  # use the error state in div by 0
+    (True, False, True): 'lambda a,b,c: (a, a/c, c) if c != 0 else error' ,
+    (False, True, True): 'lambda a,b,c: (b*c, b, c)' ,
 })
 
 div = lambda a,b,c: mul(b,a,c)
 
 range_v = moded_op('range', {
-    (False, True, True): lambda a,b,c: (range(b,c), b, c) ,
-    (True, True, True):  lambda a,b,c: (range(b,c), b, c) ,
+    (False, True, True): 'lambda a,b,c: (range(b,c), b, c)' ,
+    (True, True, True):  'lambda a,b,c: (range(b,c), b, c)' ,
 })
 
 abs_v = moded_op('abs', {
-    (True,True):  lambda a,b: (abs(b), b) ,
-    (False,True): lambda a,b: (abs(b), b) ,
-    (True,False): lambda a,b: (a, [a,-a]) if a > 0 else ((a, 0) if a == 0 else error) ,
+    (True,True):  'lambda a,b: (abs(b), b)' ,
+    (False,True): 'lambda a,b: (abs(b), b)' ,
+    (True,False): 'lambda a,b: (a, [a,-a]) if a > 0 else ((a, 0) if a == 0 else error)' ,
 })
 
-lt = check_op('lt', lambda a,b: a < b)
+lt = check_op('lt', 'lambda a,b: a < b')
 
-lteq = check_op('lteq', lambda a,b: a <= b)
+lteq = check_op('lteq', 'lambda a,b: a <= b')
 
 
 # just rewrite in terms of lt so that we can demo the
@@ -1182,184 +1285,10 @@ lteq = check_op('lteq', lambda a,b: a <= b)
 gt = lambda a,b: lt(b,a)
 gteq = lambda a,b: lteq(b,a)
 
-int_v = check_op('int', lambda x: isinstance(x, int))
-
+int_v = check_op('int', 'lambda x: isinstance(x, int)')
 
 
 ########################################################################################################################
-# this is for the interpreter to call the IR-Dyna (result of parsing the ASTs)
-# we have to first give all variables a unique name (as the frame itself is flag) via localVar
-# the recursive_callable can go on every method to just be safe, but it _must_ go on any method that is recursive
-# it makes it such that when evaluating a recursive method, that when we hit it a second time, we first check
-# the stack to ensure that it is doing something "unique" and just just running endlessly.
-# that will essentially prevent if from just inlining the all free case all the way down
-#  This doesn't prevent recursion that was actually intended to run forever, just things like `a(X) :- a(X).` or
-#  case where some other constraint is going to cut of the branch.
-
-
-
-def localVar(name='_'):
-    # just create unique names by constructing an object which hashes uniquly and is only equal to itself
-    if slower_checks:
-        # nicer for printing, but not required
-        return (inspect.getouterframes(inspect.currentframe())[1].function,
-                name, object())
-    else:
-        return (name, object())
-
-external_called_stack = []
-
-class ExternalCallWrapper(FBaseType):
-    # when using one of the optimizing saturate methods, this can run forever.
-    # I believe that by identifying aliased variables, it can cause the modes of expressions to apparently change,
-    # and thus this is willing to continue expanding an expression, assuming that it is in the wrong mode
-    def __init__(self, method, args, parent_args):
-        super().__init__()
-        self.method = method
-        self.args = args
-        self.parent_args = parent_args
-        self.cache = None
-        self.force_include = False
-    def can_run(self):
-        identical_calls_found = 0
-        # look through the frame and see if we can find anything that matches this method
-        for p in self.parent_args:
-            # then we have found a frame that has the same variable value pattern as us
-            # this means that it must be the case that it was the same variable (so the value was just getting passed down)
-            # or that both were unbound
-
-            # worked example of `a(X) :- a(X+1), X < 5.`  This will work and terminate
-            # in prolog that would just run forever due to not checking the second constraint.
-            # in this case, we are going to start with a(-X) being free, we can then make `Y=add(X,1), a(-Y)` because we can't evaluate
-            # the constraint, so it is also free (just like the parent) in which case it will just remain a delayed constraint
-            # that is not yet inlined or checked.
-            # for `X=0, a(+X)` case with a ground argument, we start with by making a call we then end up with `Y=add(X, 1), a(Y), X<5`
-            # at which point `a(-Y)` is being abstractly evaluated and it does not match its parent of `a(+0)` so it gets inlined
-            # however then we end up back in the above case of `a(-X)` which terminates.  So we end up with basically 1 extra level of
-            # `a` inlined.  At that point, there is just going to be a delayed constraint that calls out to `a(-Z)` and will need to be checked
-            # later but yields control flow to something else.  Eventually the `X<5` constraint will cut this off this branch
-            # and we will stop evaluating this chain / terminate.
-            #
-            # we can think of this as limiting the /depth/ that we search in a constraint proof before we start looking for other
-            # constraints to check.  The limiation being that if we can find something with the same free-value patern higher on the stack
-            # then we know for certain that including ourselves would just hit that same state again, so this limits unwanted recursion.
-            #
-            # the expression `a(X) :- a(X+1).` won't termiante, but will only expand its "inlining depth" by 1 during each application of `F(frame)`
-            # so other parts of the program might still be able to make progress...
-
-            if all(emptyFrame.getVariable(pv) == emptyFrame.getVariable(a) for pv, a in zip(p, self.args)):
-                if all(emptyFrame.isBound(pv) for pv in p):
-                    # in this case we could either return true or false depending on what semantics we want for the language
-                    # basically this is the case `a(X) :- a(X).`
-
-                    # in prolog, we can just return that this is failed, and then we can look for other branches for which this statement
-                    # is going to work.
-                    # in dyna, we would need to memoize that we have been in this state before (or mark it in a table)
-                    # that would be a bit like XSB which allows for the recursion to be delayed in trying to figure out what is valid
-                    #
-                    # this state should be easy to look up in a memoization table, as all of the arguments are ground at this point
-                    #
-                    # I suppose that we could also allow for non ground expressions to be looked up in the memoization table
-                    # but that would potentially require identifying which parts of the entire expression are relevant??? best not to do that
-                    return failedFrame, failure
-                identical_calls_found += 1
-        return identical_calls_found < 1 or self.force_include
-    def run(self, frame):
-        if self.cache:
-            return self.cache()
-
-        if self.can_run():
-            try:
-                external_called_stack.append(self)
-                self.cache = self.method(*self.args)
-            finally:
-                assert external_called_stack[-1] is self
-                del external_called_stack[-1]
-            return self.cache()
-        else:
-            # delay calling this method as the arguments match something that is already higher on the stack
-            # it must be the case that there would have been nothing better that we can do at this time
-            #
-            # by returning ourselves, we are letting the runtime try other constraints which might propagate further in the rule
-            # hopefully on the next time that we are called, the parent frame will have learned about the value of one of its arguments
-            # and thus maybe done something worthwhile
-            return frame, self
-    def _get_iterators(self, ret):
-        if self.cache:
-            self.cache._get_iterators(ret)
-        else:
-            self.run(emptyFrame)
-            if self.cache:
-                self.cache._get_iterators(ret)
-    @property
-    def vars(self):
-        return self.args
-    @property
-    def children(self):
-        return ()
-    def disp(self, indent):
-        return f'{self.method.__name__}(' + ', '.join(map(str, self.args)) + ')'
-    def __eq__(self, other):
-        return type(self) is type(other) and self.method is other.method and self.args == other.args and self.parent_args == other.parent_args
-    def __hash__(self):
-        return hash(self.method) ^ hash(self.args)
-    def rename_vars(self, remap):
-        return ExternalCallWrapper(
-            self.method,
-            tuple(map(remap, self.args)),
-            set(tuple(map(remap, s)) for s in self.parent_args)
-        )
-
-def recursive_callable(method):
-    # the goal of this method is to ensure that we do not recurse forever
-    # while still letting it do early inclusion.  The idea being that we check if the arguments are ground
-    # and not being passed around with the same values.
-    #
-    # Reason for writing this, I think that with it, we /might/ be able to claim to be a super set of prolog?
-    # as this basically prevents calling the method in the case where it seems that no more additional useful information would be caputred
-    # which if was to be run in a prolog system would proveable just run forever
-    # (as it would be hitting the _exact_ same state as something earlier on the stack)
-
-    arity = len(inspect.getfullargspec(method).args)
-    def func(*args):
-        assert len(args) == arity
-        parents = set()
-        # look for parent frames of this method and capture the variables
-
-        # for py_frames in inspect.getouterframes(inspect.currentframe()):
-        #     pself = inspect.getargvalues(py_frames.frame).locals.get('self', None)
-        for pself in reversed(external_called_stack):
-            assert isinstance(pself, ExternalCallWrapper)
-            if pself.method is method:
-                # then this is a parent frame that we are interested in
-                # get its parents arguments as well as its own (so if there is some alternating recursion)
-                parents |= pself.parent_args
-                parents.add(pself.args)
-        return ExternalCallWrapper(method, args, parents)
-    return func
-
-########################################################################################################################
-# optimization passes that we can perform on the program
-# and other examples of getting things like the <I, >J, int constraints together to add a range constraint
-#
-# ideally these would all be /stable/ so calling them again would not change the result,
-# but it seems that is not always the case.... so some saturate_slow_optimize seem to maybe not terminate????
-
-class OptionalFailFast(FBaseType):
-    def __init__(self, wrapped):
-        self.wrapped = wrapped
-    @property
-    def children(self):
-        return (self.wrapped,)
-    def run(self, frame):
-        # randomly choose if it wants to run it?
-        pass
-    def disp(self, indent):
-        return f'opt({self.wrapped.disp(indent+"    ")})'
-    def _get_iterators(self, ret):
-        # in the case of getting iterators, we are already allowed to pick between these
-        # so we are just going to always include these objects
-        self.wrapped._get_iterators(ret)
 
 
 def get_intersecting_constraints(F, ignore=Union):
@@ -1790,668 +1719,3 @@ def saturate_with_optimize(frame, F):
         F = optimize_full(F)
         if F == last_F: break
     return frame, F
-
-
-########################################
-# heuristics which would be things that aren't "stable" in that they return a different F every time
-# or the best F to return isn't clear (somewhere that learning could be applied)
-
-def heuristic_force_include_intersecting_calls(F):
-    # identify any external calls that are interesecting and mark them to be included on the next run
-    # heuristic with say less than 100 parents? (so that `a(X) :- a(X).` only includes 100 times???)
-    did_replace = False
-    def rewriter(f):
-        nonlocal did_replace
-        if isinstance(f, ExternalCallWrapper):
-            if len(f.parent_args) < 100:
-                n = ExternalCallWrapper(f.method, f.args, f.parent_args)
-                n.force_include = True
-                did_replace = True
-                return n
-        elif isinstance(f, Union):
-            return f  # do not rewrite inside of the union
-        return f.rewrite(rewriter)
-    F2 = rewriter(F)
-    if did_replace:
-        return F2
-    return F
-
-def heuristic_reorder_intersecting_constraints(F):
-    # we should be able to reshuffle interesting constraints in any order that we want, this can
-    # impact the solver's runtime performance as we basically run through the intersecting constraints in order
-    # until it converges.  So if we have `A=1, A=B, C=B, D=C.` it would be fast and get it on the first pass where as if we have
-    # `C=D, C=B, B=A, A=1` it would only push the value up one step each pass through the list and thus take 4 times longer
-
-    def get_intersect_children(f):
-        if isinstance(f, Intersect):
-            yield from get_intersect_children(f.a)
-            yield from get_intersect_children(f.b)
-        else:
-            yield f
-    intersecting = list(get_intersect_children(F))
-    return intersect(*free_reorder(intersecting))
-
-########################################################################################################################
-# for making this representation into a Prolog style interpreter we have to run with a different strategy
-# namely, that we are going to pick a branch and then try and see if it works.
-# additionally we need to
-
-def saturate_prolog(frame, F):
-    while True:
-        last_F = F
-        # for prolog base saturation, we require these extra /optimizations/ which look at the delayed
-        # constraint store and determine which variables are aliased together
-        F = F.refine(frame)
-        F = optimize_aliased_vars(F)
-        F = optimize_quote_equivalence(F)
-
-        frame, F = F()
-        if F == last_F: break
-    return frame, F
-
-def prolog_driver(F, callback, *, look_through_aggregators=False):
-    @Ffunction
-    def f(frame):
-        frame, fnew = saturate_prolog(frame, F)
-        if frame.isFailed():
-            return frame, failure
-
-        if look_through_aggregators:
-            unions = [f for f in get_intersecting_constraints(fnew) if isinstance(f, Union)]
-        else:
-            unions = [f for f in get_intersecting_constraints(fnew, (Union, AggregatorOuter)) if isinstance(f, Union)]
-        if unions:
-            sv = free_choice(unions).switching_var_name
-
-            nf = prolog_driver(fnew, callback)
-            frame1, r1 = nf(frame.setVariable(sv, 1))
-            frame2, r2 = nf(frame.setVariable(sv, 2))
-            # if either frame as failed, then we ca just leave the switching variable and have eleminated that branch
-            # from this result
-            if frame1.isFailed():
-                return frame2, r2
-            if frame2.isFailed():
-                return frame1, r1
-            return frame, nf
-        else:
-            # there are no unions for us to branch over in prolog, so just callback with whatever the frame / delayed remaining constraints are
-            return callback(frame, fnew)
-    return f
-
-
-########################################################################################################################
-# called where there is some choice
-
-def free_choice(options):
-    return options[0]  # prolog style in return the first item
-
-    # try this "dyna" style where we randomly choose one of the possible branches (similar to out of order subgoals)
-    # but we are using the constraints to propagate information about the failures
-    import random
-    return random.choice(options)
-
-
-def free_reorder(lst):
-    import random
-    lst = list(lst)
-    random.shuffle(lst)
-    return lst
-
-
-########################################################################################################################
-
-
-def callback_to_iterator(func):
-    # due to the technical differences between iterators and callbacks, we need this nasty method
-    # only one of these two threads is ever running at a time, so not a big issue...
-    import threading
-    send = threading.Semaphore(0)
-    recv = threading.Semaphore(0)
-    done = False
-    value = None
-    def callback(v):
-        nonlocal value, done, send, recv
-        value = v
-        recv.release()
-        send.acquire()
-        if done:
-            raise KeyboardInterrupt()
-        return value
-    def threadF():
-        nonlocal value, done, send, recv
-        send.acquire()
-        try:
-            if not done:
-                func(callback)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            done = True
-            recv.release()
-
-    def iterator():
-        nonlocal value, done, send, recv
-        try:
-            while True:
-                send.release()
-                recv.acquire()
-                if done: break
-                value = (yield value)
-        finally:
-            done = True
-            send.release()
-    thread = threading.Thread(target=threadF, daemon=True)
-    thread.start()
-
-    return iterator()
-
-
-def run_prolog(pvars, F, frame):
-    def gg(cb):
-        def pcb(frame, F):
-            Frw = F.rename_vars(lambda v: frame.get(v, v))
-            df = {k:frame.get(k, None) for k in pvars} if pvars else frame
-            cb((df, Frw))
-            return frame, F
-        prolog_driver(F, pcb).refine_and_execute(frame)
-    return callback_to_iterator(gg)
-
-
-########################################################################################################################
-# for debugging
-
-class TableBuilder(FBaseType):
-    def __init__(self, args, ret, retd, F):
-        self.args = args
-        self.ret = ret
-        self.retd = retd
-        self.F = F
-    @property
-    def children(self):
-        return (self.F,)
-    @property
-    def vars(self):
-        return (self.ret, *self.args)
-    def run(self, frame):
-        frame, res = saturate(frame, self.F)
-        if res is done:
-            key = tuple(frame.getVariable(v) for v in self.args)
-            v = frame.getVariable(self.ret)
-            if v is not None:
-                self.retd.setdefault(key, []).append(v)
-            return frame, done
-        return frame, (self if res is self.F else TableBuilder(self.args, self.ret, self.retd, res))
-    def rewrite(self, rewriter=lambda x:x):
-        return TableBuilder(self.args, self.ret, self.retd, rewriter(self.F))
-    def rename_vars(self, remap):
-        return TableBuilder(tuple(map(remap, self.args)), remap(self.ret), self.retd, self.F.rename_vars(remap))
-
-def make_table(args, ret, F, frame={}):
-    retd = {}
-    builder = TableBuilder(args, ret, retd, F)
-    builder = builder.refine(frame)
-    loop(args, builder, lambda a,b: None, bind_all=True)
-    return retd
-
-########################################################################################################################
-# sample methods
-
-@recursive_callable
-def fmth(ret, X, Y, Z):
-    # f(X, Y, Z) = X+Y.
-    #ret = localVar('ret')
-    K = localVar('K')
-    return add(ret, X, Y)
-
-
-
-@recursive_callable
-def lmth(ret, X, Y):
-    # l(X, Y) += I for I:X..Y.
-    I = localVar('I')
-    expr = range_v(I, X, Y)
-
-    return aggregator_outer(ret, loop((X, Y), (I,), aggregator_inner(I, operator.add, expr)))
-
-
-@recursive_callable
-def umethod(ret, X, Y):
-    # f(X, Y) += X*Z for Z in range(1,Y), Y > 5, Y in range(1,25).
-    # f(X, Y) += X*Z2 for Z2 in range(1,Y), Y in range(1,25).
-
-    Z = localVar('Z')
-    Z2 = localVar('Z2')
-
-    res1 = localVar('res1')
-    c1 = localVar('c1')
-    c5 = localVar('c5')
-    c25 = localVar('c25')
-    const = intersect(constant(c1, 1), constant(c5, 5), constant(c25, 25))
-
-    res2 = localVar('res2')
-
-    f1 = intersect(mul(res1, X, Z), range_v(Z, c1, Y), range_v(Y, c1, c25), gt(Y, c5))
-    f2 = intersect(mul(res2, X, Z2), range_v(Z2, c1, Y), range_v(Y, c1, c25))
-
-    return intersect(const,
-                     aggregator_outer(ret, (X, Y), operator.add,
-                                      union((X,Y),
-                                            aggregator_inner(res1, (Z,), f1),
-                                            aggregator_inner(res2, (Z2,), f2),
-                                      )))
-
-    # return intersect(const,  # we have to evaluate the consant constraints
-    #                  aggregator_outer(ret,
-    #                                   union((X, Y),
-    #                                         loop((X, Y), (res1, Z),  aggregator_inner(res1, operator.add, f1)),
-    #                                         loop((X, Y), (res2, Z2), aggregator_inner(res2, operator.add, f2))
-    #                                   )))
-
-
-
-@recursive_callable
-def defaultsEx(ret, X, Y):
-    # f(X,Y) += X.  % nothing for Y
-    # f(X,Y) += X*Y for Y in range(1,25).
-
-    res2 = localVar('res2')
-
-    c1 = localVar('c1')
-    c25 = localVar('c25')
-
-    const = intersect(constant(c1, 1), constant(c25, 25))
-
-    return intersect(const,
-                     aggregator_outer(ret,
-                                      union((X, Y),
-                                            aggregator_inner(X, operator.add, done),  # done indicates no constraints
-                                            aggregator_inner(res2, operator.add, mul(res2, X, Y))
-                                      )))
-
-
-@recursive_callable
-def depedTypes(ret, X, Y):
-    # depending on the value of Y, we might or might not have a strategy to loop over X
-    # which essentially gives us dependant types
-    # f(X, Y) += 1 for X in range(1,10).
-    # f(X, Y) += 2 for Y > 5.
-
-    c1 = localVar('c1')
-    c2 = localVar('c2')
-    c5 = localVar('c5')
-    c10 = localVar('c10')
-
-    const = intersect(constant(c1, 1), constant(c2, 2), constant(c5, 5), constant(c10, 10))
-
-    f1 = range_v(X, c1, c10)
-    f2 = gt(Y, c5)
-
-    return intersect(const,
-                     aggregator_outer(ret, (X, Y), operator.add,
-                                      union((X, Y),
-                                            aggregator_inner(c1, (), f1),
-                                            aggregator_inner(c2, (), f2)
-                                      )))
-
-    # return intersect(const,
-    #                  aggregator_outer(ret,
-    #                                   union((X, Y),
-    #                                         # no loop as we are not introducing new variables that we need to loop over
-    #                                         aggregator_inner(c1, operator.add, f1),
-    #                                         aggregator_inner(c2, operator.add, f2),
-    #                                   )))
-
-
-
-@recursive_callable
-def list_len(length, X):
-    # don't use an aggrgator, as we are trying to handle the :- case and be able to both
-    # generate a list of some length and compute what the length should be of a given list
-
-    c1 = localVar('c1')
-    const = constant(c1, 1)
-    len2 = localVar('tmp2')  # == length - 1
-    Xs = localVar('Xs')
-    Xhead = localVar('Xhead')
-
-    return intersect(const,
-                     union((length, X),
-                           intersect(constant(length, 0), quote('nil', X)),
-                           intersect(add(length, len2, c1), quote('.', X, Xhead, Xs), gteq(length, c1), list_len(len2, Xs))
-                     ))
-
-
-# doesn't work in backwards chaining mode, even with this thing..sigh, I suppose that is expected
-# @recursive_callable
-# def geo(ret):
-#     # a += 1.
-#     # a += a/2.
-
-#     c1 = localVar('c1')
-#     c2 = localVar('c2')
-#     const = intersect(constant(c1, 1), constant(c2, 2))
-
-#     res2 = localVar('res2')
-#     geo_res = localVar('aret')
-
-#     return intersect(const,
-#                      aggregator_outer(ret,
-#                                       union((),
-#                                             aggregator_inner(c1, operator.add, done),
-#                                             aggregator_inner(res2, operator.add, intersect(geo(geo_res), mul(geo_res, c2, res2)))
-#                                       )))
-
-
-
-########################################################################################################################
-
-
-@recursive_callable
-def deleteone(Z, lst, RR):
-    # the Z is returned with an approperate iterator over elements of this list
-    # basically as a linked list of union iterators....but should still be ok
-    X = localVar('X')
-    Xs = localVar('Xs')
-    Ys = localVar('Ys')
-    return union((Z, lst, RR),
-                 quote('.', lst, Z, RR),  # find the element to delete, no variables so no loop
-                 (#loop((Z, lst, RR), (X, Xs, Ys),
-                      intersect(quote('.', lst, X, Xs), quote('.', RR, X, Ys), deleteone(Z, Xs, Ys) ))
-    )
-
-@recursive_callable
-def permutation(A, B):
-    Y = localVar('Y')
-    Ys = localVar('Ys')
-    PYs = localVar('PYs')
-    return union((A, B),
-                 intersect(quote('nil', A), quote('nil', B)),  # empty list case
-                 (#loop((A, B), (Y, Ys, PYs),
-                      intersect(quote('.', B, Y, PYs), deleteone(Y, A, Ys), permutation(Ys, PYs),
-                      )),
-    )
-
-
-# this is what I would expect dyna ASTs to generate, as they would decorate things with aggregators
-# as they still require consolidation
-
-@recursive_callable
-def deleteone_withagg(trueRet, Z, lst, RR):
-    X = localVar('X')
-    Xs = localVar('Xs')
-    Ys = localVar('Ys')
-    deleteR = localVar('deteleRet')
-    ctrue = localVar('ctrue')
-    const = constant(ctrue, True)
-
-    return intersect(const,
-                     aggregator_outer(trueRet, (Z, lst, RR), operator.or_,
-                                      union((Z, lst, RR),
-                                            aggregator_inner(ctrue, (), quote('.', lst, Z, RR)),
-                                            aggregator_inner(ctrue, (X, Xs, Ys),
-                                                             intersect(quote('.', lst, X, Xs),
-                                                                       quote('.', RR, X, Ys),
-                                                                       deleteone_withagg(deleteR, Z, Xs, Ys)
-                                                                  )
-                                                             )))
-    )
-
-
-    # return intersect(const,
-    #                  aggregator_outer(trueRet,
-    #                                   union((Z, lst, RR),
-    #                                         aggregator_inner(ctrue, operator.or_, quote('.', lst, Z, RR)),  # find the element to delete, no variables so no loop
-
-    #                                         aggregator_inner(ctrue, operator.or_,
-    #                                                          loop((Z, lst, RR), (X, Xs, Ys),
-    #                                                               intersect(quote('.', lst, X, Xs),
-    #                                                                         quote('.', RR, X, Ys),
-    #                                                                         deleteone_withagg(deleteR, Z, Xs, Ys)
-    #                                                               )
-    #                                                          ))
-    #                                   )))
-
-@recursive_callable
-def permutation_withagg(trueRet, A, B):
-    Y = localVar('Y')
-    Ys = localVar('Ys')
-    PYs = localVar('PYs')
-    ctrue = localVar('ctrue')
-    const = constant(ctrue, True)
-
-    deleteR = localVar('deleteRet'),
-    recurseR = localVar('permutationRet')
-
-    return intersect(const,
-                     aggregator_outer(trueRet, (A, B), operator.or_,
-                                      union((A, B),
-                                            aggregator_inner(ctrue, (), intersect(quote('nil', A), quote('nil', B))),  # empty list case
-                                            aggregator_inner(ctrue, (Y, Ys, PYs),
-                                                             intersect(quote('.', B, Y, PYs),
-                                                                       deleteone_withagg(deleteR, Y, A, Ys),
-                                                                       permutation_withagg(recurseR, Ys, PYs),
-                                                                       constant(deleteR, True), constant(recurseR, True)  # check return true
-                                                             )))))
-
-    # return intersect(const,
-    #                  aggregator_outer(trueRet,
-    #                                   union((A, B),
-    #                                         aggregator_inner(ctrue, operator.or_, intersect(quote('nil', A), quote('nil', B))),  # empty list case
-    #                                         aggregator_inner(ctrue, operator.or_,
-    #                                                          loop((A, B), (Y, Ys, PYs),
-    #                                                                intersect(quote('.', B, Y, PYs),
-    #                                                                          deleteone_withagg(deleteR, Y, A, Ys),
-    #                                                                          permutation_withagg(recurseR, Ys, PYs),
-    #                                                                          constant(deleteR, True), constant(recurseR, True)  # check return true
-    #                                                                )))
-    #                                   )))
-
-
-def mklist(*a):
-    if not a:
-        return ('nil',)
-    h, *s = a
-    return ('.', h, mklist(*s))
-
-########################################
-# some constraint programming style expressions where a list contains all distinct elements
-# not in list will create a non equals constraint between all elements in the list
-
-# we /can/ check these, but they are not unrolled until at least they have one ground argument (for indientification of unique states)
-# so in the case of not_in_list, if we had the list [1,2,3,X,Y,Z,4,5,6], then the head of the list would still
-# be represented as a free variable where the tail of the list [4,5,6] has been constructed but due to the middle
-# there are delayed quote constraints for building the rest of the list.  We are then not going to have any more information
-# than the list is just a /free/ variable and so this just sticks around as a delayed constraint to check
-#
-# in the case of list length, having `list_length(5, -X)` the 5 is a ground value which is can perform induction on to see
-# that it is not hitting the same state as an earlier stage, so it would unroll it all of the way.
-#
-# something could /learn/ that it wants to unroll these methods a few number of (bounded) steps.  That could be performed
-# during an optional optimization pass.  At which point any constraints that are gathered from these expressions
-# would be things that we can combine and reuse elsewhere in the program.
-#
-# essentially this is evidence that the rule in recursive_callable is conservative.  Though we would also need to eleminate
-# the unions in these rules somehow? to actually be able to make use of these constraints otherwise the disjunction
-# prevents us from making use of anything
-#
-# note, this limitation would also prevent us from determining what the length of a list is that contains any non-ground elements
-
-@recursive_callable
-def not_in_list(X, lst):
-    # check that the element X is not in the lst
-    Y = localVar('Y')
-    Ys = localVar('Ys')
-    return union((X, lst),
-                 quote('nil', lst),  # then the list is empty
-                 intersect(quote('.', lst, Y, Ys), not_equal(Y, X), not_in_list(X, Ys))
-    )
-
-@recursive_callable
-def distinct(lst):
-    # all elements of the list are distinct
-    X = localVar('X')
-    Xs = localVar('Xs')
-
-    return union((lst),
-                 quote('nil', lst),  # list is empty
-                 intersect(quote('.', lst, X, Xs), not_in_list(X, Xs), distinct(Xs))
-    )
-
-@recursive_callable
-def sorted_list(lst):
-    A = localVar('A')
-    As = localVar('As')
-    X = localVar('X')
-    Xs = localVar('Xs')
-    Y = localVar('Y')
-    Ys = localVar('Ys')
-
-    return union((lst,),
-                 quote('nil', lst),  # empty list is sorted
-                 intersect(quote('.', lst, A, As), quote('nil', As)),  # single element in the list, so sorted
-                 intersect(quote('.', lst, X, Xs), quote('.', Xs, Y, Ys), lteq(X, Y), sorted_list(Xs))
-    )
-
-
-@recursive_callable
-def even_len_list(lst):
-    X = localVar('X')
-    Xs = localVar('Xs')
-    Y = localVar('Y')
-    Ys = localVar('Ys')
-
-    return union((lst),
-                 quote('nil', '.'),
-                 intersect(quote('.', lst, X, Xs), quote('.', Xs, Y, Ys), even_len_list(Ys))
-    )
-
-@recursive_callable
-def odd_len_list(lst):
-    X = localVar('X')
-    Xs = localVar('Xs')
-    return intersect(quote('.', lst, X, Xs), even_len_list(Xs))
-
-
-########################################################################################################################
-# mapl neural network example
-
-
-@recursive_callable
-def weight(ret, X):
-    # weight(0) = 0
-    # weight(1) = 1
-    # weight(-1) = -1
-
-
-    # cn1 = localVar('cn1')
-    # c0 = localVar('c0')
-    # c1 = localVar('c1')
-    # consts = intersect(constant(cn1, -1), constant(c0, 0), constant(c1, 1))
-
-    # return intersect(consts,
-    #                  aggregator_outer(ret,
-    #                                   union((X,),
-    #                                         aggregator_inner(c1, operator.add, constant(X, 1)),
-    #                                         aggregator_inner(c0, operator.add, constant(X, 0)),
-    #                                         aggregator_inner(cn1, operator.add, constant(X, -1)),
-    #                                   )))
-
-    val_map = {
-        0: 0,
-        1: 1,
-        -1: -1
-    }
-    lookup = moded_op('weight_memotable', {
-        (False, False): lambda a,b: (val_map.keys(), None),
-        (True, False): lambda a,b: (a, val_map[a]) if a in val_map else failure
-    })
-    return lookup(X, ret)
-
-
-
-@recursive_callable
-def edge(ret, inp, out):
-    cpy = lambda x:x  # just the = aggregator, need better definition mechnism for aggregators.....
-    X = localVar('X')
-    Dx = localVar('Dx')
-    sXDx = localVar('sum_x_dx')
-    weight_ret = localVar('weight_ret')
-    return aggregator_outer(ret, (inp, out), cpy,
-                            aggregator_inner(weight_ret, (X, Dx, sXDx, weight_ret), intersect(quote('inp', inp, X), quote('out', out, sXDx), add(sXDx, X, Dx),
-                                                                       weight(weight_ret, Dx))))
-
-@recursive_callable
-def neural_input(ret, X):
-    # have to make this formed like the input
-    w = localVar('w')
-    return intersect(weight(ret, w), quote('inp', X, w)) # reuse weight as I am lazy...
-
-@recursive_callable
-def neural_output(ret, X):
-    # out(X) += inp(Y) * edge(X, Y).
-    Y = localVar('Y')
-    inpR = localVar('input_ret')
-    edgeR = localVar('edge_ret')
-    mulR = localVar('mul_ret')
-
-    return aggregator_outer(ret, (X,), operator.add,
-                            aggregator_inner(mulR, (Y,),
-                                             intersect(neural_input(inpR, Y), edge(edgeR, Y, X), mul(mulR, inpR, edgeR))))
-
-
-
-
-########################################################################################################################
-
-
-
-def main():
-    prog1 = add('X', 'Y', 'Z')  # X+Y=Z
-
-    prog2 = intersect(add('X', 'Y', 'Z'), lt('X', '20const'), constant('20const', 20))  # X+Y=Z, X<20
-
-
-    # prog = union(
-    #     intersect(add('X', 'Y', 'Z1'), lt('X', '20const'), constant('20const', 20)),
-    #     intersect(add('X', 'YY', 'Z2'), mul('Y', '2const', 'YY'), constant('2const', 2), gt('X', '50const'), constant('50const', 50))
-    # )
-
-
-    prog3 = fmth('Y', 'X', 'X', 'Y')
-
-    #print(saturate(Frame({'X': 22, }), prog))
-
-    # query for umethod(4, X), return the results in a table
-    pprint(make_table((2,3), 1, umethod(1,2,3), Frame({2:4})))
-
-
-    # the X variable on umethod has no method to iterate, so we are going to provide one via intersection
-    # note the rules that are active change
-    # R=umethod(X, Y), X in range(2,7)
-    q2 = intersect(umethod('R','X','Y'), range_v('X', 'const2', 'const7'), constant('const2', 2), constant('const7', 7))
-
-    pprint(make_table(('X','Y'), 'R', q2, Frame()))
-
-
-    print('we are eleminating the branch that we can not loop over, so an iterator\n'
-          'is returned in the X space for values that can be iterated over')
-    pprint(saturate(Frame({'Y':2}), depedTypes('R','X','Y')))
-
-    print('in this case both branches are kept around, so no iterator is returned and we can not bring the\n'
-          'variable X to ground using this rule')
-    pprint(saturate(Frame({'Y':10}), depedTypes('R','X','Y')))
-
-    print('neural network example')
-    pprint(make_table(('b',), 'r', neural_output('r', 'b'), Frame() ) )
-
-
-    lst = mklist(1,2,3)
-    print('permutation(+,-)')
-    pprint(make_table(('A', 'B'), 'B', permutation('A', 'B'), Frame({'A': lst})))
-
-    print('permutation(-,+)')
-    pprint(make_table(('A', 'B'), 'A', permutation('A', 'B'), Frame({'B': lst})))
-
-
-if __name__ == '__main__':
-    main()
