@@ -1,0 +1,56 @@
+#+STARTUP: hidestars
+#+STARTUP: indent
+
+
+
+* representation
+** The F strucutre
+* tracing
+** the different F structures we might encounter
++ At different branches, we might find ourselves with different operations
+** what is the trace
++ There should be no record of union or intersect inside of the traced operation.
++ something like union would be represented, and there needs to bs something
+  which /combines/ the result between different variables.  If we are in the
+  same /state/ then we are going to reevaluate the different operations of
+  intersect and union.
+  - we are going to need to be able to resume the state at some point in the F
+    structure when we have begun to branch.
+  - if we only had that every object had a single parent, then we could just
+    resume those states without having to duplicate those objects.  The problem
+    is that we are making copies of outer operations, and we are not making a
+    copy of the entire structure.
+  - the thing is that we would like to avoid making duplicated copies of the
+    state, so we need some /compact/ representation of of teh resume points that
+    we will encoutner.  (Otherwise there would be a significant blow up in
+    memory for tracking all resume states).
+  -
+
++ any any point there is some /failure/ handler.  which would be the union that
+  is where it would resume the operation.  that should be some future point to jump to
+** information to recover from a failed trace
++ in the case that the trace failed, then we are looking for operations which
+  would be able to resume and continue to fill out the remaining operations.
+
++ which operations are still unchecked.  Which operations are /failed/.
+** what is gathered during a /trace/
++ we are tracking which operations are failed/non-failed or checked.  That means
+  that F structure becomes /static/, and we are not going to continue to perform
+  rewrites of the structure.
+** A structure which tracks /failed/ /done/ or unchecked for every operation
++ that structure can then be used to /rewrite/ the static ~F~ structure and
+  determine which unions are going to happen or are done.
++ the set of operations are now /fixed/ and we are not going to add any new
+  operations to the ~F~ structure.  This means that we can determine if all of
+  the expressions have /failed/ or succeeded.
+
+* values and their tagging
+** Tagging on a value
++ These could just be osme tag between a primitive value, and then a pointer to
+  more complicated objects.  This could do something /simple/ like reference
+  counting for the operations.
+** wrapped more complicated values
++ Would like to be able to wrap something like python objects, that would make
+  it easy to get things like tensors represented as a value in the system.
++ if this was in C++, then there would end up being some information about the
+  tagged information.
