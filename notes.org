@@ -44,6 +44,31 @@
   operations to the ~F~ structure.  This means that we can determine if all of
   the expressions have /failed/ or succeeded.
 
++ The program counter is enough to encode which expression have /failed/ and
+  which are still possibly going to succeed.  That information can be used to
+  rewrite an F structure into which operations are remaining.  In the case that
+
+** adding a /can run/ method
++ This just looks at the mode information, and determines if something can take
+  the current /modes/ and make progress.  The modes can be defined as anything
+  that we have specialized in the ~F~ structure or is being held in the frame.
+  - we can view this as abstract reasoning on the operations that are moded.
+  - we only have to look at the free vs bound case.  We do not require a more
+    complicated type analysis.
++ the run method is only allowed to succeed or fail (as the returned type) but
+  it can also bind any of the variables that are in the frame.
+  - the new F structure can be determined by running all of the constraints that
+    /can run/ one after another, and then rewriting the ~F~ structure such that
+    any relevant succeeds/fails have been included.  This will allow unions to
+    determine which branches are around or not.
+
++ the interpreter that we are going to instead build is something that does
+  getRunnable F -> set[F]  // these F should have no children, being either builtin expressions or ground
+  for r in Set[F]:
+      result_i = r(frame)  // where result_1 is either done or fail,  New values can be assigned in the frame
+
+
+
 * values and their tagging
 ** Tagging on a value
 + These could just be osme tag between a primitive value, and then a pointer to
@@ -54,3 +79,144 @@
   it easy to get things like tensors represented as a value in the system.
 + if this was in C++, then there would end up being some information about the
   tagged information.
++ there just needs to be some deconstructor, and something that is able to match
+  against different types that are exported.  If there is something like, and
+  operator expression for the first argument, then there could be a bit more
+  flexiabilty or something with dispatching against a builtin expression.
+** nested expressions
++ The idea of wanting a flattened object, meaning that we are /not/ going to
+  have to follow pointers around memory to find something.  We could just keep
+  tags on the nested objects, which would allow us to return a pointer to any of
+  the nested locations
++ for having nested expressions.  There should be some bank of reusable tags
+  that could be looked up for building the same object multiple times.  Like if
+  there was some reference where we were allowed to store information about a
+  type?
+  - I suppose that we could just take a pointer to a pointer and check if it is
+    reusable.  So if we are called with the same arguments in a location, then
+    we are fine, otherwise we are going to have GC the object itself?  If there
+    are too many different objects then it would just have a lot of different
+    tags that it would have to compare with different objects.  Assuming that
+    everything just starts as a pointer, then it wouldn't be that bad to get
+    something that runs reasonable well?
+
+* compiling returned F
++ depending on the mode, we can fully determine /what/ would get returned, as
+  the state would be encountered regardless
+
+* c++ template based specialization
+What if we make F structures based around C++ templates.  The reasoning about
+what state the system is in could be done /statically/ via the C++ type system.
+Libraries like [[https://www.boost.org/doc/libs/1_61_0/libs/hana/doc/html/index.html][boost::hana]] support meta programming via constexprs (computed at
+compile time).
+
+The Frame binding state could be represented via a set of which variables are
+bound.
+
+The entire deterministic operation would basically just become type system level
+reasoning
+
+
+#+BEGIN_SRC cpp
+class Frame {
+
+};
+
+template<typename _FrameState, typename F>
+struct FReturn {
+  typename _FrameState FrameState;
+  //Frame frame;  // the frame should just be modified in place.  We are only using these returned types to track the type information and values binding states.
+  F self;
+  FReturn(Frame &&frame, F &&f) : frame(frame), f(f) {}
+
+  constexpr bool isComplete() { return FrameState::isComplete(); } // we do not know at compile time if this is successful or failing, so we can just say it is complete / checked
+
+};
+
+
+class FBaseType {
+public:
+  //
+};
+
+// this should be a pointer to F
+class FPointer : FBaseType {
+private:
+  FVirtual *wrapped;
+public:
+  auto evaluate(Frame &frame) { FPointer(wrapped->evaluate_virt(frame)); }
+};
+
+class FVirtual : FBaseType {
+  virtual FVirtual* evaluate_virt(Frame &) { return this; }
+};
+
+
+template<typename F, typename FrameSignature> // FrameSignature being the incoming inst/mode
+class FVirtualWrap : FVirtual {
+private:
+  F wrapped;
+public:
+  override FVirtual * evaluate_virt(Frame &f) {
+    // this needs to run the type system on the evaluated expression.
+    // we need to be able to handle checking
+    // if /more/ variables are bound then we can handle, I suppose that this would need to throw some compile time error??
+    if(FrameSignature::matches(f)) {
+      return new FVirtualWrap(wrapped.evaluate(f));
+    }
+    return this;
+  }
+};
+
+// what is used in the interpreter
+class EmptyFrameSignature {};
+class DynamicRuntimeVariable {
+private:
+  int slot;
+public:
+  GenericContainer &operator()(Frame &f) {
+    return f.get(slot);
+  }
+};
+
+template<int slot, typename VarType=GenericContainer>
+class RuntimeVariable {
+public:
+  VarType &operator()(Frame &f) {
+    return f.get<VarType>(slot);  // this is all static, so could get resolved at compile time
+  }
+};
+
+// this builds a new class that contains the constant value that we are baking into the compiled code.
+#define ConstantVariable(val) \
+[](){ struct ConstVariable { const auto operator()(Frame &) { return val; } }; return ConstVariable(); }()
+
+
+template<typename Av, typename Bv>
+class Intersect : FBaseType {
+private:
+  Av a;
+  Bv b;
+public:
+  Intersect(Av &&a, Bv &&b) : a(a), b(b) {}
+
+  template<typename FrameState
+  auto && evaluate(Frame &f) {
+    auto ar = a.evaluate<FrameState>(f);
+    auto br = b.evaluate<typename ar::FrameState>(ar.frame);
+
+    if constexpr(ar.isComplete()) {
+      return br;
+    } else if constexpr(br.isComplete()) {
+      return ar;
+    } else {
+      return Intersect(ar.self, br.self);
+    }
+  }
+}
+
+// there needs to be some way to track that unificaiton failure happens.  There could be a boolean that is passed along with the frame
+// that intersect uses to stop running?  that would not be a constant expression though?  We are still going to be required to preform the same type based return operation.  we really want
+
+
+#+END_SRC
