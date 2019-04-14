@@ -1,1 +1,6 @@
-cython  # this is going to be used to compile the result of generating the traces
+lark
+git+https://github.com/timvieira/arsenal.git
+
+
+# matplotlib
+# pandas

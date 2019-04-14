@@ -220,3 +220,16 @@ public:
 
 
 #+END_SRC
+
+
+* optimizations
+** occurs check should be added
++ this is checking if there is an expression like ~X=s(X)~, which would create a
+  cycle.  In that case, we can just say that for any ground value this is false.
+** inlining via unground expressions
++ We we check that something is being /built/ or /unbuilt/ at every level of
+  inlining, and that a variable that is getting called has some /type/
+  associated with it, then it should be fine to continue inlining.
++ that requires that there is an occurs check being performed to ensure that we
+  are not going to just keep inling around a cycle which is building itself in
+  the cycle.
