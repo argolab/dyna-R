@@ -942,6 +942,7 @@ def moded_op(name, op):
     def method_locations(*locs):
         assert len(locs) == arity
         return ModedOp(name, op, locs)
+    method_locations.arity = arity
     return method_locations
 
 

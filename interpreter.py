@@ -1,4 +1,5 @@
 from collections import defaultdict
+from typing import *
 
 
 class RBaseType:
@@ -88,19 +89,19 @@ class RBaseType:
 
 
 class Terminal(RBaseType):
-    def __init__(self, count):
+    def __init__(self, multiplicity):
         super().__init__()
-        self.count = count
+        self.multiplicity = multiplicity
     def simplify(self, frame):
         return self
     def __eq__(self, other):
-        return type(self) is type(other) and self.count == other.count
+        return type(self) is type(other) and self.multiplicity == other.multiplicity
     def __hash__(self):
         return hash(type(self)) ^ self.count
     def disp(self, indent):
         return '{indent}Terminal({self.count})'
     def isEmpty(self):
-        return self.count == 0
+        return self.multiplicity == 0
 
 
 class _Error(Terminal):
@@ -209,3 +210,55 @@ class _FailedFrame(Frame):
         return '{FailedFrame, ...=...}'
 
 failedFrame = _FailedFrame()
+
+
+####################################################################################################
+
+class Visitor:
+    def __init__(self):
+        self._methods = {}
+        self._default = lambda *args: args[0]
+    def define(self, typ):
+        def f(method):
+            self._methods[typ] = method
+            return method
+        return f
+    def default(self, method):
+        self._default = method
+    def delay(self, typ):
+        # this should basically be used for external calls that this rewrite can
+        # not see into.  If these are delayed rewrites, then we are going to
+        # want to get all of the referenced expressions.
+        # if there is some rewrite that is being applied to an operation, then we can
+        raise NotImplementedError()
+
+    def __call__(self, R :RBaseType, *args, **kwargs):
+        return self._methods.get(type(item), self._default)(R, *args, **kwargs)
+
+
+simplify = Visitor()
+
+@simplify.default
+def simplify_default(self):
+    # then there is nothing that we are going to be able to do in the rewrites
+    return self
+
+
+getPartitions = Visitor()
+
+@getPartitions.default
+def getPartitions_default(self):
+    # go into the children by default, and see if they provide some way in which
+    # they can be partitioned
+    for c in self.children:
+        yield from getPartitions(c)
+
+
+def runPartition(Frame, R, partition):
+    # this should yield different Frame, R pairs using the selected
+    # partitionining scheme we use an iterator as we would like to be lazy, but
+    # this iterator __must__ be finite, in that we could run
+    # list(runPartition(...)) and it _would_ terminate with a fixed size list.
+
+
+    yield Frame, R

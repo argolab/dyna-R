@@ -1,0 +1,39 @@
+#+STARTUP: hidestars
+#+STARTUP: indent
+
+
+
+* design
+The ~R~ data structure should not have the methos that perform the rewrite
+operations.  There should be a ~.rewrite~ method that will be used as a visitor,
+and then that can rewrite the children.  The children can then be passed up to
+the parent at which point the parent can control how it is rewritten.  So in the
+case of intersect, if any of the children are rewritten as failed, then that
+becomes a failed object itself.
++ the evaluation of intersect should be fairly simple as it only has to evaluate
+  all of its children and then determine if it still exists, it is basically
+  just a not interesting operation.
++ the union and the partition as well as the memo tables are the same structure
+  basically.  There should track which ground values have been assigned to a
+  variable, and then construct those branches.
+  - this doesn't quite capture the ability to delay the checking of the domains
+    such that it is lazy.  This means that the story is not quite complete?  I
+    suppose that is basically just a question about how far it wants to go with
+    trying to ground out the memos.  In the case that something is fully ground,
+    then we can handle that directly.
+  - this just means that there needs to be some /policy/ that is attached to the
+    R's partition object such that it can determine if it will allow for
+    non-ground expressions to be memoized.  If it doesn't then it has to push
+    those to an agenda and then keep running those expressions.  This just has
+    to always memoize terminal states, but anything else should be fine to
+    choose between.
+  - then there is questions about how forward chaining would work?  Or how would
+    this /add/ new expressions to a parttion.  I suppose that this is /dok/ with
+    this adding a new expression to the table and then that having to be further
+    forward chained.
+  - in the case of a cycle, I suppose that there needs to be some /explicit/ unk
+    slot for expressions that is is unable to find in the memoized table?  In
+    which case, if it doesn't find something that is in the table, it ends up
+    making a query against the unk slot and memoizing the result.  That unk slot
+    could contain another partition that is internally going to be managing
+    whatever expressions it has to deal with.
