@@ -1,29 +1,17 @@
 from collections import defaultdict
 from typing import *
+import pprint
 
 
 class RBaseType:
-    def simplify(self, frame):
-        raise NotImplementedError()
 
-    def get_var_domains(self, frame):
-        ret = defaultdict(set)
-        self._get_iterators(frame, ret)
-        return ret
-    def _get_iterators(self, frame, ret):
-        for c in self.children:
-            c._get_iterators(frame, ret)
+    def __init__(self):
+        self._hashcache = None
+        self._constructed_from = None  # so that we can track what rewrites / transformations took place to get here
 
-    def get_partitions(self, frame):
-        # return branches over union objects this recurse to the children?
-        # though we don't necessairly want to walk into the union itself, we
-        # need to choose at the top level first?
-        #
-        # if there is a union, then we don't necessairly need to fully run the
-        # union totally, just need to group and branch the branches, which would
-        # be interesting?
-        for c in self.children:
-            yield from c.get_partitions(frame)
+    # def get_partitions(self, frame):
+    #     for c in self.children:
+    #         yield from c.get_partitions(frame)
 
     @property
     def vars(self):
@@ -31,17 +19,16 @@ class RBaseType:
     @property
     def children(self):
         return ()
-    def disp(self, indent):
-        n = self.__class__.__name__
-        return f'{indent}{n}('+', '.join(map(str, self.vars)) + ',\n' + ''.join(c.disp(indent + ' '*(len(n) + 1)) for c in self.children) + ')'
+    def _tuple_rep(self):
+        return (self.__class__.__name__, *(c._tuple_rep for c in self.children()))
     def __repr__(self):
-        return self.disp('')
+        return pprint.pformat(self._tuple_rep())
     def __eq__(self, other):
         return (self is other) or (type(self) is type(other) and
                                    self.children == other.children and
                                    self.vars == other.vars)
     def __hash__(self):
-        hv = getattr(self, '_hashcache', None)
+        hv = self._hashcache
         if hv is not None:
             return hv
         hv = (hash(self.__class__) ^
@@ -68,38 +55,14 @@ class RBaseType:
     def isEmpty(self):
         return False
 
-# class Ffunction(FBaseType):
-#     def __init__(self, func):
-#         super().__init__()
-#         self.func = func
-#     def simplify(self, frame):
-#         return self.func(frame)
-#     def __eq__(self, other):
-#         return type(self) is type(other) and self.func is other.func
-#     def __hash__(self):
-#         return hash(self.func)
-#     def disp(self, indent):
-#         ret = [f'{indent}{self.func.__name__}(\n']
-#         if self.func.__closure__:
-#             for c in self.func.__closure__:
-#                 if isinstance(c.cell_contents, FBaseType) and c.cell_contents is not self:
-#                     ret.append(c.cell_contents.disp(' ' * len(ret[0])) + ',')
-#         ret[-1] = ret[-1][:-1] + ')'
-#         return ''.join(ret)
-
-
 class Terminal(RBaseType):
     def __init__(self, multiplicity):
         super().__init__()
         self.multiplicity = multiplicity
-    def simplify(self, frame):
-        return self
     def __eq__(self, other):
         return type(self) is type(other) and self.multiplicity == other.multiplicity
     def __hash__(self):
         return hash(type(self)) ^ self.count
-    def disp(self, indent):
-        return '{indent}Terminal({self.count})'
     def isEmpty(self):
         return self.multiplicity == 0
 
@@ -109,72 +72,92 @@ class _Error(Terminal):
         super.__init__(0)
 error = _Error()
 
+# do not duplicate these as much as possible
+_failure = Terminal(0)
+_done = Terminal(1)
+
+def terminal(n):
+    # if n == 0:
+    #     return _failure
+    # elif n == 1:
+    #     return _done
+    # elif return Terminal(n)
+    return Terminal(n)
 
 
 ####################################################################################################
 # Frame base type
 
 
+class UnificationFailure(Exception):
+    # throw this in the case that setting the variable on the frame fails.
+    # using this will simplify the implementation in that we don't have to check
+    # as much stuff (hopefully) though, we are going to handle the results of
+    # failures.
+    pass
+
+
+class VariableBase:
+    def __repr__(self):
+        return str(self)
+
+class VariableId(VariableBase):
+
+    def __init__(self, name):
+        self.__name = name
+
+    def isBound(self, frame):
+        return self.__name in frame
+
+    def getValue(self, frame):
+        return frame.get(self.__name)
+
+    def setValue(self, frame, value):
+        if self.__name in frame:
+            # then check that the value is equal
+            if frame[self.__name] != value:
+                raise UnificationFailure()
+        else:
+            frame[self.__name] = value
+        return True  # if not equal return values, todo handle this throughout the code
+
+    def __eq__(self, other):
+        return (self is other) or (type(self) is type(other) and self.__name == other.__name)
+    def __hash__(self):
+        return hash(type(self)) ^ hash(self.__name)
+    def __str__(self):
+        return str(self.__name)
+
 class ConstantVariable:
     def __init__(self, var, value):
-        self.value = value
+        self.__value = value
     # I suppose that if we have two variables that take on the same value, even if they weren't unified together
     # we /could/ consider them the same variable?  There isn't that much of a difference in this case
     def __str__(self):
-        return f'={self.value}'
-    def __repr__(self):
-        return str(self)
+        return f'={self.__value}'
     def __eq__(self, other):
         return (self is other) or (type(self) is type(other) and self.value == other.value)
     def __hash__(self):
         return hash(type(self)) ^ hash(self.value)
 
+    def isBound(self, frame):
+        return True
+    def getValue(self, frame):
+        return self.__value
+
+    def setValue(self, frame, value):
+        if value != self.__value:  # otherwise we are going to have to make the result terminal with a value of zero
+            raise UnificationFailure()
+        return True
+
+def variables_named(*vars):
+    return tuple((VariableId(v) for v in vars))
+
 class Frame(dict):
-    def setVariable(self, variable, value):
-        assert not isinstance(value, Iterator)
-        if isinstance(variable, ConstantVariable):
-            if variable.value == value:
-                return self
-            else:
-                return failedFrame
-        elif variable in self:
-            if self[variable] == value:
-                return self
-            else:
-                return failedFrame
-        else:
-            f = Frame(self)
-            f[variable] = value
-            return f
-
-    def getVariable(self, variable):
-        if isinstance(variable, ConstantVariable):
-            return variable.value
-        return self.get(variable, None)
-
-    # short cut for this particular operation
-    def isBound(self, variable):
-        return isinstance(variable, ConstantVariable) or variable in self
-
-    # need to clear the slot, or maybe we are just trying to be tidy in this implementation
-    def remove(self, variable):
-        self.pop(variable, None)
-
-    def isFailed(self):
-        return False
 
     def __repr__(self):
         nice = {str(k).split('\n')[0]: v for k,v in self.items()}
         return pformat(nice, indent=1)
-
-    def merge(self, other):
-        if not other:
-            return self
-        if not self:
-            return other
-        r = Frame(self)
-        r.update(other)
-        return r
 
 # def setVariable(frame: Frame, variable, value):
 #     pass
@@ -233,15 +216,34 @@ class Visitor:
         raise NotImplementedError()
 
     def __call__(self, R :RBaseType, *args, **kwargs):
-        return self._methods.get(type(item), self._default)(R, *args, **kwargs)
+        return self.lookup(R)(R, *args, **kwargs)
+
+    def lookup(self, R):
+        return self._methods.get(type(R), self._default)
 
 
-simplify = Visitor()
+
+class SimplifyVisitor(Visitor):
+    def __call__(self, R, *args, **kwargs):
+        # special handling for unification failure though, maybe this should
+        # just be handled in the unions?  Everything else should just end up
+        # pushing this failure up the chain?  Though maybe that is closer to
+        # what we want
+        try:
+            return super().__call__(R, *args, **kwargs)
+        except UnificationFailure:
+            return terminal(0)
+
+simplify = SimplifyVisitor()
 
 @simplify.default
-def simplify_default(self):
+def simplify_default(self, frame):
     # then there is nothing that we are going to be able to do in the rewrites
-    return self
+    assert False  # not defined
+    #return self
+
+
+
 
 
 getPartitions = Visitor()

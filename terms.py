@@ -5,7 +5,7 @@ class Term:
 
     def __init__(self, name, arguments):
         self.__name = name
-        self.__arguments = arguments
+        self.__arguments = tuple(arguments)  # ensure this is a tuple and thus immutable
 
     @property
     def name(self):
@@ -68,5 +68,15 @@ class CallTerm(RBaseType):
 
     """
 
-    def __init__(self, name :basestring, arguments: List[Variable]):
-        pass
+    def __init__(self, name :basestring, arguments: List[Variable], dynabase, term_name):
+        self.name = name
+        self.arguments = arguments
+        self.dynabase = dynabase
+        self.term_name = term_name
+
+        self.replaced_with = None
+
+
+@simplify.define(CallTerm)
+def simplify_call(self, frame):
+    # we want to keep around the calls, so that we can continue to perform replacement operations on stuff.

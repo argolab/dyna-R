@@ -1,11 +1,12 @@
 # the core R structure such as intersect and partition
 
+from interpreter import *
+
 
 class Intersect(RBaseType):
 
     def __init__(self, children :Tuple[RBaseType]):
         super().__init__()
-
         self._children = tuple(children)
 
     @property
@@ -21,13 +22,12 @@ def intersect(children):
         else:
             r.append(c)
     if not r or mul == 0:
-        return Terminal(mul)
+        return terminal(mul)
     if mul != 1:
-        r.append(Terminal(mul))
+        r.append(terminal(mul))
     if len(r) == 1:
         return r[0]
     return Intersect(tuple(r))
-
 
 
 @simplify.define(Intersect)
@@ -39,36 +39,59 @@ class Partition(RBaseType):
     """
     This class is /verhy/ overloaded in that we are going to be using the same representation for memoized entries as well as the partitions
     """
-    def __init__(self, unioned_vars :Tuple, children :List[RBaseType]):
+    def __init__(self, unioned_vars :Tuple, children :Tuple[Tuple[RBaseType, Tuple]]):
         super().__init__()
         self.unioned_vars = unioned_vars
         # the children should be considered immutable once placed on the partition class
         # though we are going to construct this class via
-        self.children = {(None,)*len(unioned_vars) : children}
+
+        # make the children simple in that we are just going to scan the list in the case that
+        self.children = tuple(children)
+
     @property
     def vars(self):
         return self.unioned_vars
     @property
     def children(self):
-        for v in self.children.values():
-            yield from v
-    def rewrite(self, rewriter):
-        nc = {}
-        for k,v in self.children.items():
-            nc[k] = tuple(rewriter(w) for w in v)
-        return Partition(self.unioned_vars, nc)
+        for v in self.children:
+            yield v[0]
+
+def partition(unioned_vars, children):
+    # construct a partition
+    return Partition(unioned_vars, tuple((c, (None,)*len(unioned_vars)) for c in children)))
 
 
 # these are now conceptually not written on the class
 @simplify.add(Partition)
 def simplify_partition(self :Partition, frame: Frame):
-    var_vals = tuple(frame.getVariable(u) for u in self.unioned_vars)
+    var_vals = tuple(u.getValue(frame) for u in self.unioned_vars)
     def merge_tuples(a, b):
         for i,j in zip(a,b):
             if i!=j: raise 123  # something that indicates that these are not equal
             yield i or j  # return the one that is not null
 
     nc = defaultdict(list)
+    for
     for k,v in self.children.items():
         # this needs to check that the assignment of variables is consistent otherwise skip it
         # then this needs to figure out what
+        pass
+
+
+class Unify(RBaseType):
+    def __init__(self, v1, v2):
+        self.v1 = v1
+        self.v2 = v2
+    @property
+    def vars(self):
+        return (self.v1, self.v2)
+
+@simplify.define(Unify)
+def simplify_unify(self, frame):
+    if self.v1.isBound(frame):
+        v2.setValue(frame, self.v1.getValue(frame))
+        return terminal(1)
+    elif self.v2.isBound(frame):
+        v1.setValue(frame, self.v2.getValue(frame))
+        return terminal(1)
+    return self

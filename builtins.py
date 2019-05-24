@@ -1,4 +1,7 @@
-class ModedOp(FBaseType):
+
+from interpreter import *
+
+class ModedOp(RBaseType):
     def __init__(self, name, ops, vars, nondet):
         self.vars_ = vars
         self.ops = ops
@@ -15,28 +18,28 @@ class ModedOp(FBaseType):
             vals = [frame.getVariable(v) for v in self.vars]
             return self.ops[mode](*vals)
         return ()
-    def run(self, frame):
-        r = self.execute(frame)
-        if r is failure:
-            return failedFrame, failure
-        if r is error:
-            return frame, error
-        if r == ():
-            return frame, self  # then we made no progress
-        done_c = True
-        for var, val in zip(self.vars, r):
-            if hasattr(val, '__iter__'):
-                if frame.isBound(var):
-                    if frame.getVariable(var) not in val:
-                        # we got an iterable that does not contain the currently assigned value
-                        return failedFrame, failure
-                else:
-                    done_c = False
-            elif val is None:
-                done_c = False
-            else:
-                frame = frame.setVariable(var, val)
-        return frame, ((failure if frame.isFailed() else done) if done_c else self)
+    # def run(self, frame):
+    #     r = self.execute(frame)
+    #     if r is failure:
+    #         return failedFrame, failure
+    #     if r is error:
+    #         return frame, error
+    #     if r == ():
+    #         return frame, self  # then we made no progress
+    #     done_c = True
+    #     for var, val in zip(self.vars, r):
+    #         if hasattr(val, '__iter__'):
+    #             if frame.isBound(var):
+    #                 if frame.getVariable(var) not in val:
+    #                     # we got an iterable that does not contain the currently assigned value
+    #                     return failedFrame, failure
+    #             else:
+    #                 done_c = False
+    #         elif val is None:
+    #             done_c = False
+    #         else:
+    #             frame = frame.setVariable(var, val)
+    #     return frame, ((failure if frame.isFailed() else done) if done_c else self)
     def rename_vars(self, remap):
         return ModedOp(self.name, self.ops, tuple(map(remap, self.vars)))
     def possibly_equal(self, other):
@@ -46,14 +49,37 @@ class ModedOp(FBaseType):
             if hasattr(val, '__iter__'):
                 ret[var].add(IteratorFromIterable(var, val))
 
+@simplify.define(ModedOp)
+def modedop_simplify(self, frame):
+    mode = tuple(v.isBound(frame) for v in self.vars)
+    if mode in self.ops:
+        vals = tuple(v.getValue(frame) for v in self.vars)
+        r = self.ops[mode](*vals)
+        if isinstance(r, Terminal):
+            return r
+        if r == ():
+            self  # made no progress
+        done_c = all(not hasattr(v, '__iter__') for v in r)
+        if done_c:
+            # then we are going to set all of the resulting variables
+            # then we can return that we are done
+            for var, val for zip(self.vars, r):
+                var.setValue(frame, val)
+            return terminal(1)
+    return self
+
+
+
 def moded_op(name, op, nondet=False):
     arity = max(map(len, op.keys()))
     assert arity == min(map(len, op.keys()))
-    def method_locations(*locs):
-        assert len(locs) == arity
-        return ModedOp(name, op, locs, nondet)
-    method_locations.arity = arity
-    return method_locations
+    return ModedOp(name, op, variables_named('Ret', *range(arity-1)), nondet)
+
+    # def method_locations(*locs):
+    #     assert len(locs) == arity
+    #     return ModedOp(name, op, locs, nondet)
+    # method_locations.arity = arity
+    # return method_locations
 
 
 class CheckOp(FBaseType):
@@ -64,31 +90,47 @@ class CheckOp(FBaseType):
     @property
     def vars(self):
         return self.vars_
-    def disp(self,indent):
-        return f'{self.name}(' + ', '.join(map(str, self.vars)) + ')'
-    def run(self, frame):
-        if all(frame.isBound(v) for v in self.vars):
-            vals = [frame.getVariable(v) for v in self.vars]
-            if self.op(*vals):
-                return frame, done
-            else:
-                return failedFrame, failure
-        return frame, self
-    def rename_vars(self, remap):
+    # def disp(self,indent):
+    #     return f'{self.name}(' + ', '.join(map(str, self.vars)) + ')'
+    # def run(self, frame):
+    #     if all(frame.isBound(v) for v in self.vars):
+    #         vals = [frame.getVariable(v) for v in self.vars]
+    #         if self.op(*vals):
+    #             return frame, done
+    #         else:
+    #             return failedFrame, failure
+    #     return frame, self
+     def rename_vars(self, remap):
         return CheckOp(self.name, self.op, tuple(map(remap, self.vars)))
     def possibly_equal(self, other):
         return type(self) is type(other) and self.op is other.op
 
+
+@simplify.define(CheckOp)
+def checkop_simplify(self, frame):
+    if all(v.isBound(frame) for v in self.vars[1:]):
+        vals = [v.getValue(frame) for v in self.vars[1:]]
+        res = self.op(*vals)
+        assert isinstance(res, bool)
+        self.vars[0].setValue(frame, res)
+        return terminal(1)
+    return self
+
 # check only works in the fully ground case, so we don't care about any other modes atm
 def check_op(name, op):
     arity = len(inspect.getfullargspec(op).args)
-    def method_locations(*locs):
-        if slower_checks:
-            assert len(locs) == arity
-        return CheckOp(name, op, locs)
-    method_locations.arity = arity
-    return method_locations
+    return CheckOp(name, op, variables_named('Ret', *range(arity)))
+    # def method_locations(*locs):
+    #     if slower_checks:
+    #         assert len(locs) - 1 == arity
+    #     return CheckOp(name, op, locs)
+    # method_locations.arity = arity
+    # return method_locations
 
+
+##################################################
+
+from context import dyna_system
 
 add = moded_op('add', {
     (True, True, True):  lambda a,b,c: (b+c, b, c) ,
@@ -96,8 +138,10 @@ add = moded_op('add', {
     (True, False, True): lambda a,b,c: (a, a-c, c) ,
     (False, True, True): lambda a,b,c: (b+c, b, c) ,
 })
+dyna_system.define_term('add', 2, add)  # there is the result variable that is always named ret, so this is still +/2
 
 sub = lambda a,b,c: add(b,a,c)
+dyna_system.define_term('sub', 2, sub)
 
 mul = moded_op('mul', {
     (True, True, True):  lambda a,b,c: (b*c, b, c) ,

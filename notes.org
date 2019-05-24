@@ -37,3 +37,197 @@ becomes a failed object itself.
     making a query against the unk slot and memoizing the result.  That unk slot
     could contain another partition that is internally going to be managing
     whatever expressions it has to deal with.
+    - this would basically be that we want to first guess null, in the case that
+      it cycles around and finds itself, but then we want to guess 1
+
+
+** replaced operations / rewrites
++ We would like to track where rewrites are performed, which would mean that we
+  are keeping around the old version of stuff?  In that case, we could match
+  against the older version of something?  If we rewrite something away, then we
+  want to eliminate the entire branch of something.
+
+
+* memoization
+** partition
++ Priority union partitions, in that if there is _not_ a match, then this has to
+  go up to the higher level.  This high level can then be memoized based off
+  what is returned down to a child union.
++ the partitions should have some /optimizations/ such that they can quickly
+  dispatch to whichever branch contains the relevant values.
+
++ In the case of unioned, partitions, we are going to want to /compress/
+  multiple levels of partitions such that we don't have long chains of unions
+  that we are having to handle.  That is assuming that we can handle the
+  partition, otherwise then I suppose that we are just keeping the partition
+  around??
+
++ would be nice if there was some dispatching over outer functor of variables.
+  That would let us use the same structure for a dyna base where we are looking
+  up entries using the outer functor as the identifier.
+*** storage classes
++ There should be something similar to what is in dyna-phi with the memo table
+  structure.  This would be something like there is a dense array where we are
+  mapping integers to different partitions.  I suppose that there also would
+  need to be something that is the /unset/ case, and then there might also be
+  stronger backoffs with these handling things that are not arrays?
++ these storage classes, would need to eventually be capable of supporting
+  matrices such that we can identify the matmul cases I suppose.
+*** Features required
++ dispatching over different disjoint branches
+  - efficient dispatch.  Some trie over the different keys, and maybe something
+    that could dispatch over the functor of a variable?
++ constructing the union iterators which ensure that we can iterate the domain
+  of a variable with checking the multiple branches at the same time.
+  - in the case that there is some fallback, then this should only be "enabled"
+    in the case of the fallback being empty.  (Meaning that the memo table
+    default is null), otherwise, then we would have to merge the results of the
+    partition with the table.  Which is really just the iterating case when
+    there is some overrides.
+    - this would have to be moded or something, so that we know if there was
+      something that overwrote the memo, otherwise we are going to not know if
+      there is something that overwrote the different values.
+
++ updates / changes of writes into the memo table
+  - subscribed downstream operations
+    - these subscribe operations need to ensure that they don't accidental do
+      duplication in the case that it references the same upstream table
+      multiple times.  I think that should be done by just adding something into
+      the R-expr, and then we won't have to worry about that happening again?
+      This would just be some constraint that is like not equal between the
+      tuple of variables, in the case that some of the variables are bound, it
+      could eliminate itself early, though that would violate the thing where
+      the mode it runs in is only dependent on the values and not having to
+      check later
+
++ A fallback pointer to something in the case that it can't find it explicitly
+  memoized.
+  - So if something is memoized (either with ~terminal(0)~ or otherwise), then it
+    would be fine, this is really the "did not find" case.
+    - the default on this would simply be just to have this fallback to
+      ~terminal(0)~, as that indicates that there is nothing left to do.
+    - We should always be able to memoize the values that are returned from the
+      fallback?
+      - however what if there is something that is processing guesses on the
+        entry?  I suppose in that case, these would have that the guess null is
+        Terminal, and thus non contributing.
+
+  - This is already needed in the case of unk defaults, where we are allowed to
+    memoize anything across the call boundary.  These tables are not allowed to
+    be used for iteration.  Even fallback to earlier expressions would be a
+    problem?  Those would have to handle the overwrites over invalid values
+    (this is basically the stuff that comes from lipics)
+
++ Assumption tracking
+  - in the case that some value changes, then it would depend what it, and then
+    some way to notify those operations
+
++ Memoization policy
+  - Are we allowed to memoize non ground expressions, and if not, how do we
+    handle those expressions.  This would be something like push the things that
+    we are not allowed to memoize to the agenda to be processed later.
+  - so there is some policy which is just memoize everything that is null, then
+    something that
+
+*** types
++ partition dispatching over the outer functor
++ partition dispatching over potentially overlapping heads (a list that it has
+  to check all)
++ a partition where it is something like the most specific wins
+  - the memoization table requires some notion of /modes/, in that variables
+    that were not bound in the query need to have their full domain already
+    known.  In the case that we have some backoff where we are allowed to handle
+    the different grounding levels.
+
++ unique partition
+  - Something where there is a unique branch that will be selected, so if there
+    isn't a unique branch, then that would be an error.  This would be helpful
+    in the case of things like branches over ~+/2~, as those would want to
+    select a unique operator to implement the operation.
+    - to make the dispatch over operators work well, that would require some
+      type inference about what is going to be used to call a particular
+      location.
+
+
+*** updates
++ Needs to be able to scan the memos and identify which have a different result
+  from compute.  In the case that there are some /ground/ values, then we need
+  to determine which expressions are contained.  I suppose that if we have the
+  fully free version, then that version is _not_ allowed to perform queries
+  against its elements, and it can't union as it doesn't
+** assumptions / invalidations
++ Assumptions are going to be represented as both that there is something that
+  is currently assigned a value, and then that there is something that is
+  currently null.  In the case that something is currently null, this means that
+  there was a read of a table that touch an entry that is not currently present.
+  We are going to have to identify which key was performing the read and then
+  track that R-expr as a forward pointer down stream.
+
+** guesses
++ This is that there is some extension on the program such that we are going to
+  have to correct the guesses on the agenda.
+  - in the case of cycles, the priories are reading from a /prior/ version of
+    the memo table, and thus
++ Would like if there is only a single memo table for something like fib.  The
+  idea that there are layers and these layers are the additional rewrites on the
+  new memo table.
+  - so we are going to take the fib rule and then partition it into smaller
+    expressions.  We then want to insert these into the table.  The rule ~fib(X)
+    = fib(X - 1) + fib(X - 2)~, should become something where there are delayed
+    checks that are getting placed on the agenda.  So we are going to want to
+    compute all of the ~X~ that are currently assigned some value, and then put
+    this on the agenda.  In this case, we are attaching these to the memo tables
+    that it /reads/ from.  (which just happens to be itself).  We want to do
+    that attach operation before we write any of the values into the memo table.
+    - this means that the memo tables, are
+
+** kinds of memos
++ There are some things that we do not want to memoize, for example, in the case
+  of a /null/ default, we are saying that there is no more computation required,
+  and thus if we fail to look something up, then that means its multiplicity is
+  zero.  The agenda is running to try and fix something up such that it only
+  memoizing ground expressions.
+
+  - for example, suppose that we want go guess that ~fib(X) = 17~, for all ~X~.
+    Then we are going to create a memoized entry like ~{ <fib(X), 17>@1 }~.
+    When matching up this guess, if we allow for /anything/ to be set into the
+    memo table, then we are could get ~{ <fib(X), 17>@fib(X-1) + fib(X-2) == 17
+    }~ which is now consistent, though we are going to have perform the
+    computation for further fib to figure out which have the value 17.  So in
+    this case, this isn't necessarily that /useful/
+
+
+** updates
+*** deltas
++ In the case that we are memoizing the result of R-exprs, then we are going to
+  have a delta be that we decrement one memoized result and increase another.  This
+
+
+
+* rewrites included
+** simplify
+** evaluation and quoting
++ inference of unground types, as well as static tracking of what ground types
+  would be present (which constraints have already executed)
+  - in the case that we know the type of some variable, then we should be able
+    to replace the ~*X~ operator directly with the call to the method.  There is
+    also the construction/destruction of named values that would be something
+    that should be considered
++ elimination of construction terms that are not used.  So this would be that
+  the /result/ variable is not attached to anything.  In which case we would
+  like to delete that variable and the build operation from the R-expr
+** identification of the same constraints, and combining the results together
++ this requires that there is some /in/ and /out/ variables or that we mark
+  things as semi-det, such that if two of the variables are the same, then the
+  last would also be the same.
++
+** Prolog abstract unification
++ this is required to emulate prolog where we are doing non-ground unification
+** Inferring new constraints
++ These should be something that we allowed to be defined in dyna itself.  This
+  means that we are going to want to
+
+
+* other things to use
+https://www.ravenbrook.com/project/mps/
+https://github.com/efficient/libcuckoo
