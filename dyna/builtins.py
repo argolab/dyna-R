@@ -2,96 +2,124 @@
 from .interpreter import *
 
 class ModedOp(RBaseType):
-    def __init__(self, name, ops, vars, nondet):
-        self.vars_ = vars
-        self.ops = ops
-        self.name = name
+    def __init__(self, name, det, nondet, vars):
+        self.det = det
         self.nondet = nondet
+        self.name = name
+        self.vars_ = vars
     @property
     def vars(self):
         return self.vars_
-    # def disp(self, indent):
-    #     return f'{self.name}(' + ', '.join(map(str, self.vars)) + ')'
-    # def execute(self, frame):
-    #     mode = tuple(frame.isBound(v) for v in self.vars)
-    #     if mode in self.ops:
-    #         vals = [frame.getVariable(v) for v in self.vars]
-    #         return self.ops[mode](*vals)
-    #     return ()
     def rename_vars(self, remap):
-        return ModedOp(self.name, self.ops, tuple(map(remap, self.vars)), self.nondet)
+        return ModedOp(self.name, self.det, self.nondet, tuple(map(remap, self.vars)))
     def possibly_equal(self, other):
         return type(self) is type(other) and self.op is other.op
-    def _get_iterators(self, ret):
-        for var, val in zip(self.vars, self.execute(emptyFrame)):
-            if hasattr(val, '__iter__'):
-                ret[var].add(IteratorFromIterable(var, val))
     def _tuple_rep(self):
         return (self.__class__.__name__, self.name, self.vars)
 
 @simplify.define(ModedOp)
 def modedop_simplify(self, frame):
     mode = tuple(v.isBound(frame) for v in self.vars)
-    if mode in self.ops:
+    if mode in self.det:
         vals = tuple(v.getValue(frame) for v in self.vars)
-        r = self.ops[mode](*vals)
+        r = self.det[mode](*vals)
         if isinstance(r, Terminal):
             return r
         if r == ():
             self  # made no progress
-        done_c = all(not hasattr(v, '__iter__') for v in r)
-        if done_c:
-            # then we are going to set all of the resulting variables
-            # then we can return that we are done
-            for var, val in zip(self.vars, r):
-                var.setValue(frame, val)
-            return terminal(1)
-    return self
-
-
-def moded_op(name, op, nondet=False):
-    arity = max(map(len, op.keys()))
-    assert arity == min(map(len, op.keys()))
-    return ModedOp(name, op, variables_named(ret_variable, *range(arity-1)), nondet)
-
-
-class CheckOp(RBaseType):
-    def __init__(self, name, op, vars):
-        self.vars_ = vars
-        self.name = name
-        self.op = op
-    @property
-    def vars(self):
-        return self.vars_
-    def rename_vars(self, remap):
-        return CheckOp(self.name, self.op, tuple(map(remap, self.vars)))
-    def possibly_equal(self, other):
-        return type(self) is type(other) and self.op is other.op
-    def _tuple_rep(self):
-        return (self.__class__.__name__, self.name, self.vars)
-
-
-@simplify.define(CheckOp)
-def checkop_simplify(self, frame):
-    if all(v.isBound(frame) for v in self.vars[1:]):
-        vals = [v.getValue(frame) for v in self.vars[1:]]
-        res = self.op(*vals)
-        assert isinstance(res, bool)
-        self.vars[0].setValue(frame, res)
+        # done_c = all(not hasattr(v, '__iter__') for v in r)
+        # if done_c:
+        # then we are going to set all of the resulting variables
+        # then we can return that we are done
+        for var, val in zip(self.vars, r):
+            var.setValue(frame, val)
         return terminal(1)
     return self
 
-# check only works in the fully ground case, so we don't care about any other modes atm
-def check_op(name, arity, op):
-    return CheckOp(name, op, variables_named(ret_variable, *range(arity)))
-
-def true_return(expr):
-    def f(ret, *args):
+@getPartitions.define(ModedOp)
+def modedop_getPartitions(self, frame):
+    mode = tuple(v.isBound(frame) for v in self.vars)
+    if mode in self.nondet:
+        # then this needs to get the iterator from the object and yield that
+        # as a partition that can handle binding the particular variable
         assert False
 
-        # the returned variable should just always be true, so if there are
-        return intersect(unify(ret, constant(True)), expr(*args))
-    return f
+
+def infer_modes(d):
+    # determine other modes that we can support
+    # so if something supports the free mode, then it will also support the ground mode,
+    # this will automatically infer those cases
+    done = False
+    while not done:
+        done = True
+        for k in list(d.keys()):
+            for i, v in enumerate(k):
+                if v is False:  # meaning it supports the free mode
+                    nk = k[:i] + (True,) + k[i+1:]
+                    if nk not in d:
+                        done = False
+                        d[nk] = d[k]
+    return d
+
+def moded_op(name, det, *, nondet={}):
+    o = det.copy()
+    o.update(nondet)
+    arity = max(map(len, o.keys()))
+    assert arity == min(map(len, o.keys()))
+
+    det = infer_modes(det)
+    nondet = infer_modes(nondet)
+    for k in list(nondet.keys()):
+        if k in det:
+            del nondet[k]  # we don't want to run a non-det operation in the case that we have a det handler
+
+    return ModedOp(name, det, nondet, variables_named(ret_variable, *range(arity-1)))
+
+
+# class CheckOp(RBaseType):
+#     def __init__(self, name, op, vars):
+#         self.vars_ = vars
+#         self.name = name
+#         self.op = op
+#     @property
+#     def vars(self):
+#         return self.vars_
+#     def rename_vars(self, remap):
+#         return CheckOp(self.name, self.op, tuple(map(remap, self.vars)))
+#     def possibly_equal(self, other):
+#         return type(self) is type(other) and self.op is other.op
+#     def _tuple_rep(self):
+#         return (self.__class__.__name__, self.name, self.vars)
+
+
+# @simplify.define(CheckOp)
+# def checkop_simplify(self, frame):
+#     if all(v.isBound(frame) for v in self.vars[1:]):
+#         vals = [v.getValue(frame) for v in self.vars[1:]]
+#         res = self.op(*vals)
+#         assert isinstance(res, bool)
+#         self.vars[0].setValue(frame, res)
+#         return terminal(1)
+#     return self
+
+# check only works in the fully ground case, so we don't care about any other modes atm
+def check_op(name, arity, op):
+    f = lambda x, *args: (op(*args), *args),
+    d = {
+        (False,)+((True,)*arity): f
+    }
+    return moded_op(name, d)
+    #return ModedOp(name, d, {}, variables_named(ret_variable, *range(arity)))
+
+    # return CheckOp(name, op, variables_named(ret_variable, *range(arity)))
+
+# def true_return(expr):
+#     def f(ret, *args):
+#         assert False
+
+#         # the returned variable should just always be true, so if there are
+#         return intersect(unify(ret, constant(True)), expr(*args))
+#     return f
 
 
 ##################################################
@@ -128,19 +156,22 @@ dyna_system.define_term('/', 2, div)
 
 
 
-range_v = true_return(moded_op('range', {
-    (False, True, True): lambda a,b,c: (range(b,c), b, c) ,
-    (True, True, True):  lambda a,b,c: (range(b,c), b, c) ,
-}))
-#dyna_system.define_term('range', 3,
+range_v = moded_op('range', {
+    (False, True, True, True):  lambda x,a,b,c: (a < b < c and isinstance(a, int), a, b, c) ,
+}, nondet={
+    (False, False, True, True): lambda x,a,b,c: (True, range(b,c), b, c) ,
+})
+dyna_system.define_term('range', 3, range_v)
 
 ##################################################  TODO: define range, this needs the return value as well as the arguments?
 
-abs_v = true_return(moded_op('abs', {
-    (True,True):  lambda a,b: (abs(b), b) ,
+abs_v = moded_op('abs', {
     (False,True): lambda a,b: (abs(b), b) ,
+}, nondet={
     (True,False): lambda a,b: (a, [a,-a]) if a > 0 else ((a, 0) if a == 0 else error) ,
-}, nondet=True))
+})
+dyna_system.define_term('abs', 2, abs_v)
+
 
 lt = check_op('lt', 2, lambda a,b: a < b)
 
@@ -190,10 +221,9 @@ term_type = check_op('term_type', 1, lambda x: False)
 str_v = check_op('str', 1, lambda x: isinstance(x, str))
 bool_v = moded_op('bool', {
     (False, True): lambda a,b: (isinstance(b, bool), b),
-    (False, False): lambda a,b: (True, [True, False]),
-    (True, True): lambda a,b: (isinstance(b, bool), b),
+}, nondet={
     (True, False): lambda a,b:  (True, [True, False]),
-}, nondet=True)
+})
 
 
 dyna_system.define_term('int', 1, int_v)

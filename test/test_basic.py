@@ -14,6 +14,8 @@ def test_most_basic():
 
 
 def test_two_add():
+    # (X + Y) + Z
+
     rexpr1, ret1 = M.add(1,2)
     rexpr2, ret2 = M.add(ret1, 3)
 
@@ -27,3 +29,7 @@ def test_two_add():
 
     assert rr == interpreter.Terminal(1)
     assert ret2.getValue(frame) == 24
+
+
+def test_sum_aggregator():
+    pass

@@ -1,12 +1,9 @@
 from . import interpreter
 from . import builtins
-from . import rcore
 
 from .interpreter import (
     RBaseType, Terminal, Variable, variables_named, constant, Frame,
-    simplify, getPartitions
-)
-from .rcore import (
+    simplify, getPartitions,
     intersect as Intersect, partition as Partition, Unify
 )
 
@@ -17,7 +14,7 @@ class M(object):
         def f(*args):
             r = context.dyna_system.lookup_term((n, len(args)))
             # TODO: this needs to apply arguments to the returned R-expr and return that
-            if r:
+            if r is not None:
                 args = interpreter.variables_named(*args)
                 ret = interpreter.VariableId(('Ret', object()))  # we need a unique name for the variable that holds the return value
                 renames = {
