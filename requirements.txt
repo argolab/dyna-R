@@ -1,5 +1,11 @@
 lark
-git+https://github.com/timvieira/arsenal.git
+#git+https://github.com/timvieira/arsenal.git
+
+numpy
+pybind11
+
+
+pytest
 
 
 # matplotlib

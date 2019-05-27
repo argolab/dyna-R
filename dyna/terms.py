@@ -1,4 +1,7 @@
 
+from .interpreter import *
+
+
 class Term:
 
     __slots__ = ('__name', '__arguments')
@@ -22,7 +25,7 @@ class BuildStructure(RBaseType):
     Build something like X=&foo(Y).
     """
 
-    def __init__(self, name :basestring, result :Variable, arguments :List[Variable]):
+    def __init__(self, name :str, result :Variable, arguments :List[Variable]):
         pass
 
 class ReflectStructure(RBaseType):
@@ -68,7 +71,7 @@ class CallTerm(RBaseType):
 
     """
 
-    def __init__(self, name :basestring, arguments: List[Variable], dynabase, term_name):
+    def __init__(self, name :str, arguments: List[Variable], dynabase, term_name):
         self.name = name
         self.arguments = arguments
         self.dynabase = dynabase
@@ -80,3 +83,5 @@ class CallTerm(RBaseType):
 @simplify.define(CallTerm)
 def simplify_call(self, frame):
     # we want to keep around the calls, so that we can continue to perform replacement operations on stuff.
+
+    return self

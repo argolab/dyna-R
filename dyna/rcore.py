@@ -1,6 +1,6 @@
 # the core R structure such as intersect and partition
 
-from interpreter import *
+from .interpreter import *
 
 
 class Intersect(RBaseType):
@@ -13,7 +13,7 @@ class Intersect(RBaseType):
     def children(self):
         return self._children
 
-def intersect(children):
+def intersect(*children):
     mul = 1
     r = []
     for c in children:
@@ -32,7 +32,7 @@ def intersect(children):
 
 @simplify.define(Intersect)
 def simplify_intersect(self :Intersect, frame: Frame):
-    return intersect([simplify(c) for c in self.children])
+    return intersect(*[simplify(c, frame) for c in self.children])
 
 
 class Partition(RBaseType):
@@ -58,11 +58,11 @@ class Partition(RBaseType):
 
 def partition(unioned_vars, children):
     # construct a partition
-    return Partition(unioned_vars, tuple((c, (None,)*len(unioned_vars)) for c in children)))
+    return Partition(unioned_vars, tuple((c, (None,)*len(unioned_vars)) for c in children))
 
 
 # these are now conceptually not written on the class
-@simplify.add(Partition)
+@simplify.define(Partition)
 def simplify_partition(self :Partition, frame: Frame):
     var_vals = tuple(u.getValue(frame) for u in self.unioned_vars)
     def merge_tuples(a, b):
@@ -71,10 +71,24 @@ def simplify_partition(self :Partition, frame: Frame):
             yield i or j  # return the one that is not null
 
     nc = defaultdict(list)
-    for
+    assert False
     for k,v in self.children.items():
         # this needs to check that the assignment of variables is consistent otherwise skip it
         # then this needs to figure out what
+        pass
+
+
+@getPartitions.define(Partition)
+def getPartitions_partition(self :Partition):
+    yield self
+    assert False
+    # TODO need to determine which variables we can also iterate, so this means
+    # looking at the results from all of the children branches and then
+    # filtering out things that are not going to work.  if variables are renamed
+    # on the different branches, then it is possible that the iterators will
+    # have to be able to handle those renamings.
+
+    for p in self.children:
         pass
 
 

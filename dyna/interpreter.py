@@ -20,7 +20,7 @@ class RBaseType:
     def children(self):
         return ()
     def _tuple_rep(self):
-        return (self.__class__.__name__, *(c._tuple_rep for c in self.children()))
+        return (self.__class__.__name__, *(c._tuple_rep for c in self.children))
     def __repr__(self):
         return pprint.pformat(self._tuple_rep())
     def __eq__(self, other):
@@ -55,6 +55,12 @@ class RBaseType:
     def isEmpty(self):
         return False
 
+    def all_vars(self):
+        yield from self.vars
+        for c in self.children:
+            yield from c.all_vars()
+
+
 class Terminal(RBaseType):
     def __init__(self, multiplicity):
         super().__init__()
@@ -69,7 +75,7 @@ class Terminal(RBaseType):
 
 class _Error(Terminal):
     def __init__(self):
-        super.__init__(0)
+        super().__init__(0)
 error = _Error()
 
 # do not duplicate these as much as possible
@@ -96,21 +102,29 @@ class UnificationFailure(Exception):
     # failures.
     pass
 
+class InvalidValue:
+    pass
+InvalidValue = InvalidValue()
 
-class VariableBase:
+
+class Variable:
     def __repr__(self):
-        return str(self)
+        return f'var({str(self)})'
 
-class VariableId(VariableBase):
+class VariableId(Variable):
 
-    def __init__(self, name):
+    def __init__(self, name=None):
+        if name is None:
+            name = object()
         self.__name = name
 
     def isBound(self, frame):
         return self.__name in frame
 
     def getValue(self, frame):
-        return frame.get(self.__name)
+        # want to ensure that we have some distinctive junk value so we are sure we do not use this
+        # in C++ the junk would probably just be uninitalizied memory
+        return frame.get(self.__name, InvalidValue)
 
     def setValue(self, frame, value):
         if self.__name in frame:
@@ -122,13 +136,13 @@ class VariableId(VariableBase):
         return True  # if not equal return values, todo handle this throughout the code
 
     def __eq__(self, other):
-        return (self is other) or (type(self) is type(other) and self.__name == other.__name)
+        return (self is other) or (type(self) is type(other) and (self.__name == other.__name))
     def __hash__(self):
         return hash(type(self)) ^ hash(self.__name)
     def __str__(self):
         return str(self.__name)
 
-class ConstantVariable:
+class ConstantVariable(Variable):
     def __init__(self, var, value):
         self.__value = value
     # I suppose that if we have two variables that take on the same value, even if they weren't unified together
@@ -151,24 +165,18 @@ class ConstantVariable:
         return True
 
 def variables_named(*vars):
-    return tuple((VariableId(v) for v in vars))
+    return tuple((VariableId(v) if not isinstance(v, Variable) else v for v in vars))
+
+ret_variable = VariableId('Return')
+
+def constant(v):
+    return ConstantVariable(None, v)
 
 class Frame(dict):
 
     def __repr__(self):
         nice = {str(k).split('\n')[0]: v for k,v in self.items()}
-        return pformat(nice, indent=1)
-
-# def setVariable(frame: Frame, variable, value):
-#     pass
-
-# def getVariable(frame: Frame, variable):
-#     if isinstance(variable, ConstantVariable):
-#         return variable.value
-#     return frame.get(variable, None)
-
-# def isBound(frame: Frame, variable):
-#     return isinstance(variable, ConstantVariable) or variable in frame
+        return pprint.pformat(nice, indent=1)
 
 
 class _EmptyFrame(Frame):
@@ -238,15 +246,17 @@ simplify = SimplifyVisitor()
 
 @simplify.default
 def simplify_default(self, frame):
-    # then there is nothing that we are going to be able to do in the rewrites
-    assert False  # not defined
-    #return self
+    # these should be defined for all methods to do something
+    raise NotImplementedError()
 
 
 
 
+class PartitionVisitor(Visitor):
+    def __call__(self, R, *args, **kwargs):
+        yield from self.lookup(R)(R, *args, **kwargs)
 
-getPartitions = Visitor()
+getPartitions = PartitionVisitor()
 
 @getPartitions.default
 def getPartitions_default(self):
@@ -256,11 +266,21 @@ def getPartitions_default(self):
         yield from getPartitions(c)
 
 
-def runPartition(Frame, R, partition):
+def runPartition(frame, R, partition):
     # this should yield different Frame, R pairs using the selected
     # partitionining scheme we use an iterator as we would like to be lazy, but
     # this iterator __must__ be finite, in that we could run
     # list(runPartition(...)) and it _would_ terminate with a fixed size list.
 
+    # we might want to pattern match against the type of the partition in
+    # different files?  So then this should also be a visitor pattern?  In which
+    # case it would have to perform different rewrites of potentially nested
+    # expressions.
 
-    yield Frame, R
+    # running these partitions might also allow for there to be threading
+    # between different operations?  In which case the consumer of this would
+    # want to be able to run parallel for loop or something.
+
+    assert False
+
+    yield frame, R

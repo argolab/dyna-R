@@ -1,13 +1,13 @@
 
-from interpreter import *
-from terms import CallTerm
+from .interpreter import *
+from .terms import CallTerm
 
 class SystemContext:
     """
     Represents the dyna system with the overrides for which expressions are going to be set and written
     """
 
-    def __init__(self):
+    def __init__(self, parent=None):
         # the terms as the user defined them (before we do any rewriting) we can
         # not delete these, as we must keep around the origional definitions
         # so that we can recover in the case of "delete everything" etc
@@ -18,11 +18,12 @@ class SystemContext:
 
         self.agenda = None
 
-        self.inferred_operations = []
+        # where we fallback for pther defined
+        self.parent = None
 
     def define_term(self, name, arity, rexpr):
-        assert (name, arity) not in self.functions
-        self.terms[(name, arity)] = rexpr
+        assert (name, arity) not in self.terms_as_defined
+        self.terms_as_defined[(name, arity)] = rexpr
 
     def call_term(self, name, arity) -> RBaseType:
         # this should return a method call to a given term.
@@ -32,7 +33,13 @@ class SystemContext:
     def lookup_term(self, name):
         # if this isn't defined, then we can delay, or report an error to the
         # user that they are trying to use a method that isn't defined.
-        return self.terms[name]
+
+        if name in self.terms_as_rewritten:
+            return self.terms_as_rewritten[name]
+        if name in self.terms_as_defined:
+            return self.terms_as_defined[name]
+        if self.parent:
+            return parent.lookup_term(name)
 
 
 # where we will define the builtins etc the base dyna base, for now there will
