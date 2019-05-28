@@ -2,7 +2,7 @@ from . import interpreter
 from . import builtins
 
 from .interpreter import (
-    RBaseType, Terminal, Variable, variables_named, constant, Frame,
+    RBaseType, FinalState, Terminal, Variable, variables_named, constant, Frame,
     simplify, getPartitions,
     intersect as Intersect, partition as Partition, Unify, Aggregator, AggregatorOpImpl, AggregatorOpBase
 )

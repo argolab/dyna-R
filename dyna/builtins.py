@@ -17,13 +17,31 @@ class ModedOp(RBaseType):
     def _tuple_rep(self):
         return (self.__class__.__name__, self.name, self.vars)
 
+class IteratorFromIterable(Iterator):
+    def __init__(self, variable, iterable):
+        self.variable = variable
+        self.iterable = iterable
+    def bind_iterator(self, frame, variable, value):
+        assert variable == self.variable
+        if value in self.iterable:
+            pass
+        else:
+            pass
+    def run(self, frame):
+        for v in self.iterable:
+            yield {self.variable: v}
+    @property
+    def variables(self):
+        return (self.variable,)
+
+
 @simplify.define(ModedOp)
 def modedop_simplify(self, frame):
     mode = tuple(v.isBound(frame) for v in self.vars)
     if mode in self.det:
         vals = tuple(v.getValue(frame) for v in self.vars)
         r = self.det[mode](*vals)
-        if isinstance(r, Terminal):  # atm error is an instance of terminal
+        if isinstance(r, FinalState):
             return r
         if r == ():
             self  # made no progress
@@ -44,18 +62,21 @@ def modedop_getPartitions(self, frame):
         # as a partition that can handle binding the particular variable
 
         vals = tuple(v.getValue(frame) for v in self.vars)
-        r = self.det[mode](*vals)
+        r = self.nondet[mode](*vals)
 
         # these are cases which failed unification or something?  We need to
         # handle reporting errors in these cases as empty intersections
-        assert r != () and not isinstance(r, Terminal)
+        assert r != () and not isinstance(r, FinalState)
 
         for var, val in zip(self.vars, r):
             if hasattr(val, '__iter__'):
                 # then this is a variable that we can iterate, so we want to do
                 # that.  This should yield some iterator wrapper that is going
-                # return the map to a variable.
-                # This might also want to be able to check contains, in which case, this should
+                # return the map to a variable.  This might also want to be able
+                # to check contains, in which case, this should support the
+                # overlapping behavior required for aggregation?
+
+                yield IteratorFromIterable(var, val)
 
 
 def infer_modes(d):

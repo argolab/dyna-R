@@ -75,7 +75,11 @@ class RBaseType:
     def __bool__(self):
         raise RuntimeError('Should not check Rexpr with bool test, use None test')
 
-class Terminal(RBaseType):
+class FinalState(RBaseType):
+    __slots__ = ()
+    pass
+
+class Terminal(FinalState):
     __slots__ = ('multiplicity',)
     def __init__(self, multiplicity):
         super().__init__()
@@ -91,9 +95,11 @@ class Terminal(RBaseType):
 # if might be better to make this its own top level thing.  We might want to
 # keep this around in the case that we can eventually determine that there is
 # something else which can eleminate a branch
-class _Error(Terminal):
-    def __init__(self):
-        super().__init__(0)
+class _Error(FinalState):
+    def isEmpty(self):
+        # in this case, there is nothing here? so we can return that this is empty?
+        # we need for the error states to be eleminated due to some other constraint, otherwise
+        return True
 error = _Error()
 
 # do not duplicate these as much as possible
@@ -226,6 +232,54 @@ class _FailedFrame(Frame):
 
 failedFrame = _FailedFrame()
 
+####################################################################################################
+# Iterators and other things
+
+class Iterator:
+    def bind_iterator(self, frame, variable, value):
+        pass
+    def run(self, frame):
+        if 0:
+            yield None
+    @property
+    def variables(self):
+        # return the list of variables that will be bound by this iterator
+        raise NotImplementedError()
+    @property
+    def consolidated(self):
+        # we need to know if this is a consolidated iterator, so that we can determine if it is legal at this point in time
+        raise NotImplementedError()
+
+
+class UnionIterator(Iterator):
+    def __init__(self, partition, variable, a, b):
+        self.partition = partition
+        self.variable = variable
+        self.a = a
+        self.b = b
+    def bind_iterator(self, frame, variable, value):
+        pass
+    def run(self, frame):
+        # this needs to identify the domain of the two iterators, and the
+        # combine then such that it doesn't loop twice.  We are also going to
+        # need to turn of branches of a partition when they are not productive.
+        if 0:
+            yield None
+        assert False  # TODO
+
+
+class RemapVarIterator(Iterator):
+    def __init__(self, remap, wrapped):
+        self.remap = remap
+        self.wrapped = wrapped
+    def run(self, frame):
+        yield from self.wrapped.run(frame)
+    def bind_iterator(self, frame, variable, value):
+        assert False  # TODO
+
+
+
+
 
 ####################################################################################################
 # Visitor and base definition for the core rewrites
@@ -298,14 +352,14 @@ class PartitionVisitor(Visitor):
 getPartitions = PartitionVisitor()
 
 @getPartitions.default
-def getPartitions_default(self):
+def getPartitions_default(self, frame):
     # go into the children by default, and see if they provide some way in which
     # they can be partitioned
     for c in self.children:
-        yield from getPartitions(c)
+        yield from getPartitions(c, frame)
 
 
-def runPartition(frame, R, partition):
+def runPartition(R, frame, partition):
     # this should yield different Frame, R pairs using the selected
     # partitionining scheme we use an iterator as we would like to be lazy, but
     # this iterator __must__ be finite, in that we could run
@@ -325,16 +379,44 @@ def runPartition(frame, R, partition):
     yield frame, R
 
 
-loop = Visitor()
+# loop = Visitor()
 
-@loop.default
-def loop_default(self, frame, callback, bind_all):
-    callback(self, frame)
+# @loop.default
+# def loop_default(self, frame, callback):
+#     callback(self, frame)
 
-@loop.define(Terminal)
-def loop_terminal(self, frame, callback, bind_all):
-    if self.multiplicity != 0:
-        callback(self, frame)
+# @loop.define(Terminal)
+# def loop_terminal(self, frame, callback):
+#     if self.multiplicity != 0:
+#         callback(self, frame)
+
+def loop_partition(R, frame, callback, partition):
+    for bd in partition.run(frame):
+        # make a copy of the frame for now would like to just modify the frame,
+        # and track which variables are bound instead, so that this doesn't have
+        # to make copies.  That is probably something that would become a
+        # worthwhile optimization in the future.
+        f = Frame(frame)
+        try:
+            for var, val in bd.items():  # we can't use update here as the names on variables are different from the values in the frame
+                var.setValue(f, val)
+            s = simplify(R, f)
+            callback(s, f)
+        except UnificationFailure:
+            pass
+
+
+def loop(R, frame, callback, partition=None):
+    if partition is None:
+        # then we need to select some partition to use, which will mean choosing
+        # which one of theses is "best"?
+        parts = getPartitions(R, frame)
+        for p in parts:  # just choose something, and ensure that we can iterate this whole list without a problem
+            partition = p
+
+    assert isinstance(partition, Iterator)
+
+    loop_partition(R, frame, callback, partition)
 
 
 ####################################################################################################
@@ -350,6 +432,9 @@ class Intersect(RBaseType):
     @property
     def children(self):
         return self._children
+
+    def rewrite(self, rewriter):
+        return intersect(*(rewriter(c) for c in self._children))
 
 def intersect(*children):
     mul = 1
@@ -396,12 +481,17 @@ class Partition(RBaseType):
         for v in self.children:
             yield v[0]
 
+    def rewrite(self, rewriter):
+        assert False  # TODO: loop over the children
+
 def partition(unioned_vars, children):
     # construct a partition
+    if all(isinstance(c, Terminal) for c in children):
+        return Terminal(sum(c.multiplicity for c in children))
+
     return Partition(unioned_vars, tuple((c, (None,)*len(unioned_vars)) for c in children))
 
 
-# these are now conceptually not written on the class
 @simplify.define(Partition)
 def simplify_partition(self :Partition, frame: Frame):
     var_vals = tuple(u.getValue(frame) for u in self.unioned_vars)
@@ -419,7 +509,7 @@ def simplify_partition(self :Partition, frame: Frame):
 
 
 @getPartitions.define(Partition)
-def getPartitions_partition(self :Partition):
+def getPartitions_partition(self :Partition, frame):
     yield self
     assert False
     # TODO need to determine which variables we can also iterate, so this means
@@ -451,7 +541,13 @@ def simplify_unify(self, frame):
     return self
 
 
-
+# lift and lower should probably be their own distinct operators in the code, so
+# that it can do partial aggregation of an intermediate result.  This would be
+# better for reusing an intermediate result.  the lift part needs to be done
+# before memoization and aggregation takes place, whereas the lower part needs
+# to happen after the result of the aggregation that combine the values
+# together.  So they really shouldn't be referenced on this object.  Maybe only
+# combine and combine_multiplicity.
 class AggregatorOpBase:
     def lift(self, x): raise NotImplementedError()
     def lower(self, x): raise NotImplementedError()
@@ -479,7 +575,7 @@ class Aggregator(RBaseType):
         self.aggregator = aggregator
     @property
     def vars(self):
-        return (self.ret, *self.head_vars)
+        return (self.result, self.bodyRes, *self.head_vars)
     @property
     def children(self):
         return (self.body,)
@@ -499,7 +595,22 @@ def simplify_aggregator(self, frame):
         # In this case there should be something which is able to iterate the
         # different frames and their associated bodies.  If the bodies are not
         # fully grounded out, then we should attempt to handle that somehow?
-        assert False
+        agg_result = None
+        def loop_cb(R, frame):
+            nonlocal agg_result
+            # if this isn't a final state, then I suppose that we are going to
+            # need to perform more loops?
+            assert isinstance(R, FinalState)
+
+            if agg_result is not None:
+                agg_result = self.aggregator.combine(agg_result, self.bodyRes.getValue(frame))
+            else:
+                agg_result = self.bodyRes.getValue(frame)
+
+        loop(body, frame, loop_cb)
+
+        self.result.setValue(frame, agg_result)
+        return terminal(1)  # return that we are done and the result of aggregation has been computed
 
     # There also needs to be some handling in the case that the result variable
     # from the body is fully grounded, but the head variables are not grounded.
