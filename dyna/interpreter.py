@@ -88,6 +88,9 @@ class Terminal(RBaseType):
         return self.multiplicity == 0
 
 
+# if might be better to make this its own top level thing.  We might want to
+# keep this around in the case that we can eventually determine that there is
+# something else which can eleminate a branch
 class _Error(Terminal):
     def __init__(self):
         super().__init__(0)
@@ -322,6 +325,17 @@ def runPartition(frame, R, partition):
     yield frame, R
 
 
+loop = Visitor()
+
+@loop.default
+def loop_default(self, frame, callback, bind_all):
+    callback(self, frame)
+
+@loop.define(Terminal)
+def loop_terminal(self, frame, callback, bind_all):
+    if self.multiplicity != 0:
+        callback(self, frame)
+
 
 ####################################################################################################
 # the core R structure such as intersect and partition
@@ -356,7 +370,9 @@ def intersect(*children):
 
 @simplify.define(Intersect)
 def simplify_intersect(self :Intersect, frame: Frame):
-    return intersect(*[simplify(c, frame) for c in self.children])
+    # TODO: this should handle early stoppin in the case that it gets a
+    # multiplicity of zero.
+    return intersect(*(simplify(c, frame) for c in self.children))
 
 
 class Partition(RBaseType):
@@ -440,6 +456,11 @@ class AggregatorOpBase:
     def lift(self, x): raise NotImplementedError()
     def lower(self, x): raise NotImplementedError()
     def combine(self, x, y): raise NotImplementedError()
+    def combine_multiplicity(self, x, y, mul):
+        # x + (y * mul)
+        for _ in range(mul):
+            x = self.combine(x, y)
+        return x
 
 class AggregatorOpImpl(AggregatorOpBase):
     def __init__(self, op): self.op = op
@@ -469,4 +490,19 @@ def simplify_aggregator(self, frame):
     # this needs to combine the results from multiple different partitions in the case that the head variables
     # are fully ground, otherwise, we are going to be unable to do anything
     # if we can run a deterministic operation then that should happen
+
     body = simplify(self.body, frame)
+    if body.isEmpty():
+        return body
+
+    if all(v.isBound(frame) for v in self.head_vars):
+        # In this case there should be something which is able to iterate the
+        # different frames and their associated bodies.  If the bodies are not
+        # fully grounded out, then we should attempt to handle that somehow?
+        assert False
+
+    # There also needs to be some handling in the case that the result variable
+    # from the body is fully grounded, but the head variables are not grounded.
+    # (Meaning that this is something like `f(X) += 5.`)
+
+    return Aggregator(self.result, self.head_vars, self.bodyRes, self.aggregator, body)

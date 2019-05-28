@@ -31,5 +31,36 @@ def test_two_add():
     assert ret2.getValue(frame) == 24
 
 
+def test_simple_range():
+    rexpr, ret = M.range(1,2,3)
+
+    r = {ret: constant(True)}
+    rexpr = rexpr.rename_vars(lambda x: r.get(x,x))
+
+    frame = Frame()
+    frame[1] = 4  # 1 < 4 < 7
+    frame[2] = 1
+    frame[3] = 7
+
+    rr = simplify(rexpr, frame)
+    assert rr == Terminal(1)
+
+
 def test_sum_aggregator():
-    pass
+    # f(X, Y) += R for R:X..Y.
+    v1,v2,v3,v4 = variables_named(1,2,3,4)
+
+    rexpr, ret1 = M.range(v1,v2,v3)
+    rexpr = Aggregator(v4, (v2,v3), v1, AggregatorOpImpl(lambda a,b: a+b), rexpr)
+
+    r = {ret1: constant(True)}
+    rexpr = rexpr.rename_vars(lambda x: r.get(x,x))
+
+    frame = Frame()
+    v2.setValue(frame, 1)
+    v3.setValue(frame, 4)
+
+    rr = simplify(rexpr, frame)
+
+    assert rr == Terminal(1)
+    assert v4.getValue(frame) == 6

@@ -187,16 +187,28 @@ struct TermContainer {
     // allow assignments between two operators
     if(other.is_ptr()) {
       if(other.ptr == nullptr) {
+        if(is_ptr()) ptr->decr_ref();
         ptr = nullptr;
       } else {
+        other.ptr->incr_ref();  // increase the ref before we decrease the ref in the case that these are the same objects
+        if(is_ptr()) ptr->decr_ref();
         ptr = other.ptr;
-        ptr->incr_ref();
-        // this needs reference counting to increase/decrease
       }
+    } else {
+      if(is_ptr()) ptr->decr_ref();
+      // then this is a simple value, and we should be able to just assign the value
+      ptr = other.ptr; // just copy all of the data
     }
     return *this;
   }
+
+  bool atomic_set(const TermContainer &previousValue, const TermContainer &newValue) {
+    // if this is threaded code, then this should be a compare and swap
+    assert(false);
+  }
 };
+
+static_assert(sizeof(TermContainer) == sizeof(void*));
 
 template<typename Visitor>
 auto visitOp(Visitor visitor, const TermContainer &a) {

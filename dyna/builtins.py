@@ -23,7 +23,7 @@ def modedop_simplify(self, frame):
     if mode in self.det:
         vals = tuple(v.getValue(frame) for v in self.vars)
         r = self.det[mode](*vals)
-        if isinstance(r, Terminal):
+        if isinstance(r, Terminal):  # atm error is an instance of terminal
             return r
         if r == ():
             self  # made no progress
@@ -42,7 +42,20 @@ def modedop_getPartitions(self, frame):
     if mode in self.nondet:
         # then this needs to get the iterator from the object and yield that
         # as a partition that can handle binding the particular variable
-        assert False
+
+        vals = tuple(v.getValue(frame) for v in self.vars)
+        r = self.det[mode](*vals)
+
+        # these are cases which failed unification or something?  We need to
+        # handle reporting errors in these cases as empty intersections
+        assert r != () and not isinstance(r, Terminal)
+
+        for var, val in zip(self.vars, r):
+            if hasattr(val, '__iter__'):
+                # then this is a variable that we can iterate, so we want to do
+                # that.  This should yield some iterator wrapper that is going
+                # return the map to a variable.
+                # This might also want to be able to check contains, in which case, this should
 
 
 def infer_modes(d):
@@ -157,7 +170,7 @@ dyna_system.define_term('/', 2, div)
 
 
 range_v = moded_op('range', {
-    (False, True, True, True):  lambda x,a,b,c: (a < b < c and isinstance(a, int), a, b, c) ,
+    (False, True, True, True):  lambda x,a,b,c: (b <= a < c and isinstance(a, int), a, b, c) ,
 }, nondet={
     (False, False, True, True): lambda x,a,b,c: (True, range(b,c), b, c) ,
 })

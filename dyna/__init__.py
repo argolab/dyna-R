@@ -4,7 +4,7 @@ from . import builtins
 from .interpreter import (
     RBaseType, Terminal, Variable, variables_named, constant, Frame,
     simplify, getPartitions,
-    intersect as Intersect, partition as Partition, Unify
+    intersect as Intersect, partition as Partition, Unify, Aggregator, AggregatorOpImpl, AggregatorOpBase
 )
 
 # This is a shortcut for writing code quickly where we are going to lookup a method
