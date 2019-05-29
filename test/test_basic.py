@@ -77,7 +77,7 @@ def test_basic_union():
 
     rpart = Partition((a1, lret), (rexpr1, rexpr2))
 
-    rexpr = Aggregator(r1, (a1,), lret, AggregatorOpImpl(sum), rpart)
+    rexpr = Aggregator(r1, (a1,), lret, AggregatorOpImpl(lambda x,y: x+y), rpart)
     r = {ret1: constant(True), ret2: constant(True)}
     rexpr = rexpr.rename_vars(lambda x: r.get(x,x))
 

@@ -11,10 +11,6 @@ class RBaseType:
         self._hashcache = None
         self._constructed_from = None  # so that we can track what rewrites / transformations took place to get here
 
-    # def get_partitions(self, frame):
-    #     for c in self.children:
-    #         yield from c.get_partitions(frame)
-
     @property
     def vars(self):
         return ()
@@ -50,12 +46,6 @@ class RBaseType:
             return all(a.possibly_equal(b) for a,b in zip(self.children,other.children))
         return False
 
-    # def run_cb(self, frame, callback):
-    #     frame, r = self.simplify(frame)
-    #     if not r.isEmpty():
-    #         return callback(frame, r)
-    #     return frame, r
-
     def isEmpty(self):
         return False
 
@@ -63,14 +53,6 @@ class RBaseType:
         yield from self.vars
         for c in self.children:
             yield from c.all_vars()
-
-
-    # def __add__(self, other):
-    #     # in this case, it would be the union between these two expressions, wihch is not clear?
-    #     if isinstance(other, Terminal):
-    #         return other+self
-    # def __mul__(self, other):
-    #     return Intersect(self, other)
 
     def __bool__(self):
         raise RuntimeError('Should not check Rexpr with bool test, use None test')
@@ -413,17 +395,6 @@ def runPartition(R, frame, partition):
     yield frame, R
 
 
-# loop = Visitor()
-
-# @loop.default
-# def loop_default(self, frame, callback):
-#     callback(self, frame)
-
-# @loop.define(Terminal)
-# def loop_terminal(self, frame, callback):
-#     if self.multiplicity != 0:
-#         callback(self, frame)
-
 def loop_partition(R, frame, callback, partition):
     for bd in partition.run(frame):
         # make a copy of the frame for now would like to just modify the frame,
@@ -528,12 +499,6 @@ def partition(unioned_vars, children):
 
 @simplify.define(Partition)
 def simplify_partition(self :Partition, frame: Frame):
-    #var_vals = tuple(u.getValue(frame) for u in self._unioned_vars)
-    # def merge_tuples(a, b):
-    #     for i,j in zip(a,b):
-    #         if i!=j: raise 123  # something that indicates that these are not equal
-    #         yield i or j  # return the one that is not null
-
     incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
     incoming_values = [v.getValue(frame) for v in self._unioned_vars]
 
@@ -571,6 +536,9 @@ def simplify_partition(self :Partition, frame: Frame):
                               # internal data structure is for partition
         for v in vv:
             ll.append((k, v))
+
+    if all(isinstance(l[1], Terminal) for l in ll):
+        return Terminal(sum(l[1].multiplicity for l in ll))
 
     return Partition(self._unioned_vars, ll)
 
@@ -615,7 +583,7 @@ def getPartitions_partition(self :Partition, frame):
                 vm[i] = SingleIterator(self._unioned_vars[i], val)
 
         for it in getPartitions(child, frame):
-            if isinstance(it, Partition):
+            if isinstance(it, Partition):  # if this is not consolidated, then we are going to want to bind a variable
                citers.append(it)  # these are just partitions, so buffer these I suppose
             else:
                 # then this is going to be some variable that
