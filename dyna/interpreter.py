@@ -22,7 +22,7 @@ class RBaseType:
     def children(self):
         return ()
     def _tuple_rep(self):
-        return (self.__class__.__name__, *(c._tuple_rep for c in self.children))
+        return (self.__class__.__name__, *(c._tuple_rep() for c in self.children))
     def __repr__(self):
         return pprint.pformat(self._tuple_rep())
     def __eq__(self, other):
@@ -256,20 +256,29 @@ class Iterator:
 
 
 class UnionIterator(Iterator):
-    def __init__(self, partition, variable, a, b):
+    def __init__(self, partition, variable, iterators):
         self.partition = partition
         self.variable = variable
-        self.a = a
-        self.b = b
+        self.iterators = iterators
     def bind_iterator(self, frame, variable, value):
         pass
     def run(self, frame):
         # this needs to identify the domain of the two iterators, and the
         # combine then such that it doesn't loop twice.  We are also going to
         # need to turn of branches of a partition when they are not productive.
-        if 0:
-            yield None
-        assert False  # TODO
+
+        for i in range(len(self.iterators)):
+            for val in self.iterators[i].run(frame):
+                # check if any of the previous iterators produced this value
+                vv = val[self.variable]
+                emit = True
+                for j in range(i):
+                    # check the previous branches to see if they already emitted this value
+                    if self.iterators[j].bind_iterator(frame, self.variable, vv):
+                        emit = False
+                        break
+                if emit:
+                    yield val
 
 
 class RemapVarIterator(Iterator):
@@ -282,7 +291,17 @@ class RemapVarIterator(Iterator):
         assert False  # TODO
 
 
-
+class SingleIterator(Iterator):
+    # iterator over a single constant value
+    def __init__(self, variable, value):
+        self.variable = variable
+        self.value = value
+    def run(self, frame):
+        yield {self.variable: self.value}
+    def bind_iterator(self, frame, variable, value):
+        assert self.variable == variable
+        assert self.value == value
+        assert False  # TODO
 
 
 ####################################################################################################
@@ -561,8 +580,6 @@ def simplify_partition(self :Partition, frame: Frame):
 
 @getPartitions.define(Partition)
 def getPartitions_partition(self :Partition, frame):
-    yield self
-    assert False
     # TODO need to determine which variables we can also iterate, so this means
     # looking at the results from all of the children branches and then
     # filtering out things that are not going to work.  if variables are renamed
@@ -578,13 +595,56 @@ def getPartitions_partition(self :Partition, frame):
     # partitions, then there can be a lot of different cases?  If there are lots of branches, then that could become problematic
 
     # map of all of the children branches
-    vmap = [[None]*len(self._unioned_vars) for _ in range(len(self._children))]
+    #vmap = [[None]*len(self._unioned_vars) for _ in range(len(self._children))]
 
-    for p in self.children:
+    citers = []
+    incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
+
+    vmap = {v: i for i, v in enumerate(self._unioned_vars)}
+
+    vmaps = []
+
+    for vals, child in self._children:
         # need to get all of the iterators from this child branch, in the case
         # that a variable is already bound want to include that.  If a variable
         # is not in the union map, then we want to ignore it
-        pass
+
+        vm = [None]*len(self._unioned_vars)
+        for i, val in enumerate(vals):
+            if val is not None:
+                vm[i] = SingleIterator(self._unioned_vars[i], val)
+
+        for it in getPartitions(child, frame):
+            if isinstance(it, Partition):
+               citers.append(it)  # these are just partitions, so buffer these I suppose
+            else:
+                # then this is going to be some variable that
+                if it.variable in vmap:
+                    if vm[vmap[it.variable]] is None:  # this should potentially take more than 1 iterator rather than the first
+                        vm[vmap[it.variable]] = it
+        vmaps.append(vm)
+
+    # we are going to have to union all of the different branches of a variable
+    # and if possible, we are going to indicate that we can iterate this variable
+    for i, var in enumerate(self._unioned_vars):
+        if incoming_mode[i]:
+            continue
+        vs = [v[i] for v in vmaps]
+        if all(v is not None for v in vs):
+            # then we can iterate this variable
+
+            yield UnionIterator(self, var, vs)
+
+    # yield any partitions which can be branched (after the unions over variables
+
+    # there needs to be some partition iterator, which loops over the branches
+    # which are potentially not non-overlapping.  In which case we are going to
+    # want to collect those as more nested partitions.  I suppose that this can
+    # handle if there are
+
+
+    # yield self
+    # yield from citers
 
 
 class Unify(RBaseType):
