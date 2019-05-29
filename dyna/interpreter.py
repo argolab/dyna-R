@@ -152,6 +152,10 @@ class VariableId(Variable):
         # in C++ the junk would probably just be uninitalizied memory
         return frame.get(self.__name, InvalidValue)
 
+    def _unset(self, frame):
+        if self.__name in frame:
+            del frame[self.__name]
+
     def setValue(self, frame, value):
         if self.__name in frame:
             # then check that the value is equal
@@ -344,6 +348,17 @@ def simplify_terminal(self, frame):
     return self
 
 
+def saturate(R, frame):
+    while True:
+        # the frame is getting modified and the R is returning potentially new
+        # things.  by saturating this, we are going to run until there is
+        # nothing that we are able to do.
+        last_R = R
+        R = simplify(R, frame)
+        if R == last_R:
+            break
+    return R, frame
+
 
 class PartitionVisitor(Visitor):
     def __call__(self, R, *args, **kwargs):
@@ -466,20 +481,20 @@ class Partition(RBaseType):
     """
     def __init__(self, unioned_vars :Tuple, children :Tuple[Tuple[RBaseType, Tuple]]):
         super().__init__()
-        self.unioned_vars = unioned_vars
+        self._unioned_vars = unioned_vars
         # the children should be considered immutable once placed on the partition class
         # though we are going to construct this class via
 
         # make the children simple in that we are just going to scan the list in the case that
-        self.children = tuple(children)
+        self._children = tuple(children)
 
     @property
     def vars(self):
-        return self.unioned_vars
+        return self._unioned_vars
     @property
     def children(self):
-        for v in self.children:
-            yield v[0]
+        for v in self._children:
+            yield v[1]
 
     def rewrite(self, rewriter):
         assert False  # TODO: loop over the children
@@ -489,23 +504,59 @@ def partition(unioned_vars, children):
     if all(isinstance(c, Terminal) for c in children):
         return Terminal(sum(c.multiplicity for c in children))
 
-    return Partition(unioned_vars, tuple((c, (None,)*len(unioned_vars)) for c in children))
+    return Partition(unioned_vars, tuple(((None,)*len(unioned_vars), c) for c in children))
 
 
 @simplify.define(Partition)
 def simplify_partition(self :Partition, frame: Frame):
-    var_vals = tuple(u.getValue(frame) for u in self.unioned_vars)
-    def merge_tuples(a, b):
-        for i,j in zip(a,b):
-            if i!=j: raise 123  # something that indicates that these are not equal
-            yield i or j  # return the one that is not null
+    #var_vals = tuple(u.getValue(frame) for u in self._unioned_vars)
+    # def merge_tuples(a, b):
+    #     for i,j in zip(a,b):
+    #         if i!=j: raise 123  # something that indicates that these are not equal
+    #         yield i or j  # return the one that is not null
+
+    incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
+    incoming_values = [v.getValue(frame) for v in self._unioned_vars]
 
     nc = defaultdict(list)
-    assert False
-    for k,v in self.children.items():
+
+    # depending on the storage strategy of this, going to need to have something
+    # better?  This is going to require that
+    for grounds, Rexpr in self._children:
         # this needs to check that the assignment of variables is consistent otherwise skip it
         # then this needs to figure out what
-        pass
+
+        # first determine if this element matches the values
+        should_run = all((not a or c is None or b == c) for a,b,c in zip(incoming_mode, incoming_values, grounds))
+
+        if should_run:
+            # in the case that an incoming argument is already bound then we are going to want to record this under that new operation
+            # we are first going to need to set the value of any variable that should already be bound
+
+            for var, val in zip(self._unioned_vars, grounds):
+                if val is not None:
+                    var.setValue(frame, val)
+
+            res = simplify(Rexpr, frame)
+            # this would have bound new values in the frame potentially, so we going to unset those (if they were unset on being called)
+            nkey = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self._unioned_vars)
+            for var, imode in zip(self._unioned_vars, incoming_mode):
+                if not imode:
+                    var._unset(frame)  # TODO: figure out a better way to do this in python
+
+            nc[nkey].append(res)
+
+    ll = []
+    for k, vv in nc.items():  # the partition should probably have more of a
+                              # dict structure, this needs to match what the
+                              # internal data structure is for partition
+        for v in vv:
+            ll.append((k, v))
+
+    return Partition(self._unioned_vars, ll)
+
+
+
 
 
 @getPartitions.define(Partition)
@@ -518,7 +569,21 @@ def getPartitions_partition(self :Partition, frame):
     # on the different branches, then it is possible that the iterators will
     # have to be able to handle those renamings.
 
+    # this needs to determine which partitions in the children might be useful.
+    # If there are variables that can be iterated, then we are going to have to
+    # construct the union iterators.  If there are further nested partitions,
+    # then we are also going to have to determine those methods
+
+    # if we are collecting different partition methods from the children
+    # partitions, then there can be a lot of different cases?  If there are lots of branches, then that could become problematic
+
+    # map of all of the children branches
+    vmap = [[None]*len(self._unioned_vars) for _ in range(len(self._children))]
+
     for p in self.children:
+        # need to get all of the iterators from this child branch, in the case
+        # that a variable is already bound want to include that.  If a variable
+        # is not in the union map, then we want to ignore it
         pass
 
 
