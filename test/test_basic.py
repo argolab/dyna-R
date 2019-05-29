@@ -68,7 +68,7 @@ def test_sum_aggregator():
 
 def test_basic_union():
     # f(X) += R for R:1..X.
-    # f(X) += 2 for R:X..20.
+    # f(X) += R for R:X..20.
 
     a1, r1, lret = variables_named(1, 2, 3)
 
@@ -89,3 +89,30 @@ def test_basic_union():
     assert rr == Terminal(1)
 
     assert r1.getValue(frame) == 190
+
+
+def test_overlap_union():
+    # f(X) += R for R:1..X*2.
+    # f(X) += R for R:X..20.
+
+    a1, r1, lret = variables_named(1, 2, 3)
+
+    rexpr_mul, a2mul = M.mul(constant(2), a1)
+    rexpr1, ret1 = M.range(lret, constant(1), a2mul)
+    rexpr1 = Intersect(rexpr1, rexpr_mul)
+    rexpr2, ret2 = M.range(lret, a1, constant(20))
+
+    rpart = Partition((a1, lret), (rexpr1, rexpr2))
+
+    rexpr = Aggregator(r1, (a1,), lret, AggregatorOpImpl(lambda x,y: x+y), rpart)
+    r = {ret1: constant(True), ret2: constant(True)}
+    rexpr = rexpr.rename_vars(lambda x: r.get(x,x))
+
+    frame = Frame()
+    a1.setValue(frame, 5)
+
+    rr = simplify(rexpr, frame)
+
+    assert rr == Terminal(1)
+
+    assert r1.getValue(frame) == 225

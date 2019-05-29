@@ -25,6 +25,15 @@ class SystemContext:
         assert (name, arity) not in self.terms_as_defined
         self.terms_as_defined[(name, arity)] = rexpr
 
+    def add_to_term(self, name, arity, rexpr):
+        # check that the aggregator is the same and the combine the expressions
+        # together anything that depends on the value of the expression will
+        # need to be invalided.
+        assert False
+
+    def define_infered(self, required :RBaseType, added :RBaseType):
+        pass
+
     def call_term(self, name, arity) -> RBaseType:
         # this should return a method call to a given term.
         # this should be lazy?  So that

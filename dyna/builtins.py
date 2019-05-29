@@ -171,7 +171,7 @@ dyna_system.define_term('+', 2, add)
 
 
 sub = lambda a,b,c: add(b,a,c)
-dyna_system.define_term('sub', 2, sub)
+dyna_system.define_term('sub', 2, sub)  # The pattern matching is happing on the ModedOp, so this should still pattern match with the add op
 dyna_system.define_term('-', 2, sub)
 
 mul = moded_op('mul', {
@@ -327,3 +327,34 @@ class ArrayEinsum(RBaseType):
 # builtins = {}
 # for k,v in _builtins.items():
 #     builtins[(k, v.arity)] = v
+
+
+####################################################################################################
+# infered constraints
+
+# THIS ISN'T WORKING ATM, just brainstorming this
+dyna_system.define_infered(
+    intersect(int_v('v'), gteq('v', 'a'), lt('v', 'b')),
+    range_v('v', 'a', 'b'))
+
+dyna_system.define_infered(
+    intersect(int_v('v'), gt('v', 'a'), lt('v', 'b')),
+    # then we need to add a new variable that is 1 greater than a for the range constraint as it normally includes the lower bound
+    intersect(add('a', constant(1), ret='_ap1'), range_v('v', '_ap1', 'b'))  # the `_` would indicate that this needs to allocate a new variable in this case
+)
+
+dyna_system.define_infered(
+    # a < b < c => a < c
+    intersect(lt('a', 'b'), lt('b', 'c')),
+    lt('a', 'c')
+)
+
+dyna_system.define_infered(
+    intersect(lt('a', 'b'), lt('b', 'a')),
+    Terminal(0)  # failure, there is no value such that a < b & b < a
+)
+
+dyna_system.define_infered(
+    intersect(lteq('a', 'b'), lteq('b', 'a')),
+    Unify('a', 'b')  # a <= b & b <= a  ==>  a == b
+)

@@ -54,12 +54,30 @@ class RBaseType:
         for c in self.children:
             yield from c.all_vars()
 
+
+    def __call__(self, *args, ret=None):
+        if ret is None:
+            ret = constant(True)  # just want the last variable to be true
+        else:
+            ret = variables_named(ret)[0]
+        rm = {ret_variable: ret}
+        args = variables_named(*args)
+        rm.update(dict((VariableId(a), b) for a,b in zip(iter(int, 1), args)))
+
+        # TODO: should this rename variables that are not referenced as
+        # arguments?  In which case, this is going to be constructing new
+        # variables (like what M. does)
+
+        return self.rename_vars(lambda x: rm.get(x,x))
+
     def __bool__(self):
         raise RuntimeError('Should not check Rexpr with bool test, use None test')
+
 
 class FinalState(RBaseType):
     __slots__ = ()
     pass
+
 
 class Terminal(FinalState):
     __slots__ = ('multiplicity',)
@@ -85,8 +103,8 @@ class _Error(FinalState):
 error = _Error()
 
 # do not duplicate these as much as possible
-_failure = Terminal(0)
-_done = Terminal(1)
+# _failure = Terminal(0)
+# _done = Terminal(1)
 
 def terminal(n):
     # if n == 0:
@@ -177,9 +195,27 @@ class ConstantVariable(Variable):
             raise UnificationFailure()
         return True
 
+class UnitaryVariable(Variable):
+    # a variable that is not referenced in more than 1 place, so we are going to ignore the value, it isn't even a constant
+    __slots__ = ()
+    def __str__(self):
+        return 'UNITARY'
+    # __eq__ and __hash__ can just be the object version as we are not going to be equal to any other variable
+    def isBound(self, frame):
+        return False
+    def getValue(self, frame):
+        return InvalidValue
+    def setValue(self, frame, value):
+        assert value is not InvalidValue  # ignore setting a value as no one will read it.....
+        return True
+
 def variables_named(*vars):
     return tuple((VariableId(v) if not isinstance(v, Variable) else v for v in vars))
 
+# R-exprs that are newely created, but not included will use 0,1,2,.... for the
+# arguments and this variable as its return value.  We can then rewrite the
+# expression such that the variables in an R-expr match the context they are
+# being used in
 ret_variable = VariableId('Return')
 
 def constant(v):
@@ -193,30 +229,30 @@ class Frame(dict):
         return pprint.pformat(nice, indent=1)
 
 
-class _EmptyFrame(Frame):
-    __slots__ = ()
-    def __setitem__(self, var, val):
-        assert False  # don't set on this frame directly, can return a new instance that will
-    # this is an empty dict, so bool(self) == False
-    def update(self, *args, **kwargs):
-        assert False
+# class _EmptyFrame(Frame):
+#     __slots__ = ()
+#     def __setitem__(self, var, val):
+#         assert False  # don't set on this frame directly, can return a new instance that will
+#     # this is an empty dict, so bool(self) == False
+#     def update(self, *args, **kwargs):
+#         assert False
 
-emptyFrame = _EmptyFrame()
+# emptyFrame = _EmptyFrame()
 
-class _FailedFrame(Frame):
-    __slots__ = ()
-    def setVariable(self, variable, value):
-        return self
-    def isFailed(self):
-        return True
-    def remove(self, variable):
-        pass
-    def __setitem__(self, var, val):
-        assert False  # don't set values on the failed frame
-    def __repr__(self):
-        return '{FailedFrame, ...=...}'
+# class _FailedFrame(Frame):
+#     __slots__ = ()
+#     def setVariable(self, variable, value):
+#         return self
+#     def isFailed(self):
+#         return True
+#     def remove(self, variable):
+#         pass
+#     def __setitem__(self, var, val):
+#         assert False  # don't set values on the failed frame
+#     def __repr__(self):
+#         return '{FailedFrame, ...=...}'
 
-failedFrame = _FailedFrame()
+# failedFrame = _FailedFrame()
 
 ####################################################################################################
 # Iterators and other things

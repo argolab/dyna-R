@@ -10,6 +10,8 @@ from .interpreter import (
 # This is a shortcut for writing code quickly where we are going to lookup a method
 # so we can write something like `M.add(1,2,3)`
 class M(object):
+    # TODO?: maybe shouldn't have this return the resulting variable, it feels
+    # that from unit tests that it is easier to specify the return variable.
     def __getattribute__(self, n):
         def f(*args):
             r = context.dyna_system.lookup_term((n, len(args)))
