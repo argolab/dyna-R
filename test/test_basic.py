@@ -145,6 +145,15 @@ def test_basic_method_call():
     assert interpreter.ret_variable.getValue(frame) == 3
 
 
+def test_list_length():
+    list_len = context.dyna_system.call_term('list_length', 2)
 
-    # def test_list_length():
-#     # need to
+    lst = Term.fromlist([1,2,3,4])
+
+    frame = Frame()
+    frame[1] = lst
+
+    rr = saturate(list_len, frame)
+    assert rr == Terminal(1)
+    assert interpreter.ret_variable.getValue(frame) == True
+    assert frame[0] == 4

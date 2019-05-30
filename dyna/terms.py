@@ -32,7 +32,13 @@ class Term:
 
     def __hash__(self):
         # this should be cached?
-        return hash(self.name) ^ reduce(operator.xor, map(hash, self.arguments))
+        return hash(self.name) ^ reduce(operator.xor, map(hash, self.arguments), 0)
+
+    def __str__(self):
+        return f'{self.__name}({", ".join(map(str, self.__arguments))})'
+
+    def __repr__(self):
+        return str(self)
 
     # convert between the dyna linked list version of a list and python's list
     def aslist(self):
@@ -69,6 +75,9 @@ class BuildStructure(RBaseType):
             remap(self.result),
             map(remap, self.arguments)
         )
+
+    def _tuple_rep(self):
+        return self.__class__.__name__, self.name, self.result, self.arguments
 
 
 @simplify.define(BuildStructure)
@@ -249,6 +258,9 @@ class CallTerm(RBaseType):
         assert not self.parent_calls_blocker  # TODO:????
         return CallTerm(dict((k, remap(v)) for k,v in self.var_map.items()), self.dyna_system, self.term_ref)
 
+    def _tuple_rep(self):
+        return self.__class__.__name__, self.term_ref, self.var_map
+
 class CalledTerm(RBaseType):
 
     def __init__(self, child, term_ref, argument_tracker):
@@ -293,4 +305,6 @@ def simplify_call(self, frame):
 
     # we might want to run simplify on this the first time?
     # this still doesn't handle the cases where we are going to be backwards chaining
-    return self.dyna_system.lookup_term(self.term_ref).rename_vars(renamer)
+    R = self.dyna_system.lookup_term(self.term_ref)
+    R2 = R.rename_vars(renamer)
+    return R2

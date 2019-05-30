@@ -64,13 +64,23 @@ class RBaseType:
             ret = variables_named(ret)[0]
         rm = {ret_variable: ret}
         args = variables_named(*args)
-        rm.update(dict((VariableId(a), b) for a,b in zip(iter(int, 1), args)))
+        rm.update(dict((VariableId(a), b) for a,b in enumerate(args)))
+
+        #import ipdb; ipdb.set_trace()
+
+        def remapper(v):
+            if isinstance(v, UnitaryVariable) or isinstance(v, ConstantVariable):
+                return v
+            if v not in rm:
+                rm[v] = VariableId()
+            return rm[v]
 
         # TODO: should this rename variables that are not referenced as
         # arguments?  In which case, this is going to be constructing new
         # variables (like what M. does)
 
-        return self.rename_vars(lambda x: rm.get(x,x))
+        r = self.rename_vars(remapper) #lambda x: rm.get(x,x))
+        return r
 
     def __bool__(self):
         raise RuntimeError('Should not check Rexpr with bool test, use None test')
@@ -92,6 +102,8 @@ class Terminal(FinalState):
         return hash(type(self)) ^ self.count
     def isEmpty(self):
         return self.multiplicity == 0
+    def _tuple_rep(self):
+        return (self.__class__.__name__, self.multiplicity)
 
 
 # if might be better to make this its own top level thing.  We might want to
@@ -204,6 +216,8 @@ class UnitaryVariable(Variable):
     # note, this is different from `_` in the source language, as that has to be
     # "referenced" in two places so that it is looped over
     __slots__ = ()
+    def __init__(self):
+        assert False  # Dont use this
     def __str__(self):
         return 'UNITARY'
     # __eq__ and __hash__ can just be the object version as we are not going to be equal to any other variable
@@ -504,7 +518,14 @@ def intersect(*children):
 def simplify_intersect(self :Intersect, frame: Frame):
     # TODO: this should handle early stoppin in the case that it gets a
     # multiplicity of zero.
-    return intersect(*(simplify(c, frame) for c in self.children))
+    vs = []
+    for c in self.children:
+        r = simplify(c, frame)
+        if r.isEmpty():
+            return r
+        vs.append(r)
+    return intersect(*vs)
+# return intersect(*(simplify(c, frame) for c in self.children))
 
 
 class Partition(RBaseType):
@@ -535,6 +556,10 @@ class Partition(RBaseType):
 
     def rewrite(self, rewriter):
         return Partition(self._unioned_vars, tuple((a[0], rewriter(a[1])) for a in self._children))
+
+    def _tuple_rep(self):
+        # though might want to have the representation of what the values are on each branch of the partition
+        return (self.__class__.__name__, self._unioned_vars, *(c._tuple_rep() for c in self.children))
 
 def partition(unioned_vars, children):
     # construct a partition
@@ -575,17 +600,35 @@ def simplify_partition(self :Partition, frame: Frame):
                 if not imode:
                     var._unset(frame)  # TODO: figure out a better way to do this in python
 
-            nc[nkey].append(res)
+            if not res.isEmpty():
+                nc[nkey].append(res)
+
+    if not nc:
+        # then nothing matched, so just return that the partition is empty
+        return Terminal(0)
+
+    set_values = list(next(iter(nc.keys())))
 
     ll = []
     for k, vv in nc.items():  # the partition should probably have more of a
                               # dict structure, this needs to match what the
                               # internal data structure is for partition
+        for i in range(len(self._unioned_vars)):  # identify variables that have the same value on all partitions
+            if set_values[i] != k[i]:
+                set_values[i] = None
+
         for v in vv:
             ll.append((k, v))
 
+    for var, val in zip(self._unioned_vars, set_values):
+        if val is not None:
+            var.setValue(frame, val)
+
     if all(isinstance(l[1], Terminal) for l in ll):
         return Terminal(sum(l[1].multiplicity for l in ll))
+
+    if len(ll) == 1:
+        return ll[0][1]  # then we don't need the partition any more
 
     return Partition(self._unioned_vars, ll)
 
@@ -673,6 +716,9 @@ class Unify(RBaseType):
     def rename_vars(self, remap):
         return unify(remap(self.v1), remap(self.v2))
 
+    def _tuple_rep(self):
+        return self.__class__.__name__, self.v1, self.v2
+
 def unify(a, b):
     if a == b:
         return Terminal(1)
@@ -686,10 +732,10 @@ def unify(a, b):
 @simplify.define(Unify)
 def simplify_unify(self, frame):
     if self.v1.isBound(frame):
-        v2.setValue(frame, self.v1.getValue(frame))
+        self.v2.setValue(frame, self.v1.getValue(frame))
         return terminal(1)
     elif self.v2.isBound(frame):
-        v1.setValue(frame, self.v2.getValue(frame))
+        self.v1.setValue(frame, self.v2.getValue(frame))
         return terminal(1)
     return self
 
@@ -750,6 +796,9 @@ class Aggregator(RBaseType):
             self.aggregator,
             rewriter(self.body)
         )
+
+    def _tuple_rep(self):
+        return self.__class__.__name__, self.result, self.head_vars, self.bodyRes, self.body._tuple_rep()
 
 
 @simplify.define(Aggregator)

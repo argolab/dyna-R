@@ -110,7 +110,7 @@ def moded_op(name, det, *, nondet={}):
 
 # check only works in the fully ground case, so we don't care about any other modes atm
 def check_op(name, arity, op):
-    f = lambda x, *args: (op(*args), *args),
+    f = lambda x, *args: (op(*args), *args)
     d = {
         (False,)+((True,)*arity): f
     }
@@ -181,8 +181,11 @@ dyna_system.define_term('<=', 2, lteq)
 
 # just rewrite in terms of lt so that we can demo the
 # rewriting of range constraints into the range constraint
-gt = lambda a,b: lt(b,a)
-gteq = lambda a,b: lteq(b,a)
+# gt = lambda a,b: lt(b,a)
+# gteq = lambda a,b: lteq(b,a)
+
+gt = lt(1,0,ret=ret_variable)  # just flip the arguments order
+gteq = lteq(1,0,ret=ret_variable)
 
 dyna_system.define_term('gt', 2, gt)
 dyna_system.define_term('>', 2, gt)
@@ -272,32 +275,33 @@ class ArrayEinsum(RBaseType):
 ####################################################################################################
 # infered constraints
 
-# THIS ISN'T WORKING ATM, just brainstorming this
-dyna_system.define_infered(
-    intersect(int_v('v'), gteq('v', 'a'), lt('v', 'b')),
-    range_v('v', 'a', 'b'))
+if 0:
+    # THIS ISN'T WORKING ATM, just brainstorming this
+    dyna_system.define_infered(
+        intersect(int_v('v'), gteq('v', 'a'), lt('v', 'b')),
+        range_v('v', 'a', 'b'))
 
-dyna_system.define_infered(
-    intersect(int_v('v'), gt('v', 'a'), lt('v', 'b')),
-    # then we need to add a new variable that is 1 greater than a for the range constraint as it normally includes the lower bound
-    intersect(add('a', constant(1), ret='_ap1'), range_v('v', '_ap1', 'b'))  # the `_` would indicate that this needs to allocate a new variable in this case
-)
+    dyna_system.define_infered(
+        intersect(int_v('v'), gt('v', 'a'), lt('v', 'b')),
+        # then we need to add a new variable that is 1 greater than a for the range constraint as it normally includes the lower bound
+        intersect(add('a', constant(1), ret='_ap1'), range_v('v', '_ap1', 'b'))  # the `_` would indicate that this needs to allocate a new variable in this case
+    )
 
-dyna_system.define_infered(
-    # a < b < c => a < c
-    intersect(lt('a', 'b'), lt('b', 'c')),
-    lt('a', 'c')
-)
+    dyna_system.define_infered(
+        # a < b < c => a < c
+        intersect(lt('a', 'b'), lt('b', 'c')),
+        lt('a', 'c')
+    )
 
-dyna_system.define_infered(
-    intersect(lt('a', 'b'), lt('b', 'a')),
-    Terminal(0)  # failure, there is no value such that a < b & b < a
-)
+    dyna_system.define_infered(
+        intersect(lt('a', 'b'), lt('b', 'a')),
+        Terminal(0)  # failure, there is no value such that a < b & b < a
+    )
 
-dyna_system.define_infered(
-    intersect(lteq('a', 'b'), lteq('b', 'a')),
-    Unify('a', 'b')  # a <= b & b <= a  ==>  a == b
-)
+    dyna_system.define_infered(
+        intersect(lteq('a', 'b'), lteq('b', 'a')),
+        Unify('a', 'b')  # a <= b & b <= a  ==>  a == b
+    )
 
 
 # this needs to be able ot check if some constraint could have been valid, so if
@@ -317,9 +321,11 @@ list_length = intersect(Unify(constant(True), ret_variable),  # set the "returne
                         partition(variables_named(0,1),
                                   (intersect(Unify(constant(0), VariableId(0)), BuildStructure('nil', VariableId(1), ())),
                                    intersect(add(constant(1), VariableId('len1'), ret=VariableId(0)),
-                                             BuildStructure('.', VariableId(1), (UnitaryVariable(), VariableId('Xs'))),
+                                             BuildStructure('.', VariableId(1), (VariableId('X'), VariableId('Xs'))),
+                                             gteq(VariableId(0), constant(1)),
                                              # this is the recursive call
                                              # TODO: this should not have to reference the system? so there should be some placeholder here instead....
-                                             dyna_system.call_term('list_length', 2)(VariableId('len1'), VariableId('Xs'), ret=UnitaryVariable())
+                                             dyna_system.call_term('list_length', 2)(VariableId('len1'), VariableId('Xs'), ret=VariableId('ret_ignore'))
                                    ))))
+
 dyna_system.define_term('list_length', 2, list_length)
