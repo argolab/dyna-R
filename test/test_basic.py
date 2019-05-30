@@ -116,3 +116,18 @@ def test_overlap_union():
     assert rr == Terminal(1)
 
     assert r1.getValue(frame) == 225
+
+
+def test_basic_term():
+    # a = &x(1,2), a=&x(X, Y).
+
+    a,x,y = variables_named(1,2,3)
+
+    rexpr = BuildStructure('x', constant(Term('x', (1, 2))), (x, y))
+
+    frame = Frame()
+    rr = simplify(rexpr, frame)
+
+    assert rr == Terminal(1)
+    assert x.getValue(frame) == 1
+    assert y.getValue(frame) == 2

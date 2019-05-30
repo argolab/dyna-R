@@ -358,3 +358,9 @@ dyna_system.define_infered(
     intersect(lteq('a', 'b'), lteq('b', 'a')),
     Unify('a', 'b')  # a <= b & b <= a  ==>  a == b
 )
+
+
+# this needs to be able ot check if some constraint could have been valid, so if
+# 0 < C, if its value was known then it should be able to consider this
+# constraint as having been included.  though might want to have some
+# conditional branch way of including it

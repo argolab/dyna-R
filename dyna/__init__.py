@@ -1,10 +1,15 @@
 from . import interpreter
 from . import builtins
+from . import terms
 
 from .interpreter import (
     RBaseType, FinalState, Terminal, Variable, variables_named, constant, Frame,
     simplify, getPartitions,
     intersect as Intersect, partition as Partition, Unify, Aggregator, AggregatorOpImpl, AggregatorOpBase
+)
+
+from .terms import (
+    Term, BuildStructure, ReflectStructure
 )
 
 # This is a shortcut for writing code quickly where we are going to lookup a method

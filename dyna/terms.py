@@ -1,5 +1,7 @@
 
 from .interpreter import *
+from functools import reduce
+import operator
 
 
 class Term:
@@ -8,6 +10,7 @@ class Term:
 
     def __init__(self, name, arguments):
         self.__name = name
+        assert all(not isinstance(a, Variable) for a in arguments)
         self.__arguments = tuple(arguments)  # ensure this is a tuple and thus immutable
 
     @property
@@ -17,6 +20,16 @@ class Term:
     @property
     def arguments(self):
         return self.__arguments
+
+    def __eq__(self, other):
+        return isinstance(other, Term) and (
+            self.name == other.name and
+            len(self.arguments) == len(other.arguments) and
+            all(a == b for a,b in zip(self.arguments, other.arguments)))
+
+    def __hash__(self):
+        # this should be cached?
+        return hash(self.name) ^ reduce(operator.xor, map(hash, self.arguments))
 
     # convert between the dyna linked list version of a list and python's list
     def aslist(self):
