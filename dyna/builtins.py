@@ -77,6 +77,8 @@ def modedop_getPartitions(self, frame):
                 # overlapping behavior required for aggregation?
 
                 yield IteratorFromIterable(var, val)
+            elif not var.isBound(frame):
+                yield SingleIterator(var, val)
 
 
 def infer_modes(d):

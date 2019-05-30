@@ -131,3 +131,11 @@ def test_basic_term():
     assert rr == Terminal(1)
     assert x.getValue(frame) == 1
     assert y.getValue(frame) == 2
+
+
+def test_method_call():
+    pass
+
+
+# def test_list_length():
+#     # need to

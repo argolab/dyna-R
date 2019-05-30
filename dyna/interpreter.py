@@ -181,9 +181,9 @@ class ConstantVariable(Variable):
     def __str__(self):
         return f'={self.__value}'
     def __eq__(self, other):
-        return (self is other) or (type(self) is type(other) and self.value == other.value)
+        return (self is other) or (type(self) is type(other) and self.__value == other.__value)
     def __hash__(self):
-        return hash(type(self)) ^ hash(self.value)
+        return hash(type(self)) ^ hash(self.__value)
 
     def isBound(self, frame):
         return True
@@ -505,7 +505,7 @@ class Partition(RBaseType):
     """
     This class is /verhy/ overloaded in that we are going to be using the same representation for memoized entries as well as the partitions
     """
-    def __init__(self, unioned_vars :Tuple, children :Tuple[Tuple[RBaseType, Tuple]]):
+    def __init__(self, unioned_vars :Tuple, children :Tuple[Tuple[Tuple, RBaseType]]):
         super().__init__()
         self._unioned_vars = unioned_vars
         # the children should be considered immutable once placed on the partition class
@@ -522,8 +522,13 @@ class Partition(RBaseType):
         for v in self._children:
             yield v[1]
 
+    def rename_vars(self, remap):
+        r = tuple(remap(u) for u in self._unioned_vars)
+        c = tuple((a[0], a[1].rename_vars(remap)) for a in self._children)
+        return Partition(r, c)
+
     def rewrite(self, rewriter):
-        assert False  # TODO: loop over the children
+        return Partition(self._unioned_vars, tuple((a[0], rewriter(a[1])) for a in self._children))
 
 def partition(unioned_vars, children):
     # construct a partition
@@ -659,6 +664,19 @@ class Unify(RBaseType):
     def vars(self):
         return (self.v1, self.v2)
 
+    def rename_vars(self, remap):
+        return unify(remap(self.v1), remap(self.v2))
+
+def unify(a, b):
+    if a == b:
+        return Terminal(1)
+    if isinstance(a, ConstantVariable) and isinstance(b, ConstantVariable):
+        if a.getValue(None) == b.getValue(None):  # should have a better way of doing this???
+            return Terminal(1)
+        else:
+            return Terminal(0)
+    return Unify(a,b)
+
 @simplify.define(Unify)
 def simplify_unify(self, frame):
     if self.v1.isBound(frame):
@@ -708,6 +726,24 @@ class Aggregator(RBaseType):
     @property
     def children(self):
         return (self.body,)
+
+    def rename_vars(self, remap):
+        return Aggregator(
+            remap(self.result),
+            tuple(remap(v) for v in self.head_vars),
+            remap(self.bodyRes),
+            self.aggregator,
+            self.body.rename_vars(remap)
+        )
+
+    def rewrite(self, rewriter):
+        return Aggregator(
+            self.result,
+            self.head_vars,
+            self.bodyRes,
+            self.aggregator,
+            rewriter(self.body)
+        )
 
 
 @simplify.define(Aggregator)

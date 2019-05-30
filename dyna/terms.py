@@ -5,6 +5,9 @@ import operator
 
 
 class Term:
+    # This should probably be renamed from "term" to "named tuple" or something
+    # "term" is just overused in the system and there are other values that we
+    # can represent in the system
 
     __slots__ = ('__name', '__arguments')
 
@@ -56,6 +59,18 @@ class BuildStructure(RBaseType):
         self.result = result
         self.arguments = tuple(arguments)
 
+    @property
+    def vars(self):
+        return (self.result, *self.arguments)
+
+    def rename_vars(self, remap):
+        return BuildStructure(
+            self.name,
+            remap(self.result),
+            map(remap, self.arguments)
+        )
+
+
 @simplify.define(BuildStructure)
 def simplify_buildStructure(self, frame):
     if self.result.isBound(frame):
@@ -95,6 +110,17 @@ class ReflectStructure(RBaseType):
         self.num_args = num_args  # the number of arguments (length of the list), will let us rewrite in the case that not fully ground
         self.args_list = args_list  # the list of arguments that are found
 
+    @property
+    def vars(self):
+        return (self.result, self.num_args, self.args_list)
+
+    def rename_vars(self, remap):
+        return ReflectStructure(
+            remap(self.result),
+            remap(self.name),
+            remap(self.num_args),
+            remap(self.args_list)
+        )
 
 @simplify.define(ReflectStructure)
 def simplify_reflectStructure(self, frame):
@@ -177,27 +203,81 @@ class Evaluate(RBaseType):
     In the case that return arguments are required, then that should be done with ExtendStructure
     """
 
-    def __init__(self, var):
-        pass
+    def __init__(self, ret_var, term_var, dyna_system):
+        self.ret_var = ret_var  # where the return value (of this function) is set
+        self.term_var = term_var  # represents the name + the arguments
+        self.dyna_system = dyna_system  # which dynabase we are going to look this operation up in
 
+    @property
+    def vars(self):
+        return (self.ret_var, self.term_var)
+
+    def rename_vars(self, remap):
+        return Evaluate(remap(self.ret_var), remap(self.term_var), self.dyna_system)
+
+
+@simplify.define(Evaluate)
+def simplify_evaluate(self, frame):
+    assert False  # TODO
+    return self
 
 
 class CallTerm(RBaseType):
     """
-
+    This is a call to an external expression that has not yet been included.  If the modes match, then we could attempt
+    to perform evaluation outside of the local context, otherwise we are just going to return the body of an expression
     """
 
-    def __init__(self, name :str, arguments: List[Variable], dynabase, term_name):
-        self.name = name
+    def __init__(self, ret_var: Variable, arguments: List[Variable], dyna_system, term_ref):
+        self.ret_var = ret_var
         self.arguments = arguments
-        self.dynabase = dynabase
-        self.term_name = term_name
+        self.dyna_system = dyna_system  # this should become the local dynabase in the future
+        self.term_ref = term_ref
 
-        self.replaced_with = None
+        # for helping detect the case where backwards chaining recursion is ok
+        self.parent_calls_blocker = set()  # tuples of the variables that are
+        # used by parent calls to this needs to identify when it is in a
+        # backwards chaining recursive loop?  but if we are not just pushing
+        # things as eagerly as possible, we might miss them...
+
+        # self.replaced_with = None
+
+    @property
+    def vars(self):
+        return (self.ret_var, *self.arguments)
+
+    def rename_vars(self, remap):
+        assert not self.parent_calls_blocker  # TODO:????
+        return CallTerm(remap(self.ret_var), list(map(remap, self.arguments)), self.dyna_system, self.term_ref)
+
+class CalledTerm(RBaseType):
+
+    def __init__(self, child, term_ref, argument_tracker):
+        self.child = child
+        self.term_ref = term_ref
+        self.argument_tracker = argument_tracker
+
+        assert False
+
 
 
 @simplify.define(CallTerm)
 def simplify_call(self, frame):
     # we want to keep around the calls, so that we can continue to perform replacement operations on stuff.
+
+    # this is going to need to determine which calls are safe
+
+    mode = tuple((v.isBound(frame) for v in self.arguments))
+    arg_values = tuple((v.getValue(frame) for v in self.arguments))
+
+    ps = set(tuple((v.getValue(frame) for v in pv)) for pv in self.parent_calls_blocker)
+    if arg_values in ps:
+        # then this is not unique enough to execute, so we are just going to delay at this point
+        return self
+
+    # we are going to inline the definition into this
+    R = self.dyna_system.lookup_term(self.term_ref)
+
+    # first rename all of the variables such that this doesn't
 
     return self
