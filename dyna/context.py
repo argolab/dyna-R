@@ -1,4 +1,8 @@
 
+# this file should probably be renamed to something like dynabase or something,
+# it is holding the references to the different terms that are defined.
+
+
 from .interpreter import *
 from .terms import CallTerm
 
@@ -37,7 +41,12 @@ class SystemContext:
     def call_term(self, name, arity) -> RBaseType:
         # this should return a method call to a given term.
         # this should be lazy?  So that
-        return CallTerm(name, variables_named('Ret', *range(arity)), self, (name, arity))
+
+        m = {x:x for x in variables_named(*range(arity))}
+        m[ret_variable] = ret_variable
+        return CallTerm(m, self, (name, arity))
+
+        # return CallTerm(name, variables_named(ret_variable, *range(arity)), self, (name, arity))
 
     def lookup_term(self, name):
         # if this isn't defined, then we can delay, or report an error to the

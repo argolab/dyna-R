@@ -1,10 +1,11 @@
 from . import interpreter
 from . import builtins
 from . import terms
+from . import context
 
 from .interpreter import (
     RBaseType, FinalState, Terminal, Variable, variables_named, constant, Frame,
-    simplify, getPartitions,
+    simplify, getPartitions, saturate,
     intersect as Intersect, partition as Partition, Unify, Aggregator, AggregatorOpImpl, AggregatorOpBase
 )
 

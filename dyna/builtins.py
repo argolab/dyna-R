@@ -44,11 +44,7 @@ def modedop_simplify(self, frame):
         if isinstance(r, FinalState):
             return r
         if r == ():
-            self  # made no progress
-        # done_c = all(not hasattr(v, '__iter__') for v in r)
-        # if done_c:
-        # then we are going to set all of the resulting variables
-        # then we can return that we are done
+            return self  # made no progress
         for var, val in zip(self.vars, r):
             var.setValue(frame, val)
         return terminal(1)
@@ -112,32 +108,6 @@ def moded_op(name, det, *, nondet={}):
     return ModedOp(name, det, nondet, variables_named(ret_variable, *range(arity-1)))
 
 
-# class CheckOp(RBaseType):
-#     def __init__(self, name, op, vars):
-#         self.vars_ = vars
-#         self.name = name
-#         self.op = op
-#     @property
-#     def vars(self):
-#         return self.vars_
-#     def rename_vars(self, remap):
-#         return CheckOp(self.name, self.op, tuple(map(remap, self.vars)))
-#     def possibly_equal(self, other):
-#         return type(self) is type(other) and self.op is other.op
-#     def _tuple_rep(self):
-#         return (self.__class__.__name__, self.name, self.vars)
-
-
-# @simplify.define(CheckOp)
-# def checkop_simplify(self, frame):
-#     if all(v.isBound(frame) for v in self.vars[1:]):
-#         vals = [v.getValue(frame) for v in self.vars[1:]]
-#         res = self.op(*vals)
-#         assert isinstance(res, bool)
-#         self.vars[0].setValue(frame, res)
-#         return terminal(1)
-#     return self
-
 # check only works in the fully ground case, so we don't care about any other modes atm
 def check_op(name, arity, op):
     f = lambda x, *args: (op(*args), *args),
@@ -145,17 +115,6 @@ def check_op(name, arity, op):
         (False,)+((True,)*arity): f
     }
     return moded_op(name, d)
-    #return ModedOp(name, d, {}, variables_named(ret_variable, *range(arity)))
-
-    # return CheckOp(name, op, variables_named(ret_variable, *range(arity)))
-
-# def true_return(expr):
-#     def f(ret, *args):
-#         assert False
-
-#         # the returned variable should just always be true, so if there are
-#         return intersect(unify(ret, constant(True)), expr(*args))
-#     return f
 
 
 ##################################################
@@ -310,27 +269,6 @@ class ArrayEinsum(RBaseType):
 # wise access operation.  Then we don't have to eventually upgrade from numpy
 
 
-
-# _builtins = {
-#     '+': add, 'add': add,
-#     '-': sub, 'sub': sub,
-#     '*': mul, 'mul': mul,
-#     '/': div, 'div': div,
-#     'range': range_v,
-#     'abs': abs_v,
-#     '<': lt, 'lt': lt,
-#     '<=': lteq, 'lteq': lteq,
-#     '>': gt, 'gt': gt,
-#     '>=': gteq, 'gteq': gteq,
-#     'int': int_v,
-#     'unify': unify, 'eq': unify,
-# }
-
-# builtins = {}
-# for k,v in _builtins.items():
-#     builtins[(k, v.arity)] = v
-
-
 ####################################################################################################
 # infered constraints
 
@@ -366,3 +304,22 @@ dyna_system.define_infered(
 # 0 < C, if its value was known then it should be able to consider this
 # constraint as having been included.  though might want to have some
 # conditional branch way of including it
+
+
+
+####################################################################################################
+
+from .terms import BuildStructure
+
+# list_length(0, []).
+# list_length(L+1, [X|Xs]) :- list_length(L, Xs).
+list_length = intersect(Unify(constant(True), ret_variable),  # set the "returned" variable as just always true, might not have this with :-???
+                        partition(variables_named(0,1),
+                                  (intersect(Unify(constant(0), VariableId(0)), BuildStructure('nil', VariableId(1), ())),
+                                   intersect(add(constant(1), VariableId('len1'), ret=VariableId(0)),
+                                             BuildStructure('.', VariableId(1), (UnitaryVariable(), VariableId('Xs'))),
+                                             # this is the recursive call
+                                             # TODO: this should not have to reference the system? so there should be some placeholder here instead....
+                                             dyna_system.call_term('list_length', 2)(VariableId('len1'), VariableId('Xs'), ret=UnitaryVariable())
+                                   ))))
+dyna_system.define_term('list_length', 2, list_length)

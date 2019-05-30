@@ -56,6 +56,8 @@ class RBaseType:
 
 
     def __call__(self, *args, ret=None):
+        # TODO: this needs to check that we are not calling this with more arguments than are present in the code
+        # otherwise that will just be a subtle bug that is hard to detect..
         if ret is None:
             ret = constant(True)  # just want the last variable to be true
         else:
@@ -196,7 +198,11 @@ class ConstantVariable(Variable):
         return True
 
 class UnitaryVariable(Variable):
-    # a variable that is not referenced in more than 1 place, so we are going to ignore the value, it isn't even a constant
+    # a variable that is not referenced in more than 1 place, so we are going to
+    # ignore the value, it isn't even a constant
+
+    # note, this is different from `_` in the source language, as that has to be
+    # "referenced" in two places so that it is looped over
     __slots__ = ()
     def __str__(self):
         return 'UNITARY'
@@ -394,7 +400,7 @@ def saturate(R, frame):
         R = simplify(R, frame)
         if R == last_R:
             break
-    return R, frame
+    return R
 
 
 class PartitionVisitor(Visitor):

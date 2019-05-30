@@ -228,9 +228,8 @@ class CallTerm(RBaseType):
     to perform evaluation outside of the local context, otherwise we are just going to return the body of an expression
     """
 
-    def __init__(self, ret_var: Variable, arguments: List[Variable], dyna_system, term_ref):
-        self.ret_var = ret_var
-        self.arguments = arguments
+    def __init__(self, var_map: Dict[Variable,Variable], dyna_system, term_ref):
+        self.var_map = var_map
         self.dyna_system = dyna_system  # this should become the local dynabase in the future
         self.term_ref = term_ref
 
@@ -244,11 +243,11 @@ class CallTerm(RBaseType):
 
     @property
     def vars(self):
-        return (self.ret_var, *self.arguments)
+        return tuple(self.var_map.values())
 
     def rename_vars(self, remap):
         assert not self.parent_calls_blocker  # TODO:????
-        return CallTerm(remap(self.ret_var), list(map(remap, self.arguments)), self.dyna_system, self.term_ref)
+        return CallTerm(dict((k, remap(v)) for k,v in self.var_map.items()), self.dyna_system, self.term_ref)
 
 class CalledTerm(RBaseType):
 
@@ -267,17 +266,31 @@ def simplify_call(self, frame):
 
     # this is going to need to determine which calls are safe
 
-    mode = tuple((v.isBound(frame) for v in self.arguments))
-    arg_values = tuple((v.getValue(frame) for v in self.arguments))
+    # mode = tuple((v.isBound(frame) for v in self.arguments))
+    # arg_values = tuple((v.getValue(frame) for v in self.arguments))
 
-    ps = set(tuple((v.getValue(frame) for v in pv)) for pv in self.parent_calls_blocker)
-    if arg_values in ps:
-        # then this is not unique enough to execute, so we are just going to delay at this point
-        return self
+    # ps = set(tuple((v.getValue(frame) for v in pv)) for pv in self.parent_calls_blocker)
+    # if arg_values in ps:
+    #     # then this is not unique enough to execute, so we are just going to delay at this point
+    #     return self
 
-    # we are going to inline the definition into this
-    R = self.dyna_system.lookup_term(self.term_ref)
+    # # we are going to inline the definition into this
+    # R = self.dyna_system.lookup_term(self.term_ref)
 
-    # first rename all of the variables such that this doesn't
+    # # first rename all of the variables such that this doesn't
 
-    return self
+
+    # just always inline version
+    renames = {}
+    def renamer(v):
+        if v in self.var_map:
+            return self.var_map[v]
+        elif isinstance(v, ConstantVariable) or isinstance(v, UnitaryVariable):
+            return v
+        if v not in renames:
+            renames[v] = VariableId()  # makes a new unique name for this variable
+        return renames[v]
+
+    # we might want to run simplify on this the first time?
+    # this still doesn't handle the cases where we are going to be backwards chaining
+    return self.dyna_system.lookup_term(self.term_ref).rename_vars(renamer)

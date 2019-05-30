@@ -133,9 +133,18 @@ def test_basic_term():
     assert y.getValue(frame) == 2
 
 
-def test_method_call():
-    pass
+def test_basic_method_call():
+    add_call = context.dyna_system.call_term('add', 2)
+
+    frame = Frame()
+    frame[0] = 1
+    frame[1] = 2
+
+    rr = saturate(add_call, frame)
+    assert rr == Terminal(1)
+    assert interpreter.ret_variable.getValue(frame) == 3
 
 
-# def test_list_length():
+
+    # def test_list_length():
 #     # need to
