@@ -157,3 +157,74 @@ def test_list_length():
     assert rr == Terminal(1)
     assert interpreter.ret_variable.getValue(frame) == True
     assert frame[0] == 4
+
+
+from dyna.interpreter import VariableId
+from dyna.context import dyna_system
+
+# deleteone([Z|Zs], Zs, Z).
+# deleteone([X|Xs], [X|Ys], Z) :- deleteone(Xs, Ys, Z).
+deleteone =  Intersect(Unify(constant(True), interpreter.ret_variable),
+                       Partition(variables_named(0,1,2),
+                                 (BuildStructure('.', VariableId(0), (VariableId(2), VariableId(1))),
+                                  Intersect(BuildStructure('.', VariableId(0), (VariableId('X'), VariableId('Xs'))),
+                                            BuildStructure('.', VariableId(1), (VariableId('X'), VariableId('Ys'))),
+                                            dyna_system.call_term('deleteone', 3)(*variables_named('Xs', 'Ys', 2)))
+                                 )))
+dyna_system.define_term('deleteone', 3, deleteone)
+
+# permutation([], []).
+# permutation(A, [Z|Rs]) :- deleteone(A, R, Z), permutation(R, Rs).
+permutation = Intersect(Unify(constant(True), interpreter.ret_variable),
+                        Partition(variables_named(0,1),
+                                  (Intersect(BuildStructure('nil', VariableId(0), ()), BuildStructure('nil', VariableId(1), ())),
+                                   Intersect(BuildStructure('.', VariableId(1), variables_named('Z', 'Rs')),
+                                             dyna_system.call_term('deleteone', 3)(*variables_named(0, 'R', 'Z')),
+                                             dyna_system.call_term('permutation', 2)(*variables_named('R', 'Rs'))
+                                ))))
+dyna_system.define_term('permutation', 2, permutation)
+
+def test_deleteone():
+    deleteone_call = dyna_system.call_term('deleteone', 3)
+
+    frame = Frame()
+    frame[0] = Term.fromlist([1,2,3,4])
+    frame[2] = 3
+
+    rr = saturate(deleteone_call, frame)
+    assert rr == Terminal(1)
+    assert frame[1].aslist() == [1,2,4]
+
+def test_deleteone2():
+    deleteone_call = dyna_system.call_term('deleteone', 3)
+
+    frame = Frame()
+    frame[0] = Term.fromlist([3,4,3])
+    frame[2] = 3
+
+    rr = saturate(deleteone_call, frame)
+
+    cnt = 0
+    def cntr(a,b):
+        nonlocal cnt
+        cnt += 1
+    loop(rr, frame, cntr)
+    assert cnt == 2
+
+    # there should be two different lists which are
+
+    #assert rr == Terminal(1)
+
+def test_permutation():
+    # this needs to loop over the different branches that can be constructed
+
+    permute_call = dyna_system.call_term('permutation', 2)
+
+    lst = Term.fromlist([1,2])
+
+    frame = Frame()
+    frame[0] = lst
+
+    rr = simplify(permute_call, frame)
+
+    import ipdb; ipdb.set_trace()

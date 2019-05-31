@@ -64,6 +64,10 @@ def modedop_getPartitions(self, frame):
         # handle reporting errors in these cases as empty intersections
         assert r != () and not isinstance(r, FinalState)
 
+        # TODO: this needs to handle all of the grounded variables first which
+        # would have cases where we are checking if the value of a variable
+        # unifies correctly
+
         for var, val in zip(self.vars, r):
             if hasattr(val, '__iter__'):
                 # then this is a variable that we can iterate, so we want to do
@@ -151,12 +155,16 @@ dyna_system.define_term('/', 2, div)
 
 
 
+# if this is allowed to unify with false, then this isn't quite right for the non-det version?
+# that should really mark the first variable as being required as true, otherwise we are unable to unify?
 range_v = moded_op('range', {
-    (False, True, True, True):  lambda x,a,b,c: (b <= a < c and isinstance(a, int), a, b, c) ,
+    (False, True, True, True, True):  lambda x,a,b,c,d: (a in range(b,c,d), a, b, c, d) ,
 }, nondet={
-    (False, False, True, True): lambda x,a,b,c: (True, range(b,c), b, c) ,
+    (False, False, True, True, True): lambda x,a,b,c,d: (True, range(b,c,d), b, c,d) ,
 })
-dyna_system.define_term('range', 3, range_v)
+dyna_system.define_term('range', 3, range_v(0,1,2,constant(1),ret=ret_variable))  # with a step of 1
+dyna_system.define_term('range', 4, range_v)
+
 
 ##################################################  TODO: define range, this needs the return value as well as the arguments?
 
@@ -231,6 +239,46 @@ dyna_system.define_term('str', 1, str_v)
 dyna_system.define_term('bool', 1, bool_v)
 
 
+def imath_op(name, op, inverse):
+    d = {
+        (True, True): lambda a,b: (op(b), b),
+        (False, True): lambda a,b: (op(b), b),
+        (True, False): lambda a,b: (a, inverse(b))
+    }
+    return moded_op(name, d)
+
+import math
+dyna_system.define_term('sin', 1, imath_op('sin', math.sin, math.asin))
+dyna_system.define_term('cos', 1, imath_op('cos', math.cos, math.acos))
+dyna_system.define_term('tan', 1, imath_op('tan', math.tan, math.atan))
+
+dyna_system.define_term('sinh', 1, imath_op('sinh', math.sinh, math.asinh))
+dyna_system.define_term('cosh', 1, imath_op('cosh', math.cosh, math.acosh))
+dyna_system.define_term('tanh', 1, imath_op('tanh', math.tanh, math.atanh))
+
+exp = imath_op('exp', math.exp, math.log)
+dyna_system.define_term('exp', 1, exp)
+dyna_system.define_term('log', 1, exp(1,0,ret=ret_variable))
+
+pow_v = moded_op('pow', {
+    (True,True,True):  lambda a,b,c: (b**c,b,c),
+    (False,True,True): lambda a,b,c: (b**c,b,c),
+    (True,True,False): lambda a,b,c: (a,b,math.log(a,b)),
+    (True,False,True): lambda a,b,c: (a,a**(1/c),c)
+})
+dyna_system.define_term('pow', 2, pow_v)
+dyna_system.define_term('**', 2, pow_v)
+
+# a = b // c
+int_div = moded_op('int_div', {
+    (False,True,True): lambda a,b,c: (b//c, b,c),
+    (True,True,True): lambda a,b,c: (b//c, b,c),
+    (True,True,False): lambda a,b,c: (a,b,b//a),
+}, nondet={
+    # TODO; double chekc this???
+    (True,False,True): lambda a,b,c: (a,range(a*c, (a+1)*c), c) if a >= 0 else (a,range((a-1)*c, a*c), c)
+})
+
 
 import numpy as np
 matrix_v = check_op('matrix', 1, lambda x: isinstance(x, np.ndarray))
@@ -303,6 +351,11 @@ if 0:
         Unify('a', 'b')  # a <= b & b <= a  ==>  a == b
     )
 
+    dyna_system.define_infered(
+        lt('a', 'b'),
+        lteq('a', 'b')  # would like this to be able to use this to identify redudant constraints also, which means that we can delete stuff?
+    )
+
 
 # this needs to be able ot check if some constraint could have been valid, so if
 # 0 < C, if its value was known then it should be able to consider this
@@ -312,6 +365,8 @@ if 0:
 
 
 ####################################################################################################
+# bultins that are defined in terms of other R-exprs, these should probably just
+# be defined in a prelude once there is some parser
 
 from .terms import BuildStructure
 

@@ -5,7 +5,7 @@ from . import context
 
 from .interpreter import (
     RBaseType, FinalState, Terminal, Variable, variables_named, constant, Frame,
-    simplify, getPartitions, saturate,
+    simplify, getPartitions, saturate, loop,
     intersect as Intersect, partition as Partition, Unify, Aggregator, AggregatorOpImpl, AggregatorOpBase
 )
 

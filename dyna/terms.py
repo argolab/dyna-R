@@ -92,7 +92,7 @@ def simplify_buildStructure(self, frame):
         return Terminal(1)
     elif all(v.isBound(frame) for v in self.arguments):
         # then the result must not be bound, so we are just going to construct it
-        res = Term(self.name, (v.getValue(frame) for v in self.arguments))
+        res = Term(self.name, [v.getValue(frame) for v in self.arguments])
         self.result.setValue(frame, res)
         return Terminal(1)
 

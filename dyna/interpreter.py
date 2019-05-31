@@ -95,6 +95,8 @@ class Terminal(FinalState):
     __slots__ = ('multiplicity',)
     def __init__(self, multiplicity):
         super().__init__()
+        if multiplicity == 2:
+            import ipdb; ipdb.set_trace()
         self.multiplicity = multiplicity
     def __eq__(self, other):
         return type(self) is type(other) and self.multiplicity == other.multiplicity
@@ -461,7 +463,7 @@ def loop_partition(R, frame, callback, partition):
         try:
             for var, val in bd.items():  # we can't use update here as the names on variables are different from the values in the frame
                 var.setValue(f, val)
-            s = simplify(R, f)
+            s = saturate(R, f)
             callback(s, f)
         except UnificationFailure:
             pass
@@ -546,8 +548,7 @@ class Partition(RBaseType):
         return self._unioned_vars
     @property
     def children(self):
-        for v in self._children:
-            yield v[1]
+        return tuple(v[1] for v in self._children)
 
     def rename_vars(self, remap):
         r = tuple(remap(u) for u in self._unioned_vars)
@@ -560,6 +561,7 @@ class Partition(RBaseType):
     def _tuple_rep(self):
         # though might want to have the representation of what the values are on each branch of the partition
         return (self.__class__.__name__, self._unioned_vars, *(c._tuple_rep() for c in self.children))
+
 
 def partition(unioned_vars, children):
     # construct a partition
@@ -603,6 +605,7 @@ def simplify_partition(self :Partition, frame: Frame):
             if not res.isEmpty():
                 nc[nkey].append(res)
 
+
     if not nc:
         # then nothing matched, so just return that the partition is empty
         return Terminal(0)
@@ -617,15 +620,24 @@ def simplify_partition(self :Partition, frame: Frame):
             if set_values[i] != k[i]:
                 set_values[i] = None
 
+        multiplicity = 0
+
         for v in vv:
-            ll.append((k, v))
+            if isinstance(v, Terminal):
+                multiplicity += v.multiplicity
+            else:
+                ll.append((k, v))
+
+        if multiplicity != 0:
+            ll.append((k, Terminal(multiplicity)))
 
     for var, val in zip(self._unioned_vars, set_values):
         if val is not None:
             var.setValue(frame, val)
 
-    if all(isinstance(l[1], Terminal) for l in ll):
-        return Terminal(sum(l[1].multiplicity for l in ll))
+    # this might have different variables that are bound
+    # if all(isinstance(l[1], Terminal) for l in ll):
+    #     return Terminal(sum(l[1].multiplicity for l in ll))
 
     if len(ll) == 1:
         return ll[0][1]  # then we don't need the partition any more
