@@ -437,24 +437,24 @@ def getPartitions_default(self, frame):
         yield from getPartitions(c, frame)
 
 
-def runPartition(R, frame, partition):
-    # this should yield different Frame, R pairs using the selected
-    # partitionining scheme we use an iterator as we would like to be lazy, but
-    # this iterator __must__ be finite, in that we could run
-    # list(runPartition(...)) and it _would_ terminate with a fixed size list.
+# def runPartition(R, frame, partition):
+#     # this should yield different Frame, R pairs using the selected
+#     # partitionining scheme we use an iterator as we would like to be lazy, but
+#     # this iterator __must__ be finite, in that we could run
+#     # list(runPartition(...)) and it _would_ terminate with a fixed size list.
 
-    # we might want to pattern match against the type of the partition in
-    # different files?  So then this should also be a visitor pattern?  In which
-    # case it would have to perform different rewrites of potentially nested
-    # expressions.
+#     # we might want to pattern match against the type of the partition in
+#     # different files?  So then this should also be a visitor pattern?  In which
+#     # case it would have to perform different rewrites of potentially nested
+#     # expressions.
 
-    # running these partitions might also allow for there to be threading
-    # between different operations?  In which case the consumer of this would
-    # want to be able to run parallel for loop or something.
+#     # running these partitions might also allow for there to be threading
+#     # between different operations?  In which case the consumer of this would
+#     # want to be able to run parallel for loop or something.
 
-    assert False
+#     assert False
 
-    yield frame, R
+#     yield frame, R
 
 
 def loop_partition(R, frame, callback, partition):
@@ -489,7 +489,7 @@ def loop(R, frame, callback, till_terminal=False, partition=None):
             if isinstance(r, FinalState):
                 callback(r, f)
             else:
-                loop(r, frame, callback, till_terminal=True)
+                loop(r, f, callback, till_terminal=True)
     else:
         cb = callback
 
@@ -639,6 +639,7 @@ def simplify_partition(self :Partition, frame: Frame):
         for v in vv:
             if isinstance(v, Terminal):
                 multiplicity += v.multiplicity
+                assert None not in k
             else:
                 ll.append((k, v))
 
