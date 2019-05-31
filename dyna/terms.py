@@ -238,12 +238,15 @@ class CallTerm(RBaseType):
     """
 
     def __init__(self, var_map: Dict[Variable,Variable], dyna_system, term_ref):
+        # this needs to have some positional arguments or something so that we
+        # can use a tuple in tracking?
+
         self.var_map = var_map
         self.dyna_system = dyna_system  # this should become the local dynabase in the future
         self.term_ref = term_ref
 
         # for helping detect the case where backwards chaining recursion is ok
-        self.parent_calls_blocker = set()  # tuples of the variables that are
+        self.parent_calls_blocker = []  # tuples of the variables that are
         # used by parent calls to this needs to identify when it is in a
         # backwards chaining recursive loop?  but if we are not just pushing
         # things as eagerly as possible, we might miss them...
@@ -255,25 +258,25 @@ class CallTerm(RBaseType):
         return tuple(self.var_map.values())
 
     def rename_vars(self, remap):
-        assert not self.parent_calls_blocker  # TODO:????
-        return CallTerm(dict((k, remap(v)) for k,v in self.var_map.items()), self.dyna_system, self.term_ref)
+        r = CallTerm(dict((k, remap(v)) for k,v in self.var_map.items()), self.dyna_system, self.term_ref)
+        r.parent_calls_blocker = [tuple(remap(v) for v in vv) for vv in self.parent_calls_blocker]
+        return r
 
     def _tuple_rep(self):
         return self.__class__.__name__, self.term_ref, self.var_map
 
-class CalledTerm(RBaseType):
+    def __eq__(self, other):
+        return super().__eq__(other) and self.parent_calls_blocker == other.parent_calls_blocker
 
-    def __init__(self, child, term_ref, argument_tracker):
-        self.child = child
-        self.term_ref = term_ref
-        self.argument_tracker = argument_tracker
+    def __hash__(self):
+        return super().__hash__()
 
-        assert False
-
-
+# this should be on the thread context or something??
+call_stack = []
 
 @simplify.define(CallTerm)
 def simplify_call(self, frame):
+    global call_stack
     # we want to keep around the calls, so that we can continue to perform replacement operations on stuff.
 
     # this is going to need to determine which calls are safe
@@ -291,6 +294,30 @@ def simplify_call(self, frame):
 
     # # first rename all of the variables such that this doesn't
 
+    for c in call_stack:
+
+        #import ipdb; ipdb.set_trace()
+
+        if c.term_ref == self.term_ref:
+            # then don't try to run this
+            assert tuple(self.var_map.keys()) == tuple(c.var_map.keys())  # check that the ordres are the same, will have to remap otherwise
+            r = CallTerm(self.var_map, self.dyna_system, self.term_ref)
+            r.parent_calls_blocker += c.parent_calls_blocker
+            r.parent_calls_blocker.append(tuple(c.var_map.values()))
+            return r
+
+
+    assert len(self.parent_calls_blocker) < 5
+
+    # check if the arguments are unique, otherwise don't try and run this
+    vs = [tuple(v.getValue(frame) for v in vv) for vv in self.parent_calls_blocker]
+    a = tuple(v.getValue(frame) for v in self.var_map.values())
+    # if self.parent_calls_blocker:
+    #     import ipdb; ipdb.set_trace()
+
+    if a in vs:
+        # then don't try and run this
+        return self
 
     # just always inline version
     renames = {}
@@ -307,4 +334,20 @@ def simplify_call(self, frame):
     # this still doesn't handle the cases where we are going to be backwards chaining
     R = self.dyna_system.lookup_term(self.term_ref)
     R2 = R.rename_vars(renamer)
+
+    try:
+        # we are going to eagerly build this structure, which is going to run
+        # until we hit a backwards chaining cycle we might instead identify
+        # things which are cycles when something is loaded into the program, and
+        # then use that to when this sort of stuff should be applied?
+        #
+        # I suppose that we are going to try and make this thing work in the
+        # case that we are not making guesses, which implies that there are
+        # going to be memos
+        call_stack.append(self)
+        R2 = simplify(R2, frame)
+    finally:
+        assert call_stack[-1] is self
+        del call_stack[-1]
+
     return R2

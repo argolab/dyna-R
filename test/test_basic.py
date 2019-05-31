@@ -209,22 +209,26 @@ def test_deleteone2():
         nonlocal cnt
         cnt += 1
     loop(rr, frame, cntr)
-    assert cnt == 2
-
-    # there should be two different lists which are
-
-    #assert rr == Terminal(1)
+    assert cnt == 2  # check that the callback was done twice, but didn't check that it got the two distinct values...
 
 def test_permutation():
     # this needs to loop over the different branches that can be constructed
 
     permute_call = dyna_system.call_term('permutation', 2)
 
-    lst = Term.fromlist([1,2])
+    lst = Term.fromlist([1,2,3])
 
     frame = Frame()
     frame[0] = lst
 
-    rr = simplify(permute_call, frame)
+    rr = saturate(permute_call, frame)
+
+    cnt = 0
+    def cntr(r, f):
+        nonlocal cnt
+        cnt += 1
+    loop(rr, frame, cntr, till_terminal=True)
+
+
 
     import ipdb; ipdb.set_trace()

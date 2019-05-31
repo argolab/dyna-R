@@ -143,7 +143,10 @@ class UnificationFailure(Exception):
     pass
 
 class InvalidValue:
-    pass
+    def __str__(self):
+        return 'INVALID'
+    def __repr__(self):
+        return 'INVALID'
 InvalidValue = InvalidValue()
 
 
@@ -281,10 +284,10 @@ class Frame(dict):
 
 class Iterator:
     def bind_iterator(self, frame, variable, value):
-        pass
+        raise NotImplementedError()
     def run(self, frame):
-        if 0:
-            yield None
+        raise NotImplementedError()
+
     @property
     def variables(self):
         # return the list of variables that will be bound by this iterator
@@ -301,7 +304,8 @@ class UnionIterator(Iterator):
         self.variable = variable
         self.iterators = iterators
     def bind_iterator(self, frame, variable, value):
-        pass
+        assert variable == self.variable
+        return any(v.bind_iterator(self.variable, value) for v in self.iterators)
     def run(self, frame):
         # this needs to identify the domain of the two iterators, and the
         # combine then such that it doesn't loop twice.  We are also going to
@@ -340,8 +344,7 @@ class SingleIterator(Iterator):
         yield {self.variable: self.value}
     def bind_iterator(self, frame, variable, value):
         assert self.variable == variable
-        assert self.value == value
-        assert False  # TODO
+        return self.value == value  # return if this iterator would have emitted this value
 
 
 ####################################################################################################
@@ -416,6 +419,7 @@ def saturate(R, frame):
         R = simplify(R, frame)
         if R == last_R:
             break
+        #import ipdb; ipdb.set_trace()
     return R
 
 
@@ -454,6 +458,7 @@ def runPartition(R, frame, partition):
 
 
 def loop_partition(R, frame, callback, partition):
+    # use a callback instead of iterator as will be easier to rewrite this later
     for bd in partition.run(frame):
         # make a copy of the frame for now would like to just modify the frame,
         # and track which variables are bound instead, so that this doesn't have
@@ -463,13 +468,13 @@ def loop_partition(R, frame, callback, partition):
         try:
             for var, val in bd.items():  # we can't use update here as the names on variables are different from the values in the frame
                 var.setValue(f, val)
-            s = saturate(R, f)
+            s = saturate(R, f)  # probably want this to be handled via the callback?
             callback(s, f)
         except UnificationFailure:
             pass
 
 
-def loop(R, frame, callback, partition=None):
+def loop(R, frame, callback, till_terminal=False, partition=None):
     if partition is None:
         # then we need to select some partition to use, which will mean choosing
         # which one of theses is "best"?
@@ -479,7 +484,16 @@ def loop(R, frame, callback, partition=None):
 
     assert isinstance(partition, Iterator)
 
-    loop_partition(R, frame, callback, partition)
+    if till_terminal:
+        def cb(r, f):
+            if isinstance(r, FinalState):
+                callback(r, f)
+            else:
+                loop(r, frame, callback, till_terminal=True)
+    else:
+        cb = callback
+
+    loop_partition(R, frame, cb, partition)
 
 
 ####################################################################################################
@@ -634,10 +648,6 @@ def simplify_partition(self :Partition, frame: Frame):
     for var, val in zip(self._unioned_vars, set_values):
         if val is not None:
             var.setValue(frame, val)
-
-    # this might have different variables that are bound
-    # if all(isinstance(l[1], Terminal) for l in ll):
-    #     return Terminal(sum(l[1].multiplicity for l in ll))
 
     if len(ll) == 1:
         return ll[0][1]  # then we don't need the partition any more

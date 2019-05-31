@@ -46,7 +46,7 @@ class Guard(RBaseType):
 class GuardDispatch(RBaseType):
 
     def __init__(self, children :List[RBaseType]):
-        self._children = self.
+        self._children = children
 
 @simplify.define(GuardDispatch)
 def simplify_guard
