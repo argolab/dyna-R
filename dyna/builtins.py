@@ -135,7 +135,8 @@ dyna_system.define_term('add', 2, add)  # there is the result variable that is a
 dyna_system.define_term('+', 2, add)
 
 
-sub = lambda a,b,c: add(b,a,c)
+#sub = lambda a,b,c: add(b,a,c)
+sub = add(ret_variable,1,ret=0)
 dyna_system.define_term('sub', 2, sub)  # The pattern matching is happing on the ModedOp, so this should still pattern match with the add op
 dyna_system.define_term('-', 2, sub)
 
@@ -149,7 +150,8 @@ dyna_system.define_term('mul', 2, mul)
 dyna_system.define_term('*', 2, mul)
 
 
-div = lambda a,b,c: mul(b,a,c)
+#div = lambda a,b,c: mul(b,a,c)
+div = mul(ret_variable,1,ret=0)
 dyna_system.define_term('div', 2, div)
 dyna_system.define_term('/', 2, div)
 
@@ -243,7 +245,7 @@ def imath_op(name, op, inverse):
     d = {
         (True, True): lambda a,b: (op(b), b),
         (False, True): lambda a,b: (op(b), b),
-        (True, False): lambda a,b: (a, inverse(b))
+        (True, False): lambda a,b: (a, inverse(a))
     }
     return moded_op(name, d)
 
@@ -258,7 +260,7 @@ dyna_system.define_term('tanh', 1, imath_op('tanh', math.tanh, math.atanh))
 
 exp = imath_op('exp', math.exp, math.log)
 dyna_system.define_term('exp', 1, exp)
-dyna_system.define_term('log', 1, exp(1,0,ret=ret_variable))
+dyna_system.define_term('log', 1, exp(ret_variable,ret=0))
 
 pow_v = moded_op('pow', {
     (True,True,True):  lambda a,b,c: (b**c,b,c),

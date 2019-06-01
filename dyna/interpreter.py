@@ -95,8 +95,6 @@ class Terminal(FinalState):
     __slots__ = ('multiplicity',)
     def __init__(self, multiplicity):
         super().__init__()
-        if multiplicity == 2:
-            import ipdb; ipdb.set_trace()
         self.multiplicity = multiplicity
     def __eq__(self, other):
         return type(self) is type(other) and self.multiplicity == other.multiplicity

@@ -250,3 +250,48 @@ def test_permutation():
     loop(rr, frame, cntr, till_terminal=True)
 
     assert cnt == 24
+
+from dyna.builtins import gteq, lteq, sub, add
+
+fib = Partition(variables_named(0, interpreter.ret_variable),
+                (Intersect(Unify(constant(0), VariableId(0)), Unify(constant(0), interpreter.ret_variable)),  # fib(0) = 0
+                 Intersect(Unify(constant(1), VariableId(0)), Unify(constant(1), interpreter.ret_variable)),  # fib(1) = 1
+                 Intersect(gteq(VariableId(0), constant(2)), lteq(VariableId(0), constant(10)),  # fib(X) = X >= 2, X <= 10, fib(X-1) + fib(X-2).
+                           sub(VariableId(0), constant(1), ret=VariableId('Xm1')),
+                           sub(VariableId(0), constant(2), ret=VariableId('Xm2')),
+                           dyna_system.call_term('fib', 1)(VariableId('Xm1'), ret=VariableId('F1')),
+                           dyna_system.call_term('fib', 1)(VariableId('Xm2'), ret=VariableId('F2')),
+                           add(VariableId('F1'), VariableId('F2'), ret=interpreter.ret_variable)
+                 )))
+dyna_system.define_term('fib', 1, fib)
+
+def test_fib_basic():
+    dyna_system.terms_as_defined[('fib', 1)] = fib  # force the override
+
+    fib_call = dyna_system.call_term('fib', 1)
+
+    frame = Frame()
+    frame[0] = 4
+
+    rr = saturate(fib_call, frame)
+
+    assert rr == Terminal(1)
+    assert interpreter.ret_variable.getValue(frame) == 3
+
+
+def test_fib_unk_memos():
+
+
+    dyna_system.terms_as_defined[('fib', 1)] = fib  # force the override
+
+    fib_call = dyna_system.call_term('fib', 1)
+
+    frame = Frame()
+    frame[0] = 4
+
+    rr = saturate(fib_call, frame)
+
+
+
+def test_fib_null_memos():
+    dyna_system.terms_as_defined[('fib', 1)] = fib  # force the override
