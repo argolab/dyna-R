@@ -256,7 +256,7 @@ from dyna.builtins import gteq, lteq, sub, add
 fib = Partition(variables_named(0, interpreter.ret_variable),
                 (Intersect(Unify(constant(0), VariableId(0)), Unify(constant(0), interpreter.ret_variable)),  # fib(0) = 0
                  Intersect(Unify(constant(1), VariableId(0)), Unify(constant(1), interpreter.ret_variable)),  # fib(1) = 1
-                 Intersect(gteq(VariableId(0), constant(2)), lteq(VariableId(0), constant(10)),  # fib(X) = X >= 2, X <= 10, fib(X-1) + fib(X-2).
+                 Intersect(gteq(VariableId(0), constant(2)), lteq(VariableId(0), constant(150)),  # fib(X) = X >= 2, X <= 10, fib(X-1) + fib(X-2).
                            sub(VariableId(0), constant(1), ret=VariableId('Xm1')),
                            sub(VariableId(0), constant(2), ret=VariableId('Xm2')),
                            dyna_system.call_term('fib', 1)(VariableId('Xm1'), ret=VariableId('F1')),
@@ -280,16 +280,21 @@ def test_fib_basic():
 
 
 def test_fib_unk_memos():
+    mtable = MemoContainer((True,False), (VariableId(0), interpreter.ret_variable), fib)
+    fibm = UnkMemo((VariableId(0), interpreter.ret_variable), mtable)
 
-
-    dyna_system.terms_as_defined[('fib', 1)] = fib  # force the override
+    dyna_system.terms_as_defined[('fib', 1)] = fibm  # force the override
 
     fib_call = dyna_system.call_term('fib', 1)
 
+    # use a large number to ensure that we are doing stuff with memos
     frame = Frame()
-    frame[0] = 4
+    frame[0] = 30  # because this does the computation on the stack, we end up hitting the recursion depth error if we go too deep
 
     rr = saturate(fib_call, frame)
+
+    assert rr == Terminal(1)
+    assert interpreter.ret_variable.getValue(frame) == 832040
 
 
 

@@ -190,26 +190,13 @@ def simplify_reflectStructure(self, frame):
     return self
 
 
-
-# class ExtendStructure(RBaseType):
-#     """
-#     Extend a term by adding additional variables to the output
-#     something like: X=&foo(Y), Z=&foo(Y, W) $extend(X, Z, W)
-
-#     This can be used as sugar for something like *X(A), where we are calling the method referenced by X with the additional parameters A
-
-#     This could just use the reflect structure above, though
-#     """
-
-#     def __init__(self, inp: Variable, out: Variable, addition :List[Variable]):
-#         pass
-
-
 class Evaluate(RBaseType):
     """
     *X, evaluation construct where we lookup the name and the number of arguments.
     This is only takes a single variable (there is no return variable) and will rewrite as the R-expr that defines that term
-    In the case that return arguments are required, then that should be done with ExtendStructure
+
+    This needs to be able to handle the case where this is attached to a build structure, in which case, it should just identify
+    the variables and the relevant variables
     """
 
     def __init__(self, ret_var, term_var, dyna_system):
@@ -227,7 +214,17 @@ class Evaluate(RBaseType):
 
 @simplify.define(Evaluate)
 def simplify_evaluate(self, frame):
-    assert False  # TODO
+    if self.term_var.isBound(frame):
+        t = self.term_var.getValue(frame)
+        if not isinstance(t, Term):
+            # this should maybe be an error
+            return Terminal(0)
+        vmap = {ret_variable: self.ret_var}
+        for i, j in enumerate(t.arguments):
+            vmap[i] = constant(j)
+        r = CallTerm(vmap, self.dyna_system, (t.name, len(t.arguments)))
+        return simplify(r, frame)
+
     return self
 
 
@@ -271,12 +268,10 @@ class CallTerm(RBaseType):
     def __hash__(self):
         return super().__hash__()
 
-# this should be on the thread context or something??
-call_stack = []
 
 @simplify.define(CallTerm)
 def simplify_call(self, frame):
-    global call_stack
+    #global call_stack
     # we want to keep around the calls, so that we can continue to perform replacement operations on stuff.
 
     # this is going to need to determine which calls are safe
@@ -294,10 +289,7 @@ def simplify_call(self, frame):
 
     # # first rename all of the variables such that this doesn't
 
-    for c in call_stack:
-
-        #import ipdb; ipdb.set_trace()
-
+    for c in frame.call_stack:
         if c.term_ref == self.term_ref:
             # then don't try to run this
             assert tuple(self.var_map.keys()) == tuple(c.var_map.keys())  # check that the ordres are the same, will have to remap otherwise
@@ -320,20 +312,20 @@ def simplify_call(self, frame):
         return self
 
     # just always inline version
-    renames = {}
-    def renamer(v):
-        if v in self.var_map:
-            return self.var_map[v]
-        elif isinstance(v, ConstantVariable) or isinstance(v, UnitaryVariable):
-            return v
-        if v not in renames:
-            renames[v] = VariableId()  # makes a new unique name for this variable
-        return renames[v]
+    # renames = {}
+    # def renamer(v):
+    #     if v in self.var_map:
+    #         return self.var_map[v]
+    #     elif isinstance(v, ConstantVariable) or isinstance(v, UnitaryVariable):
+    #         return v
+    #     if v not in renames:
+    #         renames[v] = VariableId()  # makes a new unique name for this variable
+    #     return renames[v]
 
     # we might want to run simplify on this the first time?
     # this still doesn't handle the cases where we are going to be backwards chaining
     R = self.dyna_system.lookup_term(self.term_ref)
-    R2 = R.rename_vars(renamer)
+    R2 = R.rename_vars_unique(self.var_map.get)
 
     try:
         # we are going to eagerly build this structure, which is going to run
@@ -344,10 +336,10 @@ def simplify_call(self, frame):
         # I suppose that we are going to try and make this thing work in the
         # case that we are not making guesses, which implies that there are
         # going to be memos
-        call_stack.append(self)
+        frame.call_stack.append(self)
         R2 = simplify(R2, frame)
     finally:
-        assert call_stack[-1] is self
-        del call_stack[-1]
+        assert frame.call_stack[-1] is self
+        del frame.call_stack[-1]
 
     return R2

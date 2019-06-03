@@ -13,6 +13,8 @@ from .terms import (
     Term, BuildStructure, ReflectStructure
 )
 
+from .memos import MemoContainer, UnkMemo
+
 # This is a shortcut for writing code quickly where we are going to lookup a method
 # so we can write something like `M.add(1,2,3)`
 class M(object):

@@ -54,6 +54,21 @@ class RBaseType:
         for c in self.children:
             yield from c.all_vars()
 
+    def rename_vars_unique(self, nmap):
+        # rename variables where new names are generated for variables that are not referenced
+        nvars = {}
+        def rmap(x):
+            nonlocal nvars
+            if isinstance(x, UnitaryVariable) or isinstance(x, ConstantVariable):
+                return x
+            if x in nvars:
+                return nvars[x]
+            r = nmap(x)
+            if r is None:
+                r = VariableId()  # make a new unique variable id
+            nvars[x] = r
+            return r
+        return self.rename_vars(rmap)
 
     def __call__(self, *args, ret=None):
         # TODO: this needs to check that we are not calling this with more arguments than are present in the code
@@ -66,21 +81,23 @@ class RBaseType:
         args = variables_named(*args)
         rm.update(dict((VariableId(a), b) for a,b in enumerate(args)))
 
-        #import ipdb; ipdb.set_trace()
+        return self.rename_vars_unique(rm.get)
 
-        def remapper(v):
-            if isinstance(v, UnitaryVariable) or isinstance(v, ConstantVariable):
-                return v
-            if v not in rm:
-                rm[v] = VariableId()
-            return rm[v]
+        # #import ipdb; ipdb.set_trace()
 
-        # TODO: should this rename variables that are not referenced as
-        # arguments?  In which case, this is going to be constructing new
-        # variables (like what M. does)
+        # def remapper(v):
+        #     if isinstance(v, UnitaryVariable) or isinstance(v, ConstantVariable):
+        #         return v
+        #     if v not in rm:
+        #         rm[v] = VariableId()
+        #     return rm[v]
 
-        r = self.rename_vars(remapper) #lambda x: rm.get(x,x))
-        return r
+        # # TODO: should this rename variables that are not referenced as
+        # # arguments?  In which case, this is going to be constructing new
+        # # variables (like what M. does)
+
+        # r = self.rename_vars(remapper) #lambda x: rm.get(x,x))
+        # return r
 
     def __bool__(self):
         raise RuntimeError('Should not check Rexpr with bool test, use None test')
@@ -245,7 +262,15 @@ def constant(v):
     return ConstantVariable(None, v)
 
 class Frame(dict):
-    __slots__ = ()
+    __slots__ = ('call_stack',)
+
+    def __init__(self, f=None):
+        if f is not None:
+            super().__init__(f)
+            self.call_stack = f.call_stack.copy()
+        else:
+            super().__init__()
+            self.call_stack = []
 
     def __repr__(self):
         nice = {str(k).split('\n')[0]: v for k,v in self.items()}

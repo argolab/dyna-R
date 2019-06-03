@@ -2,6 +2,7 @@
 numpy
 pybind11
 
+networkx
 
 pytest
 

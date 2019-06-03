@@ -3,6 +3,8 @@
 # it is holding the references to the different terms that are defined.
 
 
+
+# maybe these should be imported later or not at all, so this will instead
 from .interpreter import *
 from .terms import CallTerm
 
@@ -78,4 +80,10 @@ class TaskContext:
     def __init__(self, system):
         self.new_memos = {}
         self.agenda_additions = []
+        #self.call_stack = []
         self.system = system
+
+
+
+# this should be a thread local.  The reference to the dyna_system should probably go through this also?
+active_task = TaskContext(dyna_system)

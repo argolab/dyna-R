@@ -231,3 +231,7 @@ becomes a failed object itself.
 * other things to use
 https://www.ravenbrook.com/project/mps/
 https://github.com/efficient/libcuckoo
+
+https://networkx.github.io/ -- for pattern matching against different rewrites,
+this should be sub-graph isomorphism to identify where a pattern occurs, we can
+then add in additional inferred constraints or replace part of the computation.
