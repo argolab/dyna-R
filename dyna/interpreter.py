@@ -85,22 +85,6 @@ class RBaseType:
 
         return self.rename_vars_unique(rm.get)
 
-        # #import ipdb; ipdb.set_trace()
-
-        # def remapper(v):
-        #     if isinstance(v, UnitaryVariable) or isinstance(v, ConstantVariable):
-        #         return v
-        #     if v not in rm:
-        #         rm[v] = VariableId()
-        #     return rm[v]
-
-        # # TODO: should this rename variables that are not referenced as
-        # # arguments?  In which case, this is going to be constructing new
-        # # variables (like what M. does)
-
-        # r = self.rename_vars(remapper) #lambda x: rm.get(x,x))
-        # return r
-
     def __bool__(self):
         raise RuntimeError('Should not check Rexpr with bool test, use None test')
 
@@ -287,31 +271,6 @@ class Frame(dict):
         return pprint.pformat(nice, indent=1)
 
 
-# class _EmptyFrame(Frame):
-#     __slots__ = ()
-#     def __setitem__(self, var, val):
-#         assert False  # don't set on this frame directly, can return a new instance that will
-#     # this is an empty dict, so bool(self) == False
-#     def update(self, *args, **kwargs):
-#         assert False
-
-# emptyFrame = _EmptyFrame()
-
-# class _FailedFrame(Frame):
-#     __slots__ = ()
-#     def setVariable(self, variable, value):
-#         return self
-#     def isFailed(self):
-#         return True
-#     def remove(self, variable):
-#         pass
-#     def __setitem__(self, var, val):
-#         assert False  # don't set values on the failed frame
-#     def __repr__(self):
-#         return '{FailedFrame, ...=...}'
-
-# failedFrame = _FailedFrame()
-
 ####################################################################################################
 # Iterators and other things
 
@@ -482,26 +441,6 @@ def getPartitions_default(self, frame):
         yield from getPartitions(c, frame)
 
 
-# def runPartition(R, frame, partition):
-#     # this should yield different Frame, R pairs using the selected
-#     # partitionining scheme we use an iterator as we would like to be lazy, but
-#     # this iterator __must__ be finite, in that we could run
-#     # list(runPartition(...)) and it _would_ terminate with a fixed size list.
-
-#     # we might want to pattern match against the type of the partition in
-#     # different files?  So then this should also be a visitor pattern?  In which
-#     # case it would have to perform different rewrites of potentially nested
-#     # expressions.
-
-#     # running these partitions might also allow for there to be threading
-#     # between different operations?  In which case the consumer of this would
-#     # want to be able to run parallel for loop or something.
-
-#     assert False
-
-#     yield frame, R
-
-
 def loop_partition(R, frame, callback, partition):
     # use a callback instead of iterator as will be easier to rewrite this later
     for bd in partition.run(frame):
@@ -591,7 +530,6 @@ def simplify_intersect(self :Intersect, frame: Frame):
             return r
         vs.append(r)
     return intersect(*vs)
-# return intersect(*(simplify(c, frame) for c in self.children))
 
 
 class Partition(RBaseType):
@@ -660,20 +598,6 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
         for var, imode in zip(self._unioned_vars, incoming_mode):
             if not imode:
                 var._unset(frame)  # TODO: figure out a better way to do this in python
-
-        # if flatten_partition:
-        #     # then we might have different values of a variable along different
-        #     # branches, so we are going to want to not use the frame in this
-        #     # case?
-        #     #
-        #     # This means that we should rewrite the variables such that they
-        #     # hold onto the values of the frame
-        #     def rw(x):
-        #         if x.isBound(frame):
-        #             return constant(x.getValue(frame))
-        #         return x
-        #     res = res.rename_vars(rw)
-        #     import ipdb; ipdb.set_trace()
 
         if not res.isEmpty():
             nc[nkey].append(res)
