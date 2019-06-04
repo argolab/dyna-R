@@ -631,6 +631,8 @@ class Partition(RBaseType):
         return self is other or \
             (type(self) is type(other) and
              self._unioned_vars == other._unioned_vars and
+             len(self._children) == len(other._children) and
+             # TODO: this needs to be handled as a set or something rather than just looping over the lists
              all(a == b for a,b in zip(self._children, other._children)))
 
     def __hash__(self):
@@ -646,35 +648,41 @@ def partition(unioned_vars, children):
 
 
 @simplify.define(Partition)
-def simplify_partition(self :Partition, frame: Frame, flatten_partition=False):
+def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # TODO: better name than map_function???
     incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
     incoming_values = [v.getValue(frame) for v in self._unioned_vars]
 
     nc = defaultdict(list)
 
-    def save(res, frame):
+    def saveL(res, frame):
         # this would have bound new values in the frame potentially, so we going to unset those (if they were unset on being called)
         nkey = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self._unioned_vars)
         for var, imode in zip(self._unioned_vars, incoming_mode):
-            if not imode or flatten_partition:
+            if not imode:
                 var._unset(frame)  # TODO: figure out a better way to do this in python
 
-        if flatten_partition:
-            # then we might have different values of a variable along different
-            # branches, so we are going to want to not use the frame in this
-            # case?
-            #
-            # This means that we should rewrite the variables such that they
-            # hold onto the values of the frame
-            def rw(x):
-                if x.isBound(frame):
-                    return constant(x.getValue(frame))
-                return x
-            res = res.rename_vars(rw)
-            import ipdb; ipdb.set_trace()
+        # if flatten_partition:
+        #     # then we might have different values of a variable along different
+        #     # branches, so we are going to want to not use the frame in this
+        #     # case?
+        #     #
+        #     # This means that we should rewrite the variables such that they
+        #     # hold onto the values of the frame
+        #     def rw(x):
+        #         if x.isBound(frame):
+        #             return constant(x.getValue(frame))
+        #         return x
+        #     res = res.rename_vars(rw)
+        #     import ipdb; ipdb.set_trace()
 
         if not res.isEmpty():
             nc[nkey].append(res)
+
+    # a hook so that we can handle perform some remapping and control what gets save back into the partition
+    if map_function is None:
+        save = saveL
+    else:
+        save = lambda a,b: map_function(saveL, a,b)
 
 
     # depending on the storage strategy of this, going to need to have something
@@ -696,10 +704,7 @@ def simplify_partition(self :Partition, frame: Frame, flatten_partition=False):
 
             res = simplify(Rexpr, frame)
 
-            if flatten_partition:
-                loop(res, frame, save)
-            else:
-                save(res, frame)
+            save(res, frame)
 
     if not nc:
         # then nothing matched, so just return that the partition is empty
@@ -746,7 +751,7 @@ def partition_lookup(self :Partition, key):
         # determine if this matches
         matches = all(a is None or b is None or a == b for a,b in zip(key, grounds))
         if matches:
-            res.append(matches)
+            res.append((grounds, Rexpr))
 
     if res:
         return Partition(self._unioned_vars, res)

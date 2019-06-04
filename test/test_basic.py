@@ -256,7 +256,7 @@ from dyna.builtins import gteq, lteq, sub, add
 fib = Partition(variables_named(0, interpreter.ret_variable),
                 (Intersect(Unify(constant(0), VariableId(0)), Unify(constant(0), interpreter.ret_variable)),  # fib(0) = 0
                  Intersect(Unify(constant(1), VariableId(0)), Unify(constant(1), interpreter.ret_variable)),  # fib(1) = 1
-                 Intersect(gteq(VariableId(0), constant(2)), lteq(VariableId(0), constant(150)),  # fib(X) = X >= 2, X <= 10, fib(X-1) + fib(X-2).
+                 Intersect(gteq(VariableId(0), constant(2)), lteq(VariableId(0), constant(40)),  # fib(X) = X >= 2, X <= 40, fib(X-1) + fib(X-2).
                            sub(VariableId(0), constant(1), ret=VariableId('Xm1')),
                            sub(VariableId(0), constant(2), ret=VariableId('Xm2')),
                            dyna_system.call_term('fib', 1)(VariableId('Xm1'), ret=VariableId('F1')),
@@ -306,8 +306,9 @@ def test_fib_null_memos():
 
     dyna_system.terms_as_defined[('fib', 1)] = fibm  # force the override
 
-    # this needs to run the forward chaining step until it fills up the memo table
-
-
     # this should run until it has reached a fixed point
     converge_memos(mtable)
+
+    # going to lookup directly into the memo table to determien what the values are
+    assert len(mtable.memos._children) == 41
+    assert mtable.memos._children[-1][0] == (40, 102334155)

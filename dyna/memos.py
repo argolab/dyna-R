@@ -271,7 +271,7 @@ def simplify_nullmemo(self, frame):
         # then there isn't enough bound that we can attempt to look a memoized
         # value up
         return self
-    key = tuple(v.getValue(frame) for v in self.variables)
+    key = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self.variables)
 
     res = self.memos.lookup(key, compute_if_not_set=False)
     if res is None:
@@ -293,7 +293,7 @@ def getpartition_nullmemo(self, frame):
     # This is a basic version of null memos, so we are just going to assume that
     # all of the argument variables are iterable
 
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace()
     # for imode, var, i in zip(self.memos.supported_mode, self.variables, itertools.count()):
     #     if imode:
     #         # then this is memoized, so we are going to construct an iterator based off this memo table
@@ -320,50 +320,30 @@ def converge_memos(*tables):
         # keep looping until the table is at a fixed point
 
         for t in tables:
-            # we are going to compute everything that the body produces and use that to check if the memo is consistent
-            # R = inline_all_calls(t.body)
-            # generated = defaultdict(list)
-            # def cb(r, frame):
-            #     # this needs to capture the values of variables and then store them into the dict
-            #     # if there are multiple keys with the variables then we are going to have to construct a partition over the variables
-
-            #     nR = [r]
-            #     key = []
-
-            #     # this maybe should go onto the memo class
-            #     for var, imode in zip(self.memos.variables, self.memos.supported_mode):
-            #         if imode:
-            #             assert var.isBound(frame)  # if the variable is not bound, then this is not something that we are going to be able to memoize, which is a problem atm..... in the future we could alert that the memo can't be constructed as requested and backoff or something
-            #             key.append(var.getValue(frame))
-
-            #         if not imode and var.isBound(frame):
-            #             nR.insert(0, Unify(var, constant(var.getValue(frame))))
-            #         var._unset(frame)
-
-            #     nR = intersect(*nR)
-
-            #     d = dict((VariableId(k), constant(v)) for k,v in frame.items())
-            #     if d:
-            #         nR = nR.rename_vars(lambda x: d.get(x,x))
-
-            #     generated[tuple(key)].append(nR)
-
-
-            # # TODO: this loop needs to take a list of variables that we need
-            # # bound, and then ensure that all of the variables are bound or that
-            # # there is nothing further that we can do for unification.
-
-            # loop(R, Frame(), cb)
-
             # this maybe should be done once at the start instead of every time that we go around this loop?
             R = inline_all_calls(t.body)
 
-            nR = simplify(R, Frame(), flatten_partition=True)
+            def flatten_keys(save, R, frame):
+                # this needs to loop until all of the keys are ground, if we are
+                # unable to ground everything, then we are going to have delayed
+                # R-expr, but that needs to still avoid overlapping?
+                if isinstance(R, FinalState):
+                    save(R, frame)
+                else:
+                    # then we are going to loop and try and ground out more
+                    def cb(R, frame):
+                        #import ipdb; ipdb.set_trace()
+                        save(R, frame)
+                    loop(R, frame, cb, till_terminal=True)
 
-            if R != nR:
+            nR = simplify(R, Frame(), map_function=flatten_keys)
+
+            if t.memos != nR:
                 # then we need to update the expression in the table with this
                 t.memos = nR
                 done = False
 
-            # we need to flatten this object out and check if it is equal to current memoized expression
-            import ipdb; ipdb.set_trace()
+            # else:
+            #     import ipdb; ipdb.set_trace()
+            # if len(t.memos.children) > 35:
+            #     import ipdb; ipdb.set_trace()
