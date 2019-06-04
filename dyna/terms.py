@@ -343,3 +343,25 @@ def simplify_call(self, frame):
         del frame.call_stack[-1]
 
     return R2
+
+
+
+inline_all_calls = Visitor()
+
+@inline_all_calls.default
+def inline_all_calls_default(self, stack=()):
+    return self.rewrite(lambda x: inline_all_calls(x, stack))
+
+
+@inline_all_calls.define(CallTerm)
+def inline_all_calls_callterm(self, stack=()):
+    if self.term_ref in stack:
+        # then we are going around a cycle, and this is not handled
+        raise RecursionError(self.term_ref)
+    R = self.dyna_system.lookup_term(self.term_ref)
+    R2 = R.rename_vars_unique(self.var_map.get)
+    return inline_all_calls(R2, stack+(self.term_ref,))
+
+@inline_all_calls.define(Evaluate)
+def inline_all_calls_evaluate(self, stack=()):
+    raise RuntimeError('Evaluate can not determine what it will call')

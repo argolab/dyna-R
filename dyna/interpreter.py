@@ -2,6 +2,8 @@ from collections import defaultdict
 from typing import *
 import pprint
 
+import networkx as nx
+
 
 class RBaseType:
 
@@ -102,6 +104,13 @@ class RBaseType:
     def __bool__(self):
         raise RuntimeError('Should not check Rexpr with bool test, use None test')
 
+    # def build_graph(self, graph):
+    #     for v in self.vars:
+    #         v.build_graph(graph)
+
+    # def isomorphic(self, other, matched_variables=()):
+    #     # determine if the two graphs are isomprhic to eachother, but we are going to require that
+
 
 class FinalState(RBaseType):
     __slots__ = ()
@@ -163,6 +172,7 @@ class InvalidValue:
     def __repr__(self):
         return 'INVALID'
 InvalidValue = InvalidValue()
+
 
 
 class Variable:
