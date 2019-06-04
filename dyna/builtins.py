@@ -382,7 +382,7 @@ list_length = intersect(Unify(constant(True), ret_variable),  # set the "returne
                                              gteq(VariableId(0), constant(1)),
                                              # this is the recursive call
                                              # TODO: this should not have to reference the system? so there should be some placeholder here instead....
-                                             dyna_system.call_term('list_length', 2)(VariableId('len1'), VariableId('Xs'), ret=VariableId('ret_ignore'))
+                                             dyna_system.call_term('list_length', 2)(VariableId('len1'), VariableId('Xs'), ret=constant(True))
                                    ))))
 
 dyna_system.define_term('list_length', 2, list_length)

@@ -150,6 +150,7 @@ struct TermContainer {
     T_int = 1,
     T_float = 3,
     T_bool = 5,
+    T_nonground = 7  // for the case that this represents a non-ground value, that we want to pass to something else that is performing a lookup
   };
   union {
     Term *ptr;  // the last bits should be 0.  Otherwise we are in the tag case

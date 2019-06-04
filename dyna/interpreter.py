@@ -359,13 +359,25 @@ class UnionIterator(Iterator):
 
 
 class RemapVarIterator(Iterator):
-    def __init__(self, remap, wrapped):
+    def __init__(self, remap, wrapped, variable):
         self.remap = remap
         self.wrapped = wrapped
+        self.variable = variable
     def run(self, frame):
-        yield from self.wrapped.run(frame)
+        for r in self.wrapped.run(None):  # TODO: handle the remapping of the argument frame
+
+            yield {self.remap[k]: v for k,v in r.items()}
+
+            # # TODO: handle remapping the keys
+            # assert False
+            # yield 0
+
     def bind_iterator(self, frame, variable, value):
-        assert False  # TODO
+        rmap = dict((b,a) for a,b in self.remap.items())
+        v = rmap.get(variable, variable)
+        return self.wrapped.bind_iterator(self, None, r, value)
+
+
 
 
 class SingleIterator(Iterator):
@@ -508,6 +520,11 @@ def loop_partition(R, frame, callback, partition):
 
 
 def loop(R, frame, callback, till_terminal=False, partition=None):
+    if isinstance(R, FinalState):
+        # then this is done, so just callback
+        callback(R, frame)
+        return
+
     if partition is None:
         # then we need to select some partition to use, which will mean choosing
         # which one of theses is "best"?
@@ -609,6 +626,16 @@ class Partition(RBaseType):
         # though might want to have the representation of what the values are on each branch of the partition
         return (self.__class__.__name__, self._unioned_vars, *(c._tuple_rep() for c in self.children))
 
+    def __eq__(self, other):
+        # the equal bit needs to include the arguments on the heads of the children expressions
+        return self is other or \
+            (type(self) is type(other) and
+             self._unioned_vars == other._unioned_vars and
+             all(a == b for a,b in zip(self._children, other._children)))
+
+    def __hash__(self):
+        return super().__hash__()
+
 
 def partition(unioned_vars, children):
     # construct a partition
@@ -619,11 +646,36 @@ def partition(unioned_vars, children):
 
 
 @simplify.define(Partition)
-def simplify_partition(self :Partition, frame: Frame):
+def simplify_partition(self :Partition, frame: Frame, flatten_partition=False):
     incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
     incoming_values = [v.getValue(frame) for v in self._unioned_vars]
 
     nc = defaultdict(list)
+
+    def save(res, frame):
+        # this would have bound new values in the frame potentially, so we going to unset those (if they were unset on being called)
+        nkey = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self._unioned_vars)
+        for var, imode in zip(self._unioned_vars, incoming_mode):
+            if not imode or flatten_partition:
+                var._unset(frame)  # TODO: figure out a better way to do this in python
+
+        if flatten_partition:
+            # then we might have different values of a variable along different
+            # branches, so we are going to want to not use the frame in this
+            # case?
+            #
+            # This means that we should rewrite the variables such that they
+            # hold onto the values of the frame
+            def rw(x):
+                if x.isBound(frame):
+                    return constant(x.getValue(frame))
+                return x
+            res = res.rename_vars(rw)
+            import ipdb; ipdb.set_trace()
+
+        if not res.isEmpty():
+            nc[nkey].append(res)
+
 
     # depending on the storage strategy of this, going to need to have something
     # better?  This is going to require that
@@ -643,15 +695,11 @@ def simplify_partition(self :Partition, frame: Frame):
                     var.setValue(frame, val)
 
             res = simplify(Rexpr, frame)
-            # this would have bound new values in the frame potentially, so we going to unset those (if they were unset on being called)
-            nkey = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self._unioned_vars)
-            for var, imode in zip(self._unioned_vars, incoming_mode):
-                if not imode:
-                    var._unset(frame)  # TODO: figure out a better way to do this in python
 
-            if not res.isEmpty():
-                nc[nkey].append(res)
-
+            if flatten_partition:
+                loop(res, frame, save)
+            else:
+                save(res, frame)
 
     if not nc:
         # then nothing matched, so just return that the partition is empty
@@ -689,7 +737,21 @@ def simplify_partition(self :Partition, frame: Frame):
     return Partition(self._unioned_vars, ll)
 
 
+def partition_lookup(self :Partition, key):
+    # return a new partition that matches the values that are in the key
+    assert len(self._unioned_vars) == len(key)
 
+    res = []
+    for grounds, Rexpr in self._children:
+        # determine if this matches
+        matches = all(a is None or b is None or a == b for a,b in zip(key, grounds))
+        if matches:
+            res.append(matches)
+
+    if res:
+        return Partition(self._unioned_vars, res)
+    # if there is nothing that matched, then return None which could represent a "needs to be computed" or terminal(0) based off context
+    return None
 
 
 @getPartitions.define(Partition)

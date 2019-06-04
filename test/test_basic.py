@@ -299,7 +299,9 @@ def test_fib_unk_memos():
 
 
 def test_fib_null_memos():
-    mtable = MemoContainer((True,False), (VariableId(0), interpreter.ret_variable), fib)
+    #mtable = MemoContainer((True,False), (VariableId(0), interpreter.ret_variable), fib)
+    mtable = MemoContainer2((True,False), (VariableId(0), interpreter.ret_variable), fib)
+
     fibm = NullMemo((VariableId(0), interpreter.ret_variable), mtable)
 
     dyna_system.terms_as_defined[('fib', 1)] = fibm  # force the override
@@ -307,5 +309,5 @@ def test_fib_null_memos():
     # this needs to run the forward chaining step until it fills up the memo table
 
 
-    # this should run unt
+    # this should run until it has reached a fixed point
     converge_memos(mtable)

@@ -166,12 +166,82 @@ def simplify_unkmemo(self, frame):
     # run the new result once, which can
     return simplify(res2, frame)
 
+class MemoContainer2:
+
+    body : RBaseType
+    memos : Partition  # which is also an RBaseType
+
+    def __init__(self, supported_mode: Tuple[bool], variables: Tuple[Variable], body: RBaseType):
+        self.supported_mode = supported_mode
+        self.variables = variables
+        self.body = body
+
+        self.memos = Partition(variables, ())
+        self._error_cycle = set()
+
+    def lookup(self, values, *, compute_if_not_set=True):
+        assert len(values) == len(self.variables)
+        r = partition_lookup(self.memos, values)
+        if r is not None or not compute_if_not_set:
+            return r
+        # then we are going to compute the value for this and then return the result
+
+        # TODO: this should use the same storage as the object, with this as an external object this is annoying...
+        assert values not in self._error_cycle
+        self._error_cycle.add(values)
+
+        nR = self.compute(values)
+
+        self._error_cycle.remove(values)
+
+
+        assert False  # this needs to save the result, but this needs to handle
+        # that there might be different modes in which this works if the modes
+        # do not match up, then the issue is that we might find something that
+        # matches but that does not properly represent what we are computing.
+
+
+    def compute(self, values):
+        # then we are going to determine what the result of this memoized value
+        # is this requires constructing a new sub interpreter and using that to
+        # set the values etc
+        frame = Frame()
+        for var, imode, val in zip(self.variables, self.supported_mode, values):
+            if imode:
+                var.setValue(frame, val)
+
+        # this should put a marker down that this is computing for this space,
+        # so that if it hits this space again, then I suppose that we are giong
+        # to be forced to forward chain as then the value is not backwards
+        # computable
+
+        # determine the new body and frame
+        nR = saturate(self.body, frame)
+        nR = [nR]
+        for var, imode in zip(self.variables, self.supported_mode):
+            if not imode and var.isBound(frame):
+                # then we need /somewhere/ to store the value of this /ground/ variable
+                # so we are just going to add in unification with a constant for now
+                # we might also want to instead use the partition system?
+                nR.insert(0, Unify(var, constant(var.getValue(frame))))
+            var._unset(frame)  # delete this from the frame for the next step
+
+        nR = intersect(*nR)
+
+        # we need to rewrite body such that it doesn't need this frame anymore
+        # which means that we are going to remap all of the variables to their constant value
+        d = dict((VariableId(k), constant(v)) for k,v in frame.items())
+        if d:
+            nR = nR.rename_vars(lambda x: d.get(x,x))
+
+        return nR
+
 
 # this is very similar to the unk memos, and partition, so going to write this
 # seperate first, and then work on mergining them later
 class NullMemo(RBaseType):
 
-    def __init__(self, variables :Tuple[Variable], memos: MemoContainer):
+    def __init__(self, variables :Tuple[Variable], memos :MemoContainer2):
         assert len(variables) == len(memos.variables)
         self.variables = variables
         self.memos = memos
@@ -224,10 +294,23 @@ def getpartition_nullmemo(self, frame):
     # all of the argument variables are iterable
 
     import ipdb; ipdb.set_trace()
-    for imode, var, i in zip(self.memos.supported_mode, self.variables, itertools.count()):
-        if imode:
-            # then this is memoized, so we are going to construct an iterator based off this memo table
-            yield MemoIterator(var, i, self.memos)
+    # for imode, var, i in zip(self.memos.supported_mode, self.variables, itertools.count()):
+    #     if imode:
+    #         # then this is memoized, so we are going to construct an iterator based off this memo table
+    #         yield MemoIterator(var, i, self.memos)
+
+
+    # this needs to loop over the partitions variables and the nremap the variables to the names that we are using in this expression
+
+
+    # we need to remap the variables so that we only pass the names that are the same on both sides
+    f = Frame()
+    for va, vb in zip(self.variables, self.memos.variables):
+        if va.isBound(frame):
+            vb.setValue(f, va.getValue(frame))
+    vmap = dict(zip(self.memos.variables, self.variables))
+    for it in getPartitions(self.memos.memos, f):
+        yield RemapVarIterator(vmap, it, vmap[it.variable])
 
 
 def converge_memos(*tables):
@@ -238,36 +321,49 @@ def converge_memos(*tables):
 
         for t in tables:
             # we are going to compute everything that the body produces and use that to check if the memo is consistent
+            # R = inline_all_calls(t.body)
+            # generated = defaultdict(list)
+            # def cb(r, frame):
+            #     # this needs to capture the values of variables and then store them into the dict
+            #     # if there are multiple keys with the variables then we are going to have to construct a partition over the variables
+
+            #     nR = [r]
+            #     key = []
+
+            #     # this maybe should go onto the memo class
+            #     for var, imode in zip(self.memos.variables, self.memos.supported_mode):
+            #         if imode:
+            #             assert var.isBound(frame)  # if the variable is not bound, then this is not something that we are going to be able to memoize, which is a problem atm..... in the future we could alert that the memo can't be constructed as requested and backoff or something
+            #             key.append(var.getValue(frame))
+
+            #         if not imode and var.isBound(frame):
+            #             nR.insert(0, Unify(var, constant(var.getValue(frame))))
+            #         var._unset(frame)
+
+            #     nR = intersect(*nR)
+
+            #     d = dict((VariableId(k), constant(v)) for k,v in frame.items())
+            #     if d:
+            #         nR = nR.rename_vars(lambda x: d.get(x,x))
+
+            #     generated[tuple(key)].append(nR)
+
+
+            # # TODO: this loop needs to take a list of variables that we need
+            # # bound, and then ensure that all of the variables are bound or that
+            # # there is nothing further that we can do for unification.
+
+            # loop(R, Frame(), cb)
+
+            # this maybe should be done once at the start instead of every time that we go around this loop?
             R = inline_all_calls(t.body)
-            generated = defaultdict(list)
-            def cb(r, frame):
-                # this needs to capture the values of variables and then store them into the dict
-                # if there are multiple keys with the variables then we are going to have to construct a partition over the variables
 
-                nR = [r]
-                key = []
+            nR = simplify(R, Frame(), flatten_partition=True)
 
-                # this maybe should go onto the memo class
-                for var, imode in zip(self.memos.variables, self.memos.supported_mode):
-                    if imode:
-                        assert var.isBound(frame)  # if the variable is not bound, then this is not something that we are going to be able to memoize, which is a problem atm..... in the future we could alert that the memo can't be constructed as requested and backoff or something
-                        key.append(var.getValue(frame))
+            if R != nR:
+                # then we need to update the expression in the table with this
+                t.memos = nR
+                done = False
 
-                    if not imode and var.isBound(frame):
-                        nR.insert(0, Unify(var, constant(var.getValue(frame))))
-                    var._unset(frame)
-
-                nR = intersect(*nR)
-
-                d = dict((VariableId(k), constant(v)) for k,v in frame.items())
-                if d:
-                    nR = nR.rename_vars(lambda x: d.get(x,x))
-
-                generated[tuple(key)].append(nR)
-
-
-            # TODO: this loop needs to take a list of variables that we need
-            # bound, and then ensure that all of the variables are bound or that
-            # there is nothing further that we can do for unification.
-
-            loop(R, Frame(), cb)
+            # we need to flatten this object out and check if it is equal to current memoized expression
+            import ipdb; ipdb.set_trace()
