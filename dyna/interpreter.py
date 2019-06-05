@@ -536,42 +536,48 @@ class Partition(RBaseType):
     """
     This class is /verhy/ overloaded in that we are going to be using the same representation for memoized entries as well as the partitions
     """
-    def __init__(self, unioned_vars :Tuple, children :Tuple[Tuple[Tuple, RBaseType]]):
+    def __init__(self, unioned_vars :Tuple, children :Dict[Tuple[object], List[RBaseType]]):
         super().__init__()
         self._unioned_vars = unioned_vars
         # the children should be considered immutable once placed on the partition class
         # though we are going to construct this class via
 
+        assert isinstance(children, dict)
+
         # make the children simple in that we are just going to scan the list in the case that
-        self._children = tuple(children)
+        self._children = children  # this should be treated as "immutable"
 
     @property
     def vars(self):
         return self._unioned_vars
     @property
     def children(self):
-        return tuple(v[1] for v in self._children)
+        return tuple(c for v in self._children.values() for c in v)
 
     def rename_vars(self, remap):
         r = tuple(remap(u) for u in self._unioned_vars)
-        c = tuple((a[0], a[1].rename_vars(remap)) for a in self._children)
+        c = dict((k, [c.rename_vars(remap) for c in v]) for k, v in self._children.items())
         return Partition(r, c)
 
     def rewrite(self, rewriter):
-        return Partition(self._unioned_vars, tuple((a[0], rewriter(a[1])) for a in self._children))
+        c = dict((k, [rewriter(c) for c in v]) for k,v in self._children.items())
+        return Partition(self._unioned_vars, c)
 
     def _tuple_rep(self):
         # though might want to have the representation of what the values are on each branch of the partition
-        return (self.__class__.__name__, self._unioned_vars, *(c._tuple_rep() for c in self.children))
+        return (self.__class__.__name__, self._unioned_vars, *(c._tuple_rep() for v in self.children.values() for c in v))
 
     def __eq__(self, other):
         # the equal bit needs to include the arguments on the heads of the children expressions
         return self is other or \
             (type(self) is type(other) and
              self._unioned_vars == other._unioned_vars and
-             len(self._children) == len(other._children) and
-             # TODO: this needs to be handled as a set or something rather than just looping over the lists
-             all(a == b for a,b in zip(self._children, other._children)))
+             # the order of the children can still impact this test, which is ...bad...sigh
+             self._children == other._children)
+
+             # len(self._children) == len(other._children) and
+             # # TODO: this needs to be handled as a set or something rather than just looping over the lists
+             # all(a == b for a,b in zip(self._children, other._children)))
 
     def __hash__(self):
         return super().__hash__()
@@ -582,7 +588,11 @@ def partition(unioned_vars, children):
     if all(isinstance(c, Terminal) for c in children):
         return Terminal(sum(c.multiplicity for c in children))
 
-    return Partition(unioned_vars, tuple(((None,)*len(unioned_vars), c) for c in children))
+    c = {
+        (None,)*len(unioned_vars): list(children)
+    }
+
+    return Partition(unioned_vars, c)
 
 
 @simplify.define(Partition)
@@ -611,7 +621,7 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
 
     # depending on the storage strategy of this, going to need to have something
     # better?  This is going to require that
-    for grounds, Rexpr in self._children:
+    for grounds, Rexprs in self._children.items():
         # this needs to check that the assignment of variables is consistent otherwise skip it
         # then this needs to figure out what
 
@@ -626,9 +636,9 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
                 if val is not None:
                     var.setValue(frame, val)
 
-            res = simplify(Rexpr, frame)
-
-            save(res, frame)
+            for Rexpr in Rexprs:
+                res = simplify(Rexpr, frame)
+                save(res, frame)
 
     if not nc:
         # then nothing matched, so just return that the partition is empty
@@ -636,46 +646,68 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
 
     set_values = list(next(iter(nc.keys())))
 
-    ll = []
-    for k, vv in nc.items():  # the partition should probably have more of a
-                              # dict structure, this needs to match what the
-                              # internal data structure is for partition
-        for i in range(len(self._unioned_vars)):  # identify variables that have the same value on all partitions
+    for k in nc.keys():
+
+        # identify which values are the same across all branches
+        for i in range(len(self._unioned_vars)):
             if set_values[i] != k[i]:
                 set_values[i] = None
 
+        vv = nc[k]
         multiplicity = 0
-
+        r = []
         for v in vv:
             if isinstance(v, Terminal):
                 multiplicity += v.multiplicity
                 assert None not in k
             else:
-                ll.append((k, v))
-
+                r.append(v)
         if multiplicity != 0:
-            ll.append((k, Terminal(multiplicity)))
+            r.append(Terminal(multiplicity))
+        nc[k] = r
+
+
+
+    # ll = []
+    # for k, vv in nc.items():  # the partition should probably have more of a
+    #                           # dict structure, this needs to match what the
+    #                           # internal data structure is for partition
+    #     for i in range(len(self._unioned_vars)):  # identify variables that have the same value on all partitions
+    #         if set_values[i] != k[i]:
+    #             set_values[i] = None
+
+    #     multiplicity = 0
+
+    #     for v in vv:
+    #         if isinstance(v, Terminal):
+    #             multiplicity += v.multiplicity
+    #             assert None not in k
+    #         else:
+    #             ll.append((k, v))
+
+    #     if multiplicity != 0:
+    #         ll.append((k, Terminal(multiplicity)))
 
     for var, val in zip(self._unioned_vars, set_values):
         if val is not None:
             var.setValue(frame, val)
 
-    if len(ll) == 1:
-        return ll[0][1]  # then we don't need the partition any more
+    if len(nc) == 1 and len(next(iter(nc.values()))) == 1:
+        return next(iter(nc.values()))[0]  # then we don't need the partition any more
 
-    return Partition(self._unioned_vars, ll)
+    return Partition(self._unioned_vars, dict(nc))
 
 
 def partition_lookup(self :Partition, key):
     # return a new partition that matches the values that are in the key
     assert len(self._unioned_vars) == len(key)
 
-    res = []
-    for grounds, Rexpr in self._children:
+    res = {}
+    for grounds, Rexprs in self._children.items():
         # determine if this matches
         matches = all(a is None or b is None or a == b for a,b in zip(key, grounds))
         if matches:
-            res.append((grounds, Rexpr))
+            res[grounds] = Rexprs
 
     if res:
         return Partition(self._unioned_vars, res)
@@ -709,25 +741,28 @@ def getPartitions_partition(self :Partition, frame):
 
     vmaps = []
 
-    for vals, child in self._children:
+    for vals, Rexprs in self._children.items():
         # need to get all of the iterators from this child branch, in the case
         # that a variable is already bound want to include that.  If a variable
         # is not in the union map, then we want to ignore it
 
-        vm = [None]*len(self._unioned_vars)
+        vm_ = [None]*len(self._unioned_vars)
         for i, val in enumerate(vals):
             if val is not None:
-                vm[i] = SingleIterator(self._unioned_vars[i], val)
+                vm_[i] = SingleIterator(self._unioned_vars[i], val)
 
-        for it in getPartitions(child, frame):
-            if isinstance(it, Partition):  # if this is not consolidated, then we are going to want to bind a variable
-               citers.append(it)  # these are just partitions, so buffer these I suppose
-            else:
-                # then this is going to be some variable that
-                if it.variable in vmap:
-                    if vm[vmap[it.variable]] is None:  # this should potentially take more than 1 iterator rather than the first
-                        vm[vmap[it.variable]] = it
-        vmaps.append(vm)
+        for child in Rexprs:
+            vm = list(vm_)
+
+            for it in getPartitions(child, frame):
+                if isinstance(it, Partition):  # if this is not consolidated, then we are going to want to bind a variable
+                   citers.append(it)  # these are just partitions, so buffer these I suppose
+                else:
+                    # then this is going to be some variable that
+                    if it.variable in vmap:
+                        if vm[vmap[it.variable]] is None:  # this should potentially take more than 1 iterator rather than the first
+                            vm[vmap[it.variable]] = it
+            vmaps.append(vm)
 
     # we are going to have to union all of the different branches of a variable
     # and if possible, we are going to indicate that we can iterate this variable

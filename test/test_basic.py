@@ -310,4 +310,4 @@ def test_fib_null_memos():
 
     # going to lookup directly into the memo table to determien what the values are
     assert len(mtable.memos._children) == 41
-    assert mtable.memos._children[-1][0] == (40, 102334155)
+    assert mtable.memos._children[(40, 102334155)] == [Terminal(1)]

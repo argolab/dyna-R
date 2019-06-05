@@ -18,7 +18,7 @@ class MemoContainer:
 
         self.assumption = Assumption()
 
-        self.memos = Partition(variables, ())
+        self.memos = Partition(variables, {})
         self._error_cycle = set()
 
     def lookup(self, values, *, compute_if_not_set=True):
@@ -40,8 +40,16 @@ class MemoContainer:
         # adding something to the partition in the case that the keys overlap,
         # but otherwise this should be fine
 
-        nM = Partition(self.memos._unioned_vars, self.memos._children + ((values, nR),))
-        self.memos = nM
+        # nv = self.memos._children.copy()  # make a copy of this?  Though maybe we should just assume that we own it and update
+        # nv.setdefault(values, []).append(nR)
+
+        # nM = Partition(self.memos._unioned_vars, nv)
+        # self.memos = nM
+
+        # modify the data structure in place, so we are assuming that we own
+        # this (which better be the case), though it breaks the "ideal" that
+        # these structures are immutable....
+        self.memos._children.setdefault(values, []).append(nR)
 
         return nR
 
