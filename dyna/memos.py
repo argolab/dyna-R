@@ -18,7 +18,7 @@ class MemoContainer:
 
         self.assumption = Assumption()
 
-        self.memos = Partition(variables, {})
+        self.memos = Partition(variables, PrefixTrie(len(self.variables)))
         self._error_cycle = set()
 
     def lookup(self, values, *, compute_if_not_set=True):

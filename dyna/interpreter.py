@@ -539,13 +539,13 @@ class Partition(RBaseType):
     """
     This class is /verhy/ overloaded in that we are going to be using the same representation for memoized entries as well as the partitions
     """
-    def __init__(self, unioned_vars :Tuple, children :Dict[Tuple[object], List[RBaseType]]):
+    def __init__(self, unioned_vars :Tuple, children :PrefixTrie):#Dict[Tuple[object], List[RBaseType]]):
         super().__init__()
         self._unioned_vars = unioned_vars
         # the children should be considered immutable once placed on the partition class
         # though we are going to construct this class via
 
-        assert isinstance(children, dict)
+        assert isinstance(children, PrefixTrie)
 
         # make the children simple in that we are just going to scan the list in the case that
         self._children = children  # this should be treated as "immutable"
@@ -559,16 +559,18 @@ class Partition(RBaseType):
 
     def rename_vars(self, remap):
         r = tuple(remap(u) for u in self._unioned_vars)
-        c = dict((k, [c.rename_vars(remap) for c in v]) for k, v in self._children.items())
+        #c = dict((k, [c.rename_vars(remap) for c in v]) for k, v in self._children.items())
+        c = self._children.map_values(lambda v: [a.rename_vars(remap) for a in v])
         return Partition(r, c)
 
     def rewrite(self, rewriter):
-        c = dict((k, [rewriter(c) for c in v]) for k,v in self._children.items())
+        #c = dict((k, [rewriter(c) for c in v]) for k,v in self._children.items())
+        c = self._children.map_values(lambda v: [rewriter(a) for a in v])
         return Partition(self._unioned_vars, c)
 
     def _tuple_rep(self):
         # though might want to have the representation of what the values are on each branch of the partition
-        return (self.__class__.__name__, self._unioned_vars, *(c._tuple_rep() for v in self.children.values() for c in v))
+        return (self.__class__.__name__, self._unioned_vars, *(c._tuple_rep() for c in self.children))
 
     def __eq__(self, other):
         # the equal bit needs to include the arguments on the heads of the children expressions
@@ -591,9 +593,11 @@ def partition(unioned_vars, children):
     if all(isinstance(c, Terminal) for c in children):
         return Terminal(sum(c.multiplicity for c in children))
 
-    c = {
-        (None,)*len(unioned_vars): list(children)
-    }
+    # c = {
+    #     (None,)*len(unioned_vars): list(children)
+    # }
+    c = PrefixTrie(len(unioned_vars))
+    c[(None,)*len(unioned_vars)] = list(children)
 
     return Partition(unioned_vars, c)
 
@@ -603,7 +607,8 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
     incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
     incoming_values = [v.getValue(frame) for v in self._unioned_vars]
 
-    nc = defaultdict(list)
+    #nc = defaultdict(list)
+    nc = PrefixTrie(len(self._unioned_vars))
 
     def saveL(res, frame):
         # this would have bound new values in the frame potentially, so we going to unset those (if they were unset on being called)
@@ -613,7 +618,8 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
                 var._unset(frame)  # TODO: figure out a better way to do this in python
 
         if not res.isEmpty():
-            nc[nkey].append(res)
+            #nc[nkey].append(res)
+            nc.setdefault(nkey,[]).append(res)
 
     # a hook so that we can handle perform some remapping and control what gets save back into the partition
     if map_function is None:
@@ -624,24 +630,33 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
 
     # depending on the storage strategy of this, going to need to have something
     # better?  This is going to require that
-    for grounds, Rexprs in self._children.items():
+
+    #import ipdb; ipdb.set_trace()
+
+    for grounds, Rexprs in self._children.filter([a if b else None for a,b in zip(incoming_values, incoming_mode)]):
+
+        #for grounds, Rexprs in self._children.items():
         # this needs to check that the assignment of variables is consistent otherwise skip it
         # then this needs to figure out what
 
         # first determine if this element matches the values
         should_run = all((not a or c is None or b == c) for a,b,c in zip(incoming_mode, incoming_values, grounds))
 
-        if should_run:
+        assert should_run
+
+        #if should_run:
             # in the case that an incoming argument is already bound then we are going to want to record this under that new operation
             # we are first going to need to set the value of any variable that should already be bound
 
-            for var, val in zip(self._unioned_vars, grounds):
-                if val is not None:
-                    var.setValue(frame, val)
+        for var, val in zip(self._unioned_vars, grounds):
+            if val is not None:
+                var.setValue(frame, val)
 
-            for Rexpr in Rexprs:
-                res = simplify(Rexpr, frame)
-                save(res, frame)
+        for Rexpr in Rexprs:
+            res = simplify(Rexpr, frame)
+            save(res, frame)
+
+    # import ipdb; ipdb.set_trace()
 
     if not nc:
         # then nothing matched, so just return that the partition is empty
@@ -649,14 +664,14 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
 
     set_values = list(next(iter(nc.keys())))
 
-    for k in nc.keys():
+    for k, vv in nc:
 
         # identify which values are the same across all branches
         for i in range(len(self._unioned_vars)):
             if set_values[i] != k[i]:
                 set_values[i] = None
 
-        vv = nc[k]
+        #vv = nc[k]
         multiplicity = 0
         r = []
         for v in vv:
@@ -695,27 +710,36 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
         if val is not None:
             var.setValue(frame, val)
 
-    if len(nc) == 1 and len(next(iter(nc.values()))) == 1:
-        return next(iter(nc.values()))[0]  # then we don't need the partition any more
+    # if len(nc) == 1 and len(next(iter(nc.values()))) == 1:
+    #     return next(iter(nc.values()))[0]  # then we don't need the partition any more
 
-    return Partition(self._unioned_vars, dict(nc))
+    r = nc.single_item()
+    if r is not None and len(r[1]) == 1:
+        return r[1][0]
+
+    return Partition(self._unioned_vars, nc)
 
 
 def partition_lookup(self :Partition, key):
     # return a new partition that matches the values that are in the key
     assert len(self._unioned_vars) == len(key)
 
-    res = {}
-    for grounds, Rexprs in self._children.items():
-        # determine if this matches
-        matches = all(a is None or b is None or a == b for a,b in zip(key, grounds))
-        if matches:
-            res[grounds] = Rexprs
+    nc = self._children.filter(key)
+    if not nc:
+        return None
+    return Partition(self._unioned_vars, nc)
 
-    if res:
-        return Partition(self._unioned_vars, res)
-    # if there is nothing that matched, then return None which could represent a "needs to be computed" or terminal(0) based off context
-    return None
+    # res = {}
+    # for grounds, Rexprs in self._children.items():
+    #     # determine if this matches
+    #     matches = all(a is None or b is None or a == b for a,b in zip(key, grounds))
+    #     if matches:
+    #         res[grounds] = Rexprs
+
+    # if res:
+    #     return Partition(self._unioned_vars, res)
+    # # if there is nothing that matched, then return None which could represent a "needs to be computed" or terminal(0) based off context
+    # return None
 
 
 @getPartitions.define(Partition)
@@ -900,6 +924,8 @@ def simplify_aggregator(self, frame):
         # In this case there should be something which is able to iterate the
         # different frames and their associated bodies.  If the bodies are not
         # fully grounded out, then we should attempt to handle that somehow?
+
+
         agg_result = None
         def loop_cb(R, frame):
             nonlocal agg_result

@@ -9,12 +9,13 @@ class Term:
     # "term" is just overused in the system and there are other values that we
     # can represent in the system
 
-    __slots__ = ('__name', '__arguments')
+    __slots__ = ('__name', '__arguments', '__hashcache')
 
     def __init__(self, name, arguments):
         self.__name = name
         assert all(not isinstance(a, Variable) for a in arguments)
         self.__arguments = tuple(arguments)  # ensure this is a tuple and thus immutable
+        self.__hashcache = hash(self.name) ^ reduce(operator.xor, map(hash, self.arguments), 0)
 
     @property
     def name(self):
@@ -25,14 +26,15 @@ class Term:
         return self.__arguments
 
     def __eq__(self, other):
-        return isinstance(other, Term) and (
-            self.name == other.name and
-            len(self.arguments) == len(other.arguments) and
-            all(a == b for a,b in zip(self.arguments, other.arguments)))
+        return self is other or \
+            (isinstance(other, Term) and
+             hash(self) == hash(other) and
+             self.name == other.name and
+             len(self.arguments) == len(other.arguments) and
+             all(a == b for a,b in zip(self.arguments, other.arguments)))
 
     def __hash__(self):
-        # this should be cached?
-        return hash(self.name) ^ reduce(operator.xor, map(hash, self.arguments), 0)
+        return self.__hashcache
 
     def __str__(self):
         return f'{self.__name}({", ".join(map(str, self.__arguments))})'
