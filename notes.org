@@ -202,7 +202,17 @@ becomes a failed object itself.
 + In the case that we are memoizing the result of R-exprs, then we are going to
   have a delta be that we decrement one memoized result and increase another.  This
 
-
+** agenda tracking
++ in the case that something changes that is a null memo, then it is possible
+  that something downstream needs to be also changed.  Tracking this can be
+  represented as an R-expr in that this will identify which variables are
+  downstream.
++ delta vs just notifications
+  - in the case that we don't go through any additional aggregators, then we
+    should be able to just add the update.  partitions should have some way of
+    combining results?  I suppose that if there are two things with the same
+    key/value pairs, then we are just going to have a terminal state with a
+    higher multiplicity.  If there are
 
 * rewrites included
 ** simplify

@@ -2,6 +2,7 @@ from . import interpreter
 from . import builtins
 from . import terms
 from . import context
+from . import guards
 
 from .interpreter import (
     RBaseType, FinalState, Terminal, Variable, variables_named, constant, Frame,

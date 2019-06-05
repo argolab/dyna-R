@@ -1,6 +1,6 @@
-from interpreter import *
+from .interpreter import *
 
-class Assumptions:
+class Assumption:
     """
     The assumption object that we are going to track
     This object only supports a single step
@@ -8,9 +8,8 @@ class Assumptions:
     """
 
     def __init__(self):
-
         self._dependents = set()
-        self._invalid = False
+        self._invalid = False  # invalid can only go from False -> True, there is no transition back to False
 
     def track(self, reciever):
         assert not self._invalid
@@ -29,7 +28,9 @@ class Assumptions:
         # this should be overriden such that it tracks
         self.invalidate()
 
-
+    # def signal(self, msg):
+    #     for d in self._dependents:
+    #         d.signal(self, msg)
 
 
 class Guard(RBaseType):
@@ -49,4 +50,5 @@ class GuardDispatch(RBaseType):
         self._children = children
 
 @simplify.define(GuardDispatch)
-def simplify_guard
+def simplify_guard(self, frame):
+    pass

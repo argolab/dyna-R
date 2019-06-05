@@ -7,6 +7,7 @@
 # maybe these should be imported later or not at all, so this will instead
 from .interpreter import *
 from .terms import CallTerm
+from .guards import Assumption
 
 class SystemContext:
     """
@@ -21,6 +22,11 @@ class SystemContext:
 
         # if there is some rewriting process that we have for terms, then we need to determine when these expressions are changing
         self.terms_as_rewritten = {}
+
+        # the memo tables that are wrapped around the terms.
+        self.memoized_terms = {}
+
+        self.term_assumptions = defaultdict(Assumption)
 
         self.agenda = None
 
@@ -62,6 +68,10 @@ class SystemContext:
             return parent.lookup_term(name)
 
 
+    def run_agenda(self):
+        assert False
+
+
 # where we will define the builtins etc the base dyna base, for now there will
 # just be a single one of these that is global however we should not use the
 # global reference whenever possible, as will want to turn this into the
@@ -80,7 +90,6 @@ class TaskContext:
     def __init__(self, system):
         self.new_memos = {}
         self.agenda_additions = []
-        #self.call_stack = []
         self.system = system
 
 

@@ -1,10 +1,10 @@
 import itertools
 from collections import defaultdict
-
+from typing import *
 
 from .interpreter import *
 from .terms import inline_all_calls
-
+from .guards import Assumption
 
 class MemoContainer:
 
@@ -15,6 +15,8 @@ class MemoContainer:
         self.supported_mode = supported_mode
         self.variables = variables
         self.body = body
+
+        self.assumption = Assumption()
 
         self.memos = Partition(variables, ())
         self._error_cycle = set()
@@ -82,6 +84,13 @@ class MemoContainer:
             nR = nR.rename_vars(lambda x: d.get(x,x))
 
         return nR
+
+    def invalidate(self):
+        # in the case of a unk memo, this can just delete everything, but if it
+        # is a null memo, then we are going to have to recompute or notify
+        # anything that is dependant on us.  So this system needs to know what
+        # behavior it is working under?
+        assert False
 
 
 class UnkMemo(RBaseType):
@@ -226,3 +235,22 @@ def converge_memos(*tables):
                 # then we need to update the expression in the table with this
                 t.memos = nR
                 done = False
+
+
+class AgendaMessage(NamedTuple):
+    table : MemoContainer  # the container that we are updating, this will be tracked via pointer instead of name
+    key : Tuple[object]  # the key in the table, this should match the order of arguments as used by the table, None indicates variable not set
+
+    # used in the case that this is an update, and we are able to just add these changes
+    addition : RBaseType = None  # an Rexpr that we are adding to the table or None to indicate nothing here
+    deletition : RBaseType = None# an Rexpr that we are removing form the table or None
+
+    # if this is going through an unmemoized aggregator, then we might not be able to just directly modify the value in the table
+    # so we are going to have to invalidate something and the perform a recomputation
+    invalidation : bool = False
+
+
+def process_agneda_message(msg: AgendaMessage):
+    # identify which rows are impacted, and the perform a computation on them
+
+    pass
