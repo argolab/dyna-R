@@ -192,40 +192,95 @@ def simplify_reflectStructure(self, frame):
 
 class Evaluate(RBaseType):
     """
-    *X, evaluation construct where we lookup the name and the number of arguments.
-    This is only takes a single variable (there is no return variable) and will rewrite as the R-expr that defines that term
-
-    This needs to be able to handle the case where this is attached to a build structure, in which case, it should just identify
-    the variables and the relevant variables
+    This should completement the reflect structure operator in that if we know the name and number of arguments then we can resolve the call
+    without haivng to know the all of the arguments as ground.  To construct an `*X` operator then we can combine this with reflect structure
+    so that both of these operators will get rewritten together
     """
 
-    def __init__(self, ret_var, term_var, dyna_system):
-        self.ret_var = ret_var  # where the return value (of this function) is set
-        self.term_var = term_var  # represents the name + the arguments
-        self.dyna_system = dyna_system  # which dynabase we are going to look this operation up in
+    def __init__(self, dyna_system, ret :Variable, name :Variable, nargs :Variable, args_list :Variable):
+        self.ret = ret
+        self.name = name
+        self.nargs = nargs
+        self.args_list = args_list
+        self.dyna_system = dyna_system
 
     @property
     def vars(self):
-        return (self.ret_var, self.term_var)
+        return self.ret, self.name, self.nargs, self.args_list
 
     def rename_vars(self, remap):
-        return Evaluate(remap(self.ret_var), remap(self.term_var), self.dyna_system)
-
+        return Evaluate(self.dyna_system, remap(self.ret_var), remap(self.name_var), remap(self.nargs_var), remap(self.args_list))
 
 @simplify.define(Evaluate)
 def simplify_evaluate(self, frame):
-    if self.term_var.isBound(frame):
-        t = self.term_var.getValue(frame)
-        if not isinstance(t, Term):
-            # this should maybe be an error
-            return Terminal(0)
-        vmap = {ret_variable: self.ret_var}
-        for i, j in enumerate(t.arguments):
-            vmap[i] = constant(j)
-        r = CallTerm(vmap, self.dyna_system, (t.name, len(t.arguments)))
-        return simplify(r, frame)
+    if self.args_list.isBound(frame) and not self.nargs.isBound(frame):
+        # then we are going to compute the length
+        args = self.args_list.getValue(frame)
+        args = args.aslist()  # TODO: catch an errors here???
+        self.nargs.setValue(frame, len(args))
+    if self.name_var.isBound(frame) and self.nargs_var.isBound(frame):
+        name = self.name.getValue(frame)
+        nargs = self.nargs.getValue(frame)
+
+        if not isinstance(name, str) or not isinstance(nargs, int):
+            return Terminal(0)  # then this failed, maybe this should instead be an error
+
+        arg_vars = [VariableId(('reflected_eval', object())) for _ in range(nargs)]
+        zmap = dict(zip(variables_named(*range(nargs)), arg_vars))
+        zmap[ret_variable] = self.ret
+        consts = [CallTerm(zmap, self.dyna_system, (name, nargs))]  # the call to the new term
+        # have to construct a list constraints out of these variables
+        prev = constant(Term('nil', ()))  # the end of the list
+        for v in reversed(arg_vars):
+            np = VariableId(('reflected_elist', object()))
+            c = BuildStructure('.', np, (v, prev))
+            consts.append(c)
+            prev = np
+        consts.append(Unify(prev, self.args_list))  # this should just rewrite rather than adding in this additional constraint, but it should be fine...
+
+        R = Intersect(tuple(consts))
+        return simplify(R, frame)
 
     return self
+
+
+
+# class Evaluate(RBaseType):
+#     """
+#     *X, evaluation construct where we lookup the name and the number of arguments.
+#     This is only takes a single variable (there is no return variable) and will rewrite as the R-expr that defines that term
+
+#     This needs to be able to handle the case where this is attached to a build structure, in which case, it should just identify
+#     the variables and the relevant variables
+#     """
+
+#     def __init__(self, ret_var, term_var, dyna_system):
+#         self.ret_var = ret_var  # where the return value (of this function) is set
+#         self.term_var = term_var  # represents the name + the arguments
+#         self.dyna_system = dyna_system  # which dynabase we are going to look this operation up in
+
+#     @property
+#     def vars(self):
+#         return (self.ret_var, self.term_var)
+
+#     def rename_vars(self, remap):
+#         return Evaluate(remap(self.ret_var), remap(self.term_var), self.dyna_system)
+
+
+# @simplify.define(Evaluate)
+# def simplify_evaluate(self, frame):
+#     if self.term_var.isBound(frame):
+#         t = self.term_var.getValue(frame)
+#         if not isinstance(t, Term):
+#             # this should maybe be an error
+#             return Terminal(0)
+#         vmap = {ret_variable: self.ret_var}
+#         for i, j in enumerate(t.arguments):
+#             vmap[i] = constant(j)
+#         r = CallTerm(vmap, self.dyna_system, (t.name, len(t.arguments)))
+#         return simplify(r, frame)
+
+#     return self
 
 
 class CallTerm(RBaseType):
@@ -349,19 +404,20 @@ def simplify_call(self, frame):
 inline_all_calls = Visitor()
 
 @inline_all_calls.default
-def inline_all_calls_default(self, stack=()):
-    return self.rewrite(lambda x: inline_all_calls(x, stack))
+def inline_all_calls_default(self, inlined_calls, stack=()):
+    return self.rewrite(lambda x: inline_all_calls(x, inlined_calls, stack))
 
 
 @inline_all_calls.define(CallTerm)
-def inline_all_calls_callterm(self, stack=()):
+def inline_all_calls_callterm(self, inlined_calls, stack=()):
     if self.term_ref in stack:
         # then we are going around a cycle, and this is not handled
         raise RecursionError(self.term_ref)
+    inlined_calls.add(self.term_ref)  # track that this was inlined at some point so that we can track the assumption
     R = self.dyna_system.lookup_term(self.term_ref)
     R2 = R.rename_vars_unique(self.var_map.get)
-    return inline_all_calls(R2, stack+(self.term_ref,))
+    return inline_all_calls(R2, inlined_calls, stack+(self.term_ref,))
 
 @inline_all_calls.define(Evaluate)
-def inline_all_calls_evaluate(self, stack=()):
+def inline_all_calls_evaluate(self, inlined_calls, stack=()):
     raise RuntimeError('Evaluate can not determine what it will call')

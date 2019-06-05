@@ -4,6 +4,8 @@ import pprint
 
 import networkx as nx
 
+from .prefix_trie import PrefixTrie
+
 
 class RBaseType:
 
@@ -256,7 +258,7 @@ def constant(v):
     return ConstantVariable(None, v)
 
 class Frame(dict):
-    __slots__ = ('call_stack',)
+    __slots__ = ('call_stack', 'Rargument')
 
     def __init__(self, f=None):
         if f is not None:
@@ -265,6 +267,7 @@ class Frame(dict):
         else:
             super().__init__()
             self.call_stack = []
+        self.Rargument = None
 
     def __repr__(self):
         nice = {str(k).split('\n')[0]: v for k,v in self.items()}

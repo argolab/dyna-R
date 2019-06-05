@@ -213,6 +213,19 @@ def getpartition_nullmemo(self, frame):
     for it in getPartitions(self.memos.memos, f):
         yield RemapVarIterator(vmap, it, vmap[it.variable])
 
+def _flatten_keys(save, R, frame):
+    # this needs to loop until all of the keys are ground, if we are
+    # unable to ground everything, then we are going to have delayed
+    # R-expr, but that needs to still avoid overlapping?
+    if isinstance(R, FinalState):
+        save(R, frame)
+    else:
+        # then we are going to loop and try and ground out more
+        def cb(R, frame):
+            #import ipdb; ipdb.set_trace()
+            save(R, frame)
+        loop(R, frame, cb, till_terminal=True)
+
 
 def converge_memos(*tables):
     done = False
@@ -222,28 +235,35 @@ def converge_memos(*tables):
 
         for t in tables:
             # this maybe should be done once at the start instead of every time that we go around this loop?
-            R = inline_all_calls(t.body)
+            R = inline_all_calls(t.body, set())
 
-            def flatten_keys(save, R, frame):
-                # this needs to loop until all of the keys are ground, if we are
-                # unable to ground everything, then we are going to have delayed
-                # R-expr, but that needs to still avoid overlapping?
-                if isinstance(R, FinalState):
-                    save(R, frame)
-                else:
-                    # then we are going to loop and try and ground out more
-                    def cb(R, frame):
-                        #import ipdb; ipdb.set_trace()
-                        save(R, frame)
-                    loop(R, frame, cb, till_terminal=True)
-
-            nR = simplify(R, Frame(), map_function=flatten_keys)
+            nR = simplify(R, Frame(), map_function=_flatten_keys)
 
             if t.memos != nR:
                 # then we need to update the expression in the table with this
                 t.memos = nR
                 done = False
 
+
+# we can have a pointer in an Rexpr where this should get replaced into it, in
+# which case we can just take the new expression and identify if there is
+# something?  There is going to have to be special handling for cases where
+# there are aggregators, so those are going to have to be deleted, or rewritten
+# such that the results of variables are set
+class RArgument(RBaseType):
+    pass
+
+@simplify.define(RArgument)
+def simplify_rargument(self, frame):
+    r = frame.Rargument
+    frame.Rargument = None
+    return simplify(r, frame)
+
+
+def construct_memotable(R):
+    # construct a memo table, we are going to rewrite the R-expr such that we can determien all of the
+
+    pass
 
 class AgendaMessage(NamedTuple):
     table : MemoContainer  # the container that we are updating, this will be tracked via pointer instead of name
@@ -260,5 +280,59 @@ class AgendaMessage(NamedTuple):
 
 def process_agneda_message(msg: AgendaMessage):
     # identify which rows are impacted, and the perform a computation on them
+
+    # this needs to change the value in the memo table, which means that we are
+    # also going to have to send notifications to anything that depends on this.
+
+
+    # first we update the memo table with this new entry
+    assert msg.deletition is None  # TODO handle this case
+
+
+    # for now just treat all of the messages as notifications that we need to recompute
+
+    R = inline_all_calls(msg.table.body, set())
+
+    # we are going to only compute this for the values that were notified of the changes
+    frame = Frame()
+    for val, var in zip(msg.key, msg.table.variables):
+        if val:
+            var.setValue(frame, val)
+
+    # this should identify which keys are changed, so we are going to have to identify which keys are changed
+    # if something has changed, then we are going to have to determine
+    nR = simplify(R, frame, map_function=_flatten_keys)
+
+
+
+
+
+
+
+    if msg.addition is None:
+        assert msg.invalidation
+
+        # going to recompute these slots on the frame, which will have something that is new.
+
+        #for
+
+
+
+        assert False  # TODO:
+    else:
+        # modify the table with the new change (this should have a better interface)
+        msg.table.memos._children.setdefault(msg.key, []).append(msg.addition)
+
+        # now we are going to have to handle the assumptions that there is something new
+        # which in this case is the addition
+
+
+
+
+
+
+
+
+
 
     pass

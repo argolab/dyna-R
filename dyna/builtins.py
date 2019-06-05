@@ -225,7 +225,7 @@ dyna_system.define_term('>=', 2, gteq)
 # unions of variables across different branches.
 int_v = check_op('int', 1, lambda x: isinstance(x, int))
 float_v = check_op('float', 1, lambda x: isinstance(x, float))
-term_type = check_op('term_type', 1, lambda x: False)
+term_type = check_op('term_type', 1, lambda x: exec('raise NotImplementedError()'))
 str_v = check_op('str', 1, lambda x: isinstance(x, str))
 bool_v = moded_op('bool', {
     (False, True): lambda a,b: (isinstance(b, bool), b),
