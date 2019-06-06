@@ -266,7 +266,10 @@ fib = Partition(variables_named(0, interpreter.ret_variable),
 dyna_system.define_term('fib', 1, fib)
 
 def test_fib_basic():
-    dyna_system.terms_as_defined[('fib', 1)] = fib  # force the override
+    dyna_system.delete_term('fib', 1)
+    dyna_system.define_term('fib', 1, fib)
+
+    #dyna_system.terms_as_defined[('fib', 1)] = fib  # force the override
 
     fib_call = dyna_system.call_term('fib', 1)
 
@@ -283,7 +286,10 @@ def test_fib_unk_memos():
     mtable = MemoContainer((True,False), (VariableId(0), interpreter.ret_variable), fib)
     fibm = UnkMemo((VariableId(0), interpreter.ret_variable), mtable)
 
-    dyna_system.terms_as_defined[('fib', 1)] = fibm  # force the override
+    #dyna_system.terms_as_defined[('fib', 1)] = fibm  # force the override
+    dyna_system.delete_term('fib', 1)
+    dyna_system.define_term('fib', 1, fib)
+
 
     fib_call = dyna_system.call_term('fib', 1)
 
@@ -303,7 +309,10 @@ def test_fib_null_memos():
 
     fibm = NullMemo((VariableId(0), interpreter.ret_variable), mtable)
 
-    dyna_system.terms_as_defined[('fib', 1)] = fibm  # force the override
+    #dyna_system.terms_as_defined[('fib', 1)] = fibm  # force the override
+    dyna_system.delete_term('fib', 1)
+    dyna_system.define_term('fib', 1, fib)
+
 
     # this should run until it has reached a fixed point
     converge_memos(mtable)

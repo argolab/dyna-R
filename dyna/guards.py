@@ -32,6 +32,25 @@ class Assumption:
         for d in self._dependents:
             d.signal()
 
+class AssumptionListener:
+    # something that can be invalidated, and then will turn of getting further
+    # signals, though, we are going to want to clean these out or something....
+
+    def __init__(self, wrapped):
+        self.wrapped = wrapped
+        self._invalid = False
+
+    def invalidate(self):
+        i = self._invalid
+        self._invalid = True
+        if not i:
+            self.wrapped.invalidate()
+
+    def signal(self, msg):
+        if not self._invald:
+            self.wrapped.signal(msg)
+
+
 
 class AssumptionWrapper(RBaseType):
 
@@ -62,6 +81,7 @@ def get_assumptions_default(self):
 def get_assumptions_wrapper(self):
     yield self.assumption
     yield from get_all_assumptiosn(self.body)
+
 
 
 

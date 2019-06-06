@@ -33,8 +33,26 @@ class SystemContext:
         # where we fallback for pther defined
         self.parent = None
 
+    def invalidate_term_assumption(self, name):
+        a = self.term_assumptions[name]
+        self.term_assumptions[name] = Assumption()
+        a.invalidate()
+
+    def delete_term(self, name, arity):
+        a = (name, arity)
+        self.invalidate_term_assumption(a)
+        if a in self.terms_as_defined:
+            del self.terms_as_defined[a]
+        if a in self.terms_as_rewritten:
+            del self.terms_as_rewritten[a]
+        # if there is something in the parent, then maybe we should instead save
+        # this as empty, that way we can track that we are resetting.  Though
+        # maybe if we have fully overwritten something, then we are going to
+        # track that?
+
     def define_term(self, name, arity, rexpr):
         assert (name, arity) not in self.terms_as_defined
+        self.invalidate_term_assumption((name, arity))
         self.terms_as_defined[(name, arity)] = rexpr
 
     def add_to_term(self, name, arity, rexpr):
@@ -44,17 +62,16 @@ class SystemContext:
         assert False
 
     def define_infered(self, required :RBaseType, added :RBaseType):
+        assert False
         pass
 
     def call_term(self, name, arity) -> RBaseType:
         # this should return a method call to a given term.
-        # this should be lazy?  So that
+        # this should be lazy.  In the case that this instead determines that
 
         m = {x:x for x in variables_named(*range(arity))}
         m[ret_variable] = ret_variable
         return CallTerm(m, self, (name, arity))
-
-        # return CallTerm(name, variables_named(ret_variable, *range(arity)), self, (name, arity))
 
     def lookup_term(self, name):
         # if this isn't defined, then we can delay, or report an error to the
@@ -70,7 +87,6 @@ class SystemContext:
             r = Terminal(0)  # this should probably be an error or something so that we can identify that this method doesn't exit
 
         return AssumptionWrapper(self.term_assumptions[name], r)
-
 
     def run_agenda(self):
         assert False

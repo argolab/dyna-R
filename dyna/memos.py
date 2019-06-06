@@ -16,6 +16,12 @@ class MemoContainer:
         self.variables = variables
         self.body = body
 
+        self.processed_body = inline_all_calls(body, set())
+
+        all_assumptions = set(get_all_assumptiosn(self.processed_body))
+
+        import ipdb; ipdb.set_trace()
+
         self.assumption = Assumption()
 
         self.memos = Partition(variables, PrefixTrie(len(self.variables)))
@@ -104,6 +110,9 @@ class MemoContainer:
         # is a null memo, then we are going to have to recompute or notify
         # anything that is dependant on us.  So this system needs to know what
         # behavior it is working under?
+
+        # in the case that this is invalidated, we are going
+
         assert False
 
     def signal(self, msg):
