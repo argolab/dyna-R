@@ -328,24 +328,6 @@ class CallTerm(RBaseType):
 
 @simplify.define(CallTerm)
 def simplify_call(self, frame):
-    #global call_stack
-    # we want to keep around the calls, so that we can continue to perform replacement operations on stuff.
-
-    # this is going to need to determine which calls are safe
-
-    # mode = tuple((v.isBound(frame) for v in self.arguments))
-    # arg_values = tuple((v.getValue(frame) for v in self.arguments))
-
-    # ps = set(tuple((v.getValue(frame) for v in pv)) for pv in self.parent_calls_blocker)
-    # if arg_values in ps:
-    #     # then this is not unique enough to execute, so we are just going to delay at this point
-    #     return self
-
-    # # we are going to inline the definition into this
-    # R = self.dyna_system.lookup_term(self.term_ref)
-
-    # # first rename all of the variables such that this doesn't
-
     for c in frame.call_stack:
         if c.term_ref == self.term_ref:
             # then don't try to run this
@@ -355,29 +337,16 @@ def simplify_call(self, frame):
             r.parent_calls_blocker.append(tuple(c.var_map.values()))
             return r
 
-
+    # sanitity check for now
     assert len(self.parent_calls_blocker) < 5
 
     # check if the arguments are unique, otherwise don't try and run this
     vs = [tuple(v.getValue(frame) for v in vv) for vv in self.parent_calls_blocker]
     a = tuple(v.getValue(frame) for v in self.var_map.values())
-    # if self.parent_calls_blocker:
-    #     import ipdb; ipdb.set_trace()
 
     if a in vs:
         # then don't try and run this
         return self
-
-    # just always inline version
-    # renames = {}
-    # def renamer(v):
-    #     if v in self.var_map:
-    #         return self.var_map[v]
-    #     elif isinstance(v, ConstantVariable) or isinstance(v, UnitaryVariable):
-    #         return v
-    #     if v not in renames:
-    #         renames[v] = VariableId()  # makes a new unique name for this variable
-    #     return renames[v]
 
     # we might want to run simplify on this the first time?
     # this still doesn't handle the cases where we are going to be backwards chaining

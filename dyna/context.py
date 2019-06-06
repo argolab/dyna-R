@@ -7,7 +7,7 @@
 # maybe these should be imported later or not at all, so this will instead
 from .interpreter import *
 from .terms import CallTerm
-from .guards import Assumption
+from .guards import Assumption, AssumptionWrapper
 
 class SystemContext:
     """
@@ -61,11 +61,15 @@ class SystemContext:
         # user that they are trying to use a method that isn't defined.
 
         if name in self.terms_as_rewritten:
-            return self.terms_as_rewritten[name]
-        if name in self.terms_as_defined:
-            return self.terms_as_defined[name]
-        if self.parent:
-            return parent.lookup_term(name)
+            r = self.terms_as_rewritten[name]
+        elif name in self.terms_as_defined:
+            r = self.terms_as_defined[name]
+        elif self.parent:
+            r = parent.lookup_term(name)
+        else:
+            r = Terminal(0)  # this should probably be an error or something so that we can identify that this method doesn't exit
+
+        return AssumptionWrapper(self.term_assumptions[name], r)
 
 
     def run_agenda(self):

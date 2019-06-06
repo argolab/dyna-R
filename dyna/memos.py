@@ -11,7 +11,7 @@ class MemoContainer:
     body : RBaseType
     memos : Partition  # which is also an RBaseType
 
-    def __init__(self, supported_mode: Tuple[bool], variables: Tuple[Variable], body: RBaseType):
+    def __init__(self, supported_mode: Tuple[bool], variables: Tuple[Variable], body: RBaseType, is_null_memo=False):
         self.supported_mode = supported_mode
         self.variables = variables
         self.body = body
@@ -20,6 +20,12 @@ class MemoContainer:
 
         self.memos = Partition(variables, PrefixTrie(len(self.variables)))
         self._error_cycle = set()
+
+        # if this is null, then when an update comes in, we have to recompute rather than being able to just delete
+        # this is a property of the table, rather than where we are choosing to use it
+        # TODO: the UnkMemo and the NullMemo should probably just be merged and then this should be the trigger between the two
+        #  (Though this should maybe be more fine grained in that we might want null memos on some keys, but unk on others?)
+        self.is_null_memo = is_null_memo
 
     def lookup(self, values, *, compute_if_not_set=True):
         assert len(values) == len(self.variables)
@@ -99,6 +105,15 @@ class MemoContainer:
         # anything that is dependant on us.  So this system needs to know what
         # behavior it is working under?
         assert False
+
+    def signal(self, msg):
+        # in this case, something used for the computation was invalidated, so
+        # we are are going to have to mark the entries that are in the table
+
+
+
+        pass
+
 
 
 class UnkMemo(RBaseType):
@@ -275,7 +290,7 @@ class AgendaMessage(NamedTuple):
 
     # if this is going through an unmemoized aggregator, then we might not be able to just directly modify the value in the table
     # so we are going to have to invalidate something and the perform a recomputation
-    invalidation : bool = False
+    invalidation : bool = True  # just always going to be true for the moment...
 
 
 def process_agneda_message(msg: AgendaMessage):
@@ -288,51 +303,62 @@ def process_agneda_message(msg: AgendaMessage):
     # first we update the memo table with this new entry
     assert msg.deletition is None  # TODO handle this case
 
-
-    # for now just treat all of the messages as notifications that we need to recompute
-
-    R = inline_all_calls(msg.table.body, set())
-
-    # we are going to only compute this for the values that were notified of the changes
-    frame = Frame()
-    for val, var in zip(msg.key, msg.table.variables):
-        if val:
-            var.setValue(frame, val)
-
-    # this should identify which keys are changed, so we are going to have to identify which keys are changed
-    # if something has changed, then we are going to have to determine
-    nR = simplify(R, frame, map_function=_flatten_keys)
+    # TODO: handle these cases
+    assert msg.addition is None and msg.deletition is None
 
 
+    t = msg.table
 
-
-
-
-
-    if msg.addition is None:
-        assert msg.invalidation
-
-        # going to recompute these slots on the frame, which will have something that is new.
-
-        #for
-
-
-
-        assert False  # TODO:
+    if t.is_null_memo:
+        pass
     else:
-        # modify the table with the new change (this should have a better interface)
-        msg.table.memos._children.setdefault(msg.key, []).append(msg.addition)
+        # then we are just going to delete the memos as they are unk
+        # we are also going to send messages to downstream entries
+        t.filter(msg.key).delete_all()
 
-        # now we are going to have to handle the assumptions that there is something new
-        # which in this case is the addition
+    # send notifications to everything downstream
 
-
-
-
-
+    # this is going to singnal that this key is invalidated, which will have to then be pushed forward
+    t.assumption.signal(msg)
 
 
 
 
 
-    pass
+
+    # # for now just treat all of the messages as notifications that we need to recompute
+
+    # R = inline_all_calls(msg.table.body, set())
+
+    # # we are going to only compute this for the values that were notified of the changes
+    # frame = Frame()
+    # for val, var in zip(msg.key, msg.table.variables):
+    #     if val:
+    #         var.setValue(frame, val)
+
+    # # this should identify which keys are changed, so we are going to have to identify which keys are changed
+    # # if something has changed, then we are going to have to determine
+    # nR = simplify(R, frame, map_function=_flatten_keys)
+
+
+
+
+
+
+
+    # if msg.addition is None:
+    #     assert msg.invalidation
+
+    #     # going to recompute these slots on the frame, which will have something that is new.
+
+    #     #for
+
+
+
+    #     assert False  # TODO:
+    # else:
+    #     # modify the table with the new change (this should have a better interface)
+    #     msg.table.memos._children.setdefault(msg.key, []).append(msg.addition)
+
+    #     # now we are going to have to handle the assumptions that there is something new
+    #     # which in this case is the addition

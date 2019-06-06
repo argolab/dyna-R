@@ -299,7 +299,7 @@ def test_fib_unk_memos():
 
 
 def test_fib_null_memos():
-    mtable = MemoContainer((True,False), (VariableId(0), interpreter.ret_variable), fib)
+    mtable = MemoContainer((True,False), (VariableId(0), interpreter.ret_variable), fib, is_null_memo=True)
 
     fibm = NullMemo((VariableId(0), interpreter.ret_variable), mtable)
 

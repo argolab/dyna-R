@@ -77,6 +77,37 @@ class PrefixTrie:
         # we need to merge this with the operators that are getting filtered
         return PrefixTrie(0, _filter=key, _root=self._root)
 
+    def delete_all(self):
+        # delete everything that matches the current filter
+        def r(prefix, f, a):
+            z = f[len(prefix)]
+            if len(f) == len(prefix) - 1:
+                if z is None:
+                    a.clear()
+                else:
+                    assert None not in a  # TODO: how does this get handled, are we deleting it?  It would match I suppose, but it matches many things
+                    del a[z]
+            else:
+                if z is None:
+                    for k, v in a.items():
+                        r(prefix+(k,), f, v)
+                else:
+                    if None in a:
+                        r(prefix+(None,), f, a[None])
+                    w = a.get(z)
+                    if w is not None:
+                        r(prefix+(z,), f, w)
+        r((), self._filter, self._root)
+
+    def __delitem__(self, key):
+        # this should maybe
+        #setdefault = dict.setdefault
+        assert len(key) == len(self._filter)
+        a = self._root
+        for i in key[:-1]:
+            a = a[i]  #setdefault(a, i, {})
+        del a[key[-1]]
+
     def __iter__(self):
         # this iterates over all of the tuples that match the current filter
         def r(prefix, f, a):
@@ -105,6 +136,12 @@ class PrefixTrie:
     def values(self):
         for _, v in self:
             yield v
+
+    def update(self, d):
+        # this could be made more efficient I suppose?  Walking multiple
+        # branches of the trie at the same time, and sharing structure when possible?
+        for k, v in d.items():
+            self[k] = v
 
     def map_values(self, mapper):
         def r(l, a):
@@ -141,8 +178,8 @@ class PrefixTrie:
             return True
         return False
 
-    def __hash__(self):
-        return hash(self._root)
+    # def __hash__(self):
+    #     return hash(self._root)
 
     def __eq__(self, other):
         return self is other or \
