@@ -7,9 +7,10 @@ class Assumption:
 
     """
 
-    def __init__(self):
+    def __init__(self, name=None):
         self._dependents = set()
         self._invalid = False  # invalid can only go from False -> True, there is no transition back to False
+        self._name = name
 
     def track(self, reciever):
         assert not self._invalid
@@ -32,6 +33,12 @@ class Assumption:
         for d in self._dependents:
             d.signal()
 
+    def __str__(self):
+        return f'Assumption({self._name})'
+
+    def __repr__(self):
+        return str(self)
+
 class AssumptionListener:
     # something that can be invalidated, and then will turn of getting further
     # signals, though, we are going to want to clean these out or something....
@@ -50,6 +57,11 @@ class AssumptionListener:
         if not self._invald:
             self.wrapped.signal(msg)
 
+
+    def notify_invalidated(self):
+        # TODO: is this a significant difference in this case?  Is there
+        # something else that should be done here
+        self.invalidate()
 
 
 class AssumptionWrapper(RBaseType):
@@ -70,17 +82,17 @@ def simplify_assumption(self, frame):
     # this doesn't do anything, as something else is going to have to get all of the assumptions
     return simplify(self.body, frame)
 
-get_all_assumptiosn = Visitor()
+get_all_assumptions = Visitor(track_source=False)
 
-@get_all_assumptiosn.default
+@get_all_assumptions.default
 def get_assumptions_default(self):
     for c in self.children:
-        yield from get_all_assumptiosn(c)
+        yield from get_all_assumptions(c)
 
-@get_all_assumptiosn.define(AssumptionWrapper)
+@get_all_assumptions.define(AssumptionWrapper)
 def get_assumptions_wrapper(self):
     yield self.assumption
-    yield from get_all_assumptiosn(self.body)
+    yield from get_all_assumptions(self.body)
 
 
 

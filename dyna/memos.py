@@ -4,7 +4,7 @@ from typing import *
 
 from .interpreter import *
 from .terms import inline_all_calls
-from .guards import Assumption
+from .guards import Assumption, AssumptionListener, get_all_assumptions
 
 class MemoContainer:
 
@@ -12,30 +12,49 @@ class MemoContainer:
     memos : Partition  # which is also an RBaseType
 
     def __init__(self, supported_mode: Tuple[bool], variables: Tuple[Variable], body: RBaseType, is_null_memo=False):
+        # parameterization so of the memo table that _should not change_
         self.supported_mode = supported_mode
         self.variables = variables
         self.body = body
-
-        self.processed_body = inline_all_calls(body, set())
-
-        all_assumptions = set(get_all_assumptiosn(self.processed_body))
-
-        import ipdb; ipdb.set_trace()
-
-        self.assumption = Assumption()
-
-        self.memos = Partition(variables, PrefixTrie(len(self.variables)))
-        self._error_cycle = set()
-
+        self.is_null_memo = is_null_memo
         # if this is null, then when an update comes in, we have to recompute rather than being able to just delete
         # this is a property of the table, rather than where we are choosing to use it
         # TODO: the UnkMemo and the NullMemo should probably just be merged and then this should be the trigger between the two
         #  (Though this should maybe be more fine grained in that we might want null memos on some keys, but unk on others?)
-        self.is_null_memo = is_null_memo
+
+
+
+        # the container of the memos themselves, this R-expr is modified (in
+        # place) to add new memos if anyone else gets a direct reference to this
+        # R-expr, then that could potentially cause issues (due to the not being
+        # immutable)
+        self.memos = Partition(variables, PrefixTrie(len(self.variables)))
+
+
+        # for tracking anything that depends on this expression.
+        self.assumption = None
+
+        # this is the pointer that is actually used for computation by removing
+        # the indirections through the "dyna base" and directly reference the
+        # memo other memo tables.  In the case that something is rewritten such
+        # that this is invalid, then the assumption will be invalidated and we
+        # will be triggered.
+        self._full_body = None
+
+        # for identifying things we are currently computing in the case of a
+        # cycle that can only be forward chained.
+        self._error_cycle = set()
+
+        self._setup_assumptions()
+
 
     def lookup(self, values, *, compute_if_not_set=True):
         assert len(values) == len(self.variables)
         r = partition_lookup(self.memos, values)
+
+        # TODO: remove the flag
+        assert compute_if_not_set != self.is_null_memo
+
         if r is not None or not compute_if_not_set:
             return r
         # then we are going to compute the value for this and then return the result
@@ -65,11 +84,6 @@ class MemoContainer:
 
         return nR
 
-        #assert False  # this needs to save the result, but this needs to handle
-        # that there might be different modes in which this works if the modes
-        # do not match up, then the issue is that we might find something that
-        # matches but that does not properly represent what we are computing.
-
     def compute(self, values):
         # then we are going to determine what the result of this memoized value
         # is this requires constructing a new sub interpreter and using that to
@@ -85,7 +99,7 @@ class MemoContainer:
         # computable
 
         # determine the new body and frame
-        nR = saturate(self.body, frame)
+        nR = saturate(self._full_body, frame)
         nR = [nR]
         for var, imode in zip(self.variables, self.supported_mode):
             if not imode and var.isBound(frame):
@@ -105,21 +119,39 @@ class MemoContainer:
 
         return nR
 
+    def _setup_assumptions(self):
+        self.assumption = Assumption()
+        self.assumption_listener = AssumptionListener(self)
+        self._full_body = inline_all_calls(self.body, set())
+
+        all_assumptions = list(get_all_assumptions(self._full_body))
+
+        for a in all_assumptions:
+            a.track(self.assumption_listener)
+
+
     def invalidate(self):
         # in the case of a unk memo, this can just delete everything, but if it
         # is a null memo, then we are going to have to recompute or notify
         # anything that is dependant on us.  So this system needs to know what
         # behavior it is working under?
 
-        # in the case that this is invalidated, we are going
 
-        assert False
+        # this needs to delete all of the memos
+        # if this is null, then we are going to have to perform a full recompute
+
+
+
+        # reset the assumption so that we are properly tracking
+        self._setup_assumptions()
+
+        #assert False
 
     def signal(self, msg):
         # in this case, something used for the computation was invalidated, so
         # we are are going to have to mark the entries that are in the table
 
-
+        assert False
 
         pass
 
@@ -251,11 +283,14 @@ def _flatten_keys(save, R, frame):
         loop(R, frame, cb, till_terminal=True)
 
 
-def converge_memos(*tables):
+def naive_converge_memos(*tables):
+    # this just keeps recomputing all of the memo tables until there are no
+    # changes.  In this case, we can
+
     done = False
     while not done:
         done = True
-        # keep looping until the table is at a fixed point
+        # keep looping until the table is at a fixed point.
 
         for t in tables:
             # this maybe should be done once at the start instead of every time that we go around this loop?

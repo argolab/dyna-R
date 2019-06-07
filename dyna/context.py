@@ -26,25 +26,32 @@ class SystemContext:
         # the memo tables that are wrapped around the terms.
         self.memoized_terms = {}
 
-        self.term_assumptions = defaultdict(Assumption)
+        self.term_assumptions = {}#defaultdict(Assumption)
 
         self.agenda = None
 
         # where we fallback for pther defined
         self.parent = None
 
+    def term_assumption(self, name):
+        if name not in self.term_assumptions:
+            self.term_assumptions[name] = Assumption(name)
+        return self.term_assumptions[name]
+
     def invalidate_term_assumption(self, name):
-        a = self.term_assumptions[name]
-        self.term_assumptions[name] = Assumption()
+        a = self.term_assumption(name)
+        self.term_assumptions[name] = Assumption(name)
         a.invalidate()
 
     def delete_term(self, name, arity):
         a = (name, arity)
-        self.invalidate_term_assumption(a)
         if a in self.terms_as_defined:
             del self.terms_as_defined[a]
         if a in self.terms_as_rewritten:
             del self.terms_as_rewritten[a]
+
+        # do invalidation last as we want anything that rechecks to get the new values
+        self.invalidate_term_assumption(a)
         # if there is something in the parent, then maybe we should instead save
         # this as empty, that way we can track that we are resetting.  Though
         # maybe if we have fully overwritten something, then we are going to
@@ -52,8 +59,8 @@ class SystemContext:
 
     def define_term(self, name, arity, rexpr):
         assert (name, arity) not in self.terms_as_defined
-        self.invalidate_term_assumption((name, arity))
         self.terms_as_defined[(name, arity)] = rexpr
+        self.invalidate_term_assumption((name, arity))
 
     def add_to_term(self, name, arity, rexpr):
         # check that the aggregator is the same and the combine the expressions
@@ -86,7 +93,7 @@ class SystemContext:
         else:
             r = Terminal(0)  # this should probably be an error or something so that we can identify that this method doesn't exit
 
-        return AssumptionWrapper(self.term_assumptions[name], r)
+        return AssumptionWrapper(self.term_assumption(name), r)
 
     def run_agenda(self):
         assert False
@@ -97,6 +104,8 @@ class SystemContext:
 # global reference whenever possible, as will want to turn this into the
 # dynabase references
 dyna_system = SystemContext()
+
+
 
 class TaskContext:
     """

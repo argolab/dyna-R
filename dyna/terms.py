@@ -182,13 +182,6 @@ def simplify_reflectStructure(self, frame):
         R = Intersect(tuple(consts))
         return simplify(R, frame)
 
-
-
-    # TODO: this needs to be able to perform the rewrite in the case that it
-    # only knows the name and the list length atm, this will require something
-    # that is higher level to be able to determien what the length of the list
-    # is.  If there was some additional argument, then maybe that could be used
-    # to perform the local rewrite.
     return self
 
 

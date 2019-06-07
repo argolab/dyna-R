@@ -1,6 +1,8 @@
-class AgendaTask:
-    def run(self):
-        raise NotImplementedError()
+# class AgendaTask:
+#     def run(self):
+#         raise NotImplementedError()
+#     def __call__(self):
+#         return self.run()
 
 
 class Agenda:
@@ -13,3 +15,8 @@ class Agenda:
             r = self._agenda[0]
             del self._agenda[0]
             return r
+
+    def run(self):
+        while self._agenda:
+            r = self.pop()
+            r()  # run the task.

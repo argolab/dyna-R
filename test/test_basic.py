@@ -283,13 +283,12 @@ def test_fib_basic():
 
 
 def test_fib_unk_memos():
+    dyna_system.delete_term('fib', 1)
+
     mtable = MemoContainer((True,False), (VariableId(0), interpreter.ret_variable), fib)
     fibm = UnkMemo((VariableId(0), interpreter.ret_variable), mtable)
 
-    #dyna_system.terms_as_defined[('fib', 1)] = fibm  # force the override
-    dyna_system.delete_term('fib', 1)
-    dyna_system.define_term('fib', 1, fib)
-
+    dyna_system.define_term('fib', 1, fibm)
 
     fib_call = dyna_system.call_term('fib', 1)
 
@@ -305,13 +304,12 @@ def test_fib_unk_memos():
 
 
 def test_fib_null_memos():
-    mtable = MemoContainer((True,False), (VariableId(0), interpreter.ret_variable), fib, is_null_memo=True)
+    dyna_system.delete_term('fib', 1)
 
+    mtable = MemoContainer((True,False), (VariableId(0), interpreter.ret_variable), fib, is_null_memo=True)
     fibm = NullMemo((VariableId(0), interpreter.ret_variable), mtable)
 
-    #dyna_system.terms_as_defined[('fib', 1)] = fibm  # force the override
-    dyna_system.delete_term('fib', 1)
-    dyna_system.define_term('fib', 1, fib)
+    dyna_system.define_term('fib', 1, fibm)
 
 
     # this should run until it has reached a fixed point

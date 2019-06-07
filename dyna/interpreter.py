@@ -358,9 +358,10 @@ class SingleIterator(Iterator):
 # Visitor and base definition for the core rewrites
 
 class Visitor:
-    def __init__(self):
+    def __init__(self, track_source=True):
         self._methods = {}
         self._default = lambda *args: args[0]
+        self._track_source = track_source
     def define(self, typ):
         def f(method):
             self._methods[typ] = method
@@ -377,6 +378,8 @@ class Visitor:
 
     def __call__(self, R :RBaseType, *args, **kwargs):
         res = self.lookup(R)(R, *args, **kwargs)
+        if not self._track_source:
+            return res
         if R == res:
             return R
         # we want to track the R expr that this was constructed from as it might
@@ -508,11 +511,16 @@ class Intersect(RBaseType):
 def intersect(*children):
     mul = 1
     r = []
-    for c in children:
-        if isinstance(c, Terminal):
-            mul *= c.multiplicity
+    for cc in children:
+        if isinstance(cc, Intersect):
+            cc = cc._children
         else:
-            r.append(c)
+            cc = [cc]
+        for c in cc:  # flatten out the intersects when we can
+            if isinstance(c, Terminal):
+                mul *= c.multiplicity
+            else:
+                r.append(c)
     if not r or mul == 0:
         return terminal(mul)
     if mul != 1:
@@ -524,7 +532,7 @@ def intersect(*children):
 
 @simplify.define(Intersect)
 def simplify_intersect(self :Intersect, frame: Frame):
-    # TODO: this should handle early stoppin in the case that it gets a
+    # TODO: this should handle early stopping in the case that it gets a
     # multiplicity of zero.
     vs = []
     for c in self.children:

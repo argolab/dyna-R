@@ -186,3 +186,74 @@ class PrefixTrie:
             (type(self) is type(other) and
              self._filter == other._filter and
              self._root == other._root)
+
+
+
+def zip_tries(Ta, Tb):
+    # construct an iterator over both of the elements in the trie with their
+    # assocated values.  If one of the tries does not match a particular value,
+    # then we are going just return None for that value while still iterating the other trie
+    #
+    # this should respect the filters of the two tries
+
+    assert len(Ta._filter) == len(Tb._filter)
+
+    fa = Ta._filter
+    fb = Tb._filter
+
+    def r(a, b, prefix):
+        nonlocal fa, fb
+        if a is None and b is None:
+            return
+        elif len(fa) == len(prefix):
+            yield prefix, a, b
+        elif a is None:
+            bz = fb[len(prefix)]
+            if bz is None:
+                for k, v in b.items():
+                    yield from r(None, v, prefix+(k,))
+            else:
+                if None in b:
+                    yield from r(None, b[None], prefix+(None,))
+                w = b.get(bz)
+                if w is not None:
+                    yield from r(None, w, prefix+(bz,))
+            return
+        elif b is None:
+            az = fa[len(prefix)]
+            if az is None:
+                for k,v in a.items():
+                    yield from r(v, None, prefix+(k,))
+            else:
+                if None in a:
+                    yield from r(a, None, prefix+(None,))
+                w = a.get(az)
+                if w is not None:
+                    yield from r(w, None, prefix+(az,))
+            return
+        else:
+            az = fa[len(prefix)]
+            bz = fb[len(prefix)]
+
+            if az is None and bz is None:
+                for k, v in a.items():
+                    yield from r(v, b.get(k), prefix+(k,))
+                for k, v in b.items():
+                    if k not in a:
+                        yield from r(None, v, prefix+(k,))
+            elif az == bz:
+                if None in a:
+                    if None in b:
+                        yield from r(a[None], b[None], prefix+(None,))
+                    else:
+                        yield from r(a[None], None, prefix+(None,))
+                elif None in b:
+                    yield from r(None, b[None], prefix+(None,))
+                yield r(a.get(az), b.get(bz), prefix+(az,))
+            else:
+                assert False  # this will have to handle different filters,
+                              # where we are going to get keys from one of the
+                              # maps but not the others.  idk if that would
+                              # actually be used?
+
+    yield from r(Ta._root, Tb._root, ())
