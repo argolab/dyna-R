@@ -5,6 +5,8 @@ from typing import *
 from .interpreter import *
 from .terms import inline_all_calls
 from .guards import Assumption, AssumptionListener, get_all_assumptions
+from .agenda import push_work
+from .prefix_trie import zip_tries
 
 class MemoContainer:
 
@@ -46,6 +48,12 @@ class MemoContainer:
         self._error_cycle = set()
 
         self._setup_assumptions()
+
+        if self.is_null_memo:
+            # then we need to init the table as this is a null guess for all of
+            # the entries, which means that we are likely inconsistente with the guess
+
+            push_work(lambda: refresh_whole_table(self))
 
 
     def lookup(self, values, *, compute_if_not_set=True):
@@ -120,15 +128,14 @@ class MemoContainer:
         return nR
 
     def _setup_assumptions(self):
-        self.assumption = Assumption()
+        self.assumption = Assumption('memo container')
         self.assumption_listener = AssumptionListener(self)
         self._full_body = inline_all_calls(self.body, set())
 
-        all_assumptions = list(get_all_assumptions(self._full_body))
+        all_assumptions = set(get_all_assumptions(self._full_body))
 
         for a in all_assumptions:
             a.track(self.assumption_listener)
-
 
     def invalidate(self):
         # in the case of a unk memo, this can just delete everything, but if it
@@ -140,12 +147,24 @@ class MemoContainer:
         # this needs to delete all of the memos
         # if this is null, then we are going to have to perform a full recompute
 
+        # if self.is_null_memo:
+        #     assert False
 
+        #     pass
+        # else:
+
+
+        # just delete all of the memos
+        self.memos = Partition(self.variables, PrefixTrie(len(self.variables)))
+
+        assumption = self.assumption
 
         # reset the assumption so that we are properly tracking
         self._setup_assumptions()
 
-        #assert False
+        # signal anything that depends on us
+        assumption.invalidate()
+
 
     def signal(self, msg):
         # in this case, something used for the computation was invalidated, so
@@ -227,6 +246,13 @@ class NullMemo(RBaseType):
         return super().__hash__()
 
 
+# these two types of memos should be merged
+@get_all_assumptions.define(NullMemo)
+@get_all_assumptions.define(UnkMemo)
+def get_assumptions_memos(self):
+    yield self.memos.assumption
+
+
 @simplify.define(NullMemo)
 def simplify_nullmemo(self, frame):
     mode = tuple(v.isBound(frame) for v in self.variables)
@@ -304,6 +330,28 @@ def naive_converge_memos(*tables):
                 done = False
 
 
+def refresh_whole_table(table):
+    nR = simplify(table._full_body, Frame(), map_function=_flatten_keys)
+
+    if table.memos != nR:
+        # then we are going to have to signal these entries, which means
+
+        old_memos = table.memos
+        table.memos = nR
+
+        signals = []
+
+        # determine which entries have changed
+        for key, a, b in zip_tries(old_memos._children, nR._children):
+            if a != b:
+                # then this value has changed, and we are going to have to signal anything that depends on this
+
+                msg = AgendaMessage(table=table, key=key)
+                table.assumption.signal(msg)
+
+                assert False
+
+
 # we can have a pointer in an Rexpr where this should get replaced into it, in
 # which case we can just take the new expression and identify if there is
 # something?  There is going to have to be special handling for cases where
@@ -319,10 +367,9 @@ def simplify_rargument(self, frame):
     return simplify(r, frame)
 
 
-def construct_memotable(R):
-    # construct a memo table, we are going to rewrite the R-expr such that we can determien all of the
-
-    pass
+# def construct_memotable(R):
+#     # construct a memo table, we are going to rewrite the R-expr such that we can determien all of the
+#     pass
 
 class AgendaMessage(NamedTuple):
     table : MemoContainer  # the container that we are updating, this will be tracked via pointer instead of name
@@ -364,45 +411,3 @@ def process_agneda_message(msg: AgendaMessage):
 
     # this is going to singnal that this key is invalidated, which will have to then be pushed forward
     t.assumption.signal(msg)
-
-
-
-
-
-
-    # # for now just treat all of the messages as notifications that we need to recompute
-
-    # R = inline_all_calls(msg.table.body, set())
-
-    # # we are going to only compute this for the values that were notified of the changes
-    # frame = Frame()
-    # for val, var in zip(msg.key, msg.table.variables):
-    #     if val:
-    #         var.setValue(frame, val)
-
-    # # this should identify which keys are changed, so we are going to have to identify which keys are changed
-    # # if something has changed, then we are going to have to determine
-    # nR = simplify(R, frame, map_function=_flatten_keys)
-
-
-
-
-
-
-
-    # if msg.addition is None:
-    #     assert msg.invalidation
-
-    #     # going to recompute these slots on the frame, which will have something that is new.
-
-    #     #for
-
-
-
-    #     assert False  # TODO:
-    # else:
-    #     # modify the table with the new change (this should have a better interface)
-    #     msg.table.memos._children.setdefault(msg.key, []).append(msg.addition)
-
-    #     # now we are going to have to handle the assumptions that there is something new
-    #     # which in this case is the addition

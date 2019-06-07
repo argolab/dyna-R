@@ -31,7 +31,7 @@ class Assumption:
 
     def signal(self, msg):
         for d in self._dependents:
-            d.signal()
+            d.signal(msg)
 
     def __str__(self):
         return f'Assumption({self._name})'
@@ -54,7 +54,7 @@ class AssumptionListener:
             self.wrapped.invalidate()
 
     def signal(self, msg):
-        if not self._invald:
+        if not self._invalid:
             self.wrapped.signal(msg)
 
 

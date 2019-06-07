@@ -187,6 +187,8 @@ class PrefixTrie:
              self._filter == other._filter and
              self._root == other._root)
 
+    def __repr__(self):
+        return repr(dict(self))
 
 
 def zip_tries(Ta, Tb):
@@ -226,7 +228,7 @@ def zip_tries(Ta, Tb):
                     yield from r(v, None, prefix+(k,))
             else:
                 if None in a:
-                    yield from r(a, None, prefix+(None,))
+                    yield from r(a[None], None, prefix+(None,))
                 w = a.get(az)
                 if w is not None:
                     yield from r(w, None, prefix+(az,))

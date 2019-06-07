@@ -290,6 +290,8 @@ def test_fib_unk_memos():
 
     dyna_system.define_term('fib', 1, fibm)
 
+    dyna_system.run_agenda()
+
     fib_call = dyna_system.call_term('fib', 1)
 
     # use a large number to ensure that we are doing stuff with memos
@@ -310,6 +312,8 @@ def test_fib_null_memos():
     fibm = NullMemo((VariableId(0), interpreter.ret_variable), mtable)
 
     dyna_system.define_term('fib', 1, fibm)
+
+    dyna_system.run_agenda()
 
 
     # this should run until it has reached a fixed point

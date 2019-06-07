@@ -8,6 +8,7 @@
 from .interpreter import *
 from .terms import CallTerm
 from .guards import Assumption, AssumptionWrapper
+from .agenda import Agenda
 
 class SystemContext:
     """
@@ -28,7 +29,7 @@ class SystemContext:
 
         self.term_assumptions = {}#defaultdict(Assumption)
 
-        self.agenda = None
+        self.agenda = Agenda()
 
         # where we fallback for pther defined
         self.parent = None
@@ -93,10 +94,12 @@ class SystemContext:
         else:
             r = Terminal(0)  # this should probably be an error or something so that we can identify that this method doesn't exit
 
+        # wrapped the returned result in an assumption so we can track if the
+        # code changes.
         return AssumptionWrapper(self.term_assumption(name), r)
 
     def run_agenda(self):
-        assert False
+        return self.agenda.run()
 
 
 # where we will define the builtins etc the base dyna base, for now there will
