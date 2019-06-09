@@ -56,14 +56,14 @@ class MemoContainer:
             push_work(lambda: refresh_whole_table(self))
 
 
-    def lookup(self, values, *, compute_if_not_set=True):
+    def lookup(self, values):
         assert len(values) == len(self.variables)
         r = partition_lookup(self.memos, values)
 
-        # TODO: remove the flag
-        assert compute_if_not_set != self.is_null_memo
+        # # TODO: remove the flag
+        # assert compute_if_not_set != self.is_null_memo
 
-        if r is not None or not compute_if_not_set:
+        if r is not None or self.is_null_memo:
             return r
         # then we are going to compute the value for this and then return the result
 
@@ -137,6 +137,8 @@ class MemoContainer:
         for a in all_assumptions:
             a.track(self.assumption_listener)
 
+        import ipdb; ipdb.set_trace()
+
     def invalidate(self):
         # in the case of a unk memo, this can just delete everything, but if it
         # is a null memo, then we are going to have to recompute or notify
@@ -170,13 +172,19 @@ class MemoContainer:
         # in this case, something used for the computation was invalidated, so
         # we are are going to have to mark the entries that are in the table
 
+
+
         assert False
 
         pass
 
 
+class RMemo(RBaseType):
+    """
+    Represent the memo table inside of the R expression
 
-class UnkMemo(RBaseType):
+    Null vs unk is controlled by the memo table itself instead of inside of the R-expr.
+    """
 
     def __init__(self, variables :Tuple[Variable], memos: MemoContainer):
         assert len(variables) == len(memos.variables)
@@ -188,16 +196,18 @@ class UnkMemo(RBaseType):
         return self.variables
 
     def rename_vars(self, remap):
-        return UnkMemo(tuple(remap(v) for v in self.variables), self.memos)
+        return RMemo(tuple(remap(v) for v in self.variables), self.memos)
 
     def __eq__(self, other):
+        # if there are two different memo tables of the same thing, then maybe these should report as equal?
         return super().__eq__(other) and self.memos == other.memos
 
     def __hash__(self):
         return super().__hash__()
 
-@simplify.define(UnkMemo)
-def simplify_unkmemo(self, frame):
+
+@simplify.define(RMemo)
+def simplify_memo(self, frame):
     # the idea should be that if we are handling different modes
 
     mode = tuple(v.isBound(frame) for v in self.variables)
@@ -212,81 +222,24 @@ def simplify_unkmemo(self, frame):
     key = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self.variables)
     res = self.memos.lookup(key)
 
+    if res is None:
+        return terminal(0)
+
     # rename the variables and make new spaces for things that were not
     # referenced
     vmap = dict(zip(self.memos.variables, self.variables))
     res2 = res.rename_vars_unique(vmap.get)
 
-
     # run the new result once, which can
     return simplify(res2, frame)
 
 
+@getPartitions.define(RMemo)
+def getPartition_memos(self, frame):
+    if not self.memos.is_null_memo:
+        # then we can not use this table to iterate as we do not know all of the non-null values
+        return
 
-# this is very similar to the unk memos, and partition, so going to write this
-# seperate first, and then work on mergining them later
-class NullMemo(RBaseType):
-
-    def __init__(self, variables :Tuple[Variable], memos :MemoContainer):
-        assert len(variables) == len(memos.variables)
-        self.variables = variables
-        self.memos = memos
-
-    @property
-    def vars(self):
-        return self.variables
-
-    def rename_vars(self, remap):
-        return NullMemo(tuple(remap(v) for v in self.variables), self.memos)
-
-    def __eq__(self, other):
-        return super().__eq__(other) and self.memos == other.memos
-
-    def __hash__(self):
-        return super().__hash__()
-
-
-# these two types of memos should be merged
-@get_all_assumptions.define(NullMemo)
-@get_all_assumptions.define(UnkMemo)
-def get_assumptions_memos(self):
-    yield self.memos.assumption
-
-
-@simplify.define(NullMemo)
-def simplify_nullmemo(self, frame):
-    mode = tuple(v.isBound(frame) for v in self.variables)
-    can_run = True
-    for a, b in zip(mode, self.memos.supported_mode):
-        if b and not a:
-            can_run = False
-    if not can_run:
-        # then there isn't enough bound that we can attempt to look a memoized
-        # value up
-        return self
-    key = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self.variables)
-
-    res = self.memos.lookup(key, compute_if_not_set=False)
-    if res is None:
-        # then it wasn't found in the memo table, so we are giong to mark this as null
-        return terminal(0)
-
-    vmap = dict(zip(self.memos.variables, self.variables))
-    res2 = res.rename_vars_unique(vmap.get)
-
-    return simplify(res2, frame)
-
-
-@getPartitions.define(NullMemo)
-def getpartition_nullmemo(self, frame):
-    # a major difference between null and unk is that we can use the memo table
-    # as an iterator over the domain of variables, as if it /wasn't/ null, then
-    # it would be contained in the memo table.
-    #
-    # This is a basic version of null memos, so we are just going to assume that
-    # all of the argument variables are iterable
-
-    # we need to remap the variables so that we only pass the names that are the same on both sides
     f = Frame()
     for va, vb in zip(self.variables, self.memos.variables):
         if va.isBound(frame):
@@ -294,6 +247,132 @@ def getpartition_nullmemo(self, frame):
     vmap = dict(zip(self.memos.variables, self.variables))
     for it in getPartitions(self.memos.memos, f):
         yield RemapVarIterator(vmap, it, vmap[it.variable])
+
+
+@get_all_assumptions.define(RMemo)
+def get_assumptions_memos(self):
+    yield self.memos.assumption
+
+
+
+# class UnkMemo(RBaseType):
+
+#     def __init__(self, variables :Tuple[Variable], memos: MemoContainer):
+#         assert len(variables) == len(memos.variables)
+#         self.variables = variables
+#         self.memos = memos
+
+#     @property
+#     def vars(self):
+#         return self.variables
+
+#     def rename_vars(self, remap):
+#         return UnkMemo(tuple(remap(v) for v in self.variables), self.memos)
+
+#     def __eq__(self, other):
+#         return super().__eq__(other) and self.memos == other.memos
+
+#     def __hash__(self):
+#         return super().__hash__()
+
+# @simplify.define(UnkMemo)
+# def simplify_unkmemo(self, frame):
+#     # the idea should be that if we are handling different modes
+
+#     mode = tuple(v.isBound(frame) for v in self.variables)
+#     can_run = True
+#     for a, b in zip(mode, self.memos.supported_mode):
+#         if b and not a:
+#             can_run = False
+#     if not can_run:
+#         # then there isn't enough bound that we can attempt to look a memoized
+#         # value up
+#         return self
+#     key = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self.variables)
+#     res = self.memos.lookup(key)
+
+#     # rename the variables and make new spaces for things that were not
+#     # referenced
+#     vmap = dict(zip(self.memos.variables, self.variables))
+#     res2 = res.rename_vars_unique(vmap.get)
+
+
+#     # run the new result once, which can
+#     return simplify(res2, frame)
+
+
+
+# # this is very similar to the unk memos, and partition, so going to write this
+# # seperate first, and then work on mergining them later
+# class NullMemo(RBaseType):
+
+#     def __init__(self, variables :Tuple[Variable], memos :MemoContainer):
+#         assert len(variables) == len(memos.variables)
+#         self.variables = variables
+#         self.memos = memos
+
+#     @property
+#     def vars(self):
+#         return self.variables
+
+#     def rename_vars(self, remap):
+#         return NullMemo(tuple(remap(v) for v in self.variables), self.memos)
+
+#     def __eq__(self, other):
+#         return super().__eq__(other) and self.memos == other.memos
+
+#     def __hash__(self):
+#         return super().__hash__()
+
+
+# # these two types of memos should be merged
+# @get_all_assumptions.define(NullMemo)
+# @get_all_assumptions.define(UnkMemo)
+# def get_assumptions_memos(self):
+#     yield self.memos.assumption
+
+
+# @simplify.define(NullMemo)
+# def simplify_nullmemo(self, frame):
+#     mode = tuple(v.isBound(frame) for v in self.variables)
+#     can_run = True
+#     for a, b in zip(mode, self.memos.supported_mode):
+#         if b and not a:
+#             can_run = False
+#     if not can_run:
+#         # then there isn't enough bound that we can attempt to look a memoized
+#         # value up
+#         return self
+#     key = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self.variables)
+
+#     res = self.memos.lookup(key, compute_if_not_set=False)
+#     if res is None:
+#         # then it wasn't found in the memo table, so we are giong to mark this as null
+#         return terminal(0)
+
+#     vmap = dict(zip(self.memos.variables, self.variables))
+#     res2 = res.rename_vars_unique(vmap.get)
+
+#     return simplify(res2, frame)
+
+
+# @getPartitions.define(NullMemo)
+# def getpartition_nullmemo(self, frame):
+#     # a major difference between null and unk is that we can use the memo table
+#     # as an iterator over the domain of variables, as if it /wasn't/ null, then
+#     # it would be contained in the memo table.
+#     #
+#     # This is a basic version of null memos, so we are just going to assume that
+#     # all of the argument variables are iterable
+
+#     # we need to remap the variables so that we only pass the names that are the same on both sides
+#     f = Frame()
+#     for va, vb in zip(self.variables, self.memos.variables):
+#         if va.isBound(frame):
+#             vb.setValue(f, va.getValue(frame))
+#     vmap = dict(zip(self.memos.variables, self.variables))
+#     for it in getPartitions(self.memos.memos, f):
+#         yield RemapVarIterator(vmap, it, vmap[it.variable])
 
 def _flatten_keys(save, R, frame):
     # this needs to loop until all of the keys are ground, if we are
@@ -345,6 +424,9 @@ def refresh_whole_table(table):
         for key, a, b in zip_tries(old_memos._children, nR._children):
             if a != b:
                 # then this value has changed, and we are going to have to signal anything that depends on this
+
+
+                import ipdb; ipdb.set_trace()
 
                 msg = AgendaMessage(table=table, key=key)
                 table.assumption.signal(msg)
@@ -411,3 +493,60 @@ def process_agneda_message(msg: AgendaMessage):
 
     # this is going to singnal that this key is invalidated, which will have to then be pushed forward
     t.assumption.signal(msg)
+
+
+# TODO: atm we require that the memoized entry is a partition.  But we should be
+# able to lift that requirement if we just wrap whatever in in a partition.  for the time being, we are
+def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
+    if isinstance(R, Aggregator):
+        # then we are going mark that we require the keys for now I suppose?
+        # that should let us memoize anything that is fully determined, but if
+        # is unk, then we are not going to be able to run in modes that don't
+        # yet have all of the values.  So that still needs to be handled.
+
+        variables = R.head_vars + (R.body_res,)
+        assert mem_variables is None  # TODO: handle selecting which variables that we want to memoize
+
+        memos = MemoContainer((True,)*len(R.head_vars)+(False,), variables, R.body, is_null_memo=is_null_memo)
+        return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, RMemo(variables, memos))
+
+    elif isinstance(R, Partition):
+        variables = R.unioned_vars
+
+        assert mem_variables is not None  # we need to know which variables are going to need to be present to perform queries (aka don't want to query on the result variables as we likely can't easily compute on them)
+
+        mode = tuple(v in mem_variables for v in variables)
+        memos = MemoContainer(mode, variables, R, is_null_memo=is_null_memo)
+        return RMemo(variables, memos)
+    else:
+        raise NotImplementedError()  # TODO:??? maybe just walk through the structure, or just wrap this in a partition, but then need to figure out what variables are going to be shared
+
+
+def rewrite_to_propagate(R, table, replace_with):
+    counter = 0
+    max_counter = 1
+    do_rewrite = 0
+    variables = None
+    def rewriter(R):
+        nonlocal counter, do_rewrite, variables
+        if isinstance(R, RMemo):
+            if R.table == table:  # then this is something that needs to be changed
+                z = R
+                if counter == do_rewrite:
+                    variables = R.variables
+                    z = replace_with
+                counter += 1
+                return z
+            return R  # this is another memo table that we are not rewriting atm
+        else:
+            return R.rewrite(rewriter)
+    while True:
+        z = R.rewrite(rewriter)
+        assert counter > 0  # otherwise we didn't find anything, so maybe we should just not yield something, but this case shouldn't happen
+        yield z
+        if max_counter < counter:
+            max_counter = counter
+        do_rewrite += 1
+        if do_rewrite >= max_counter:
+            break
+        counter = 0

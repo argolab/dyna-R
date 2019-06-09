@@ -360,7 +360,7 @@ class SingleIterator(Iterator):
 class Visitor:
     def __init__(self, track_source=True):
         self._methods = {}
-        self._default = lambda *args: args[0]
+        self._default = lambda R, *args, **kwargs: R.rewrite(lambda x: self(x, *args, **kwargs))
         self._track_source = track_source
     def define(self, typ):
         def f(method):
@@ -883,15 +883,15 @@ class AggregatorOpImpl(AggregatorOpBase):
 
 class Aggregator(RBaseType):
 
-    def __init__(self, result: Variable, head_vars: Tuple[Variable], bodyRes: Variable, aggregator :AggregatorOpBase, body :RBaseType):
+    def __init__(self, result: Variable, head_vars: Tuple[Variable], body_res: Variable, aggregator :AggregatorOpBase, body :RBaseType):
         self.result = result
-        self.bodyRes = bodyRes
+        self.body_res = body_res
         self.body = body
         self.head_vars = head_vars
         self.aggregator = aggregator
     @property
     def vars(self):
-        return (self.result, self.bodyRes, *self.head_vars)
+        return (self.result, self.body_res, *self.head_vars)
     @property
     def children(self):
         return (self.body,)
@@ -900,7 +900,7 @@ class Aggregator(RBaseType):
         return Aggregator(
             remap(self.result),
             tuple(remap(v) for v in self.head_vars),
-            remap(self.bodyRes),
+            remap(self.body_res),
             self.aggregator,
             self.body.rename_vars(remap)
         )
@@ -909,13 +909,13 @@ class Aggregator(RBaseType):
         return Aggregator(
             self.result,
             self.head_vars,
-            self.bodyRes,
+            self.body_res,
             self.aggregator,
             rewriter(self.body)
         )
 
     def _tuple_rep(self):
-        return self.__class__.__name__, self.result, self.head_vars, self.bodyRes, self.body._tuple_rep()
+        return self.__class__.__name__, self.result, self.head_vars, self.body_res, self.body._tuple_rep()
 
 
 @simplify.define(Aggregator)
@@ -942,9 +942,9 @@ def simplify_aggregator(self, frame):
             assert isinstance(R, FinalState)
 
             if agg_result is not None:
-                agg_result = self.aggregator.combine(agg_result, self.bodyRes.getValue(frame))
+                agg_result = self.aggregator.combine(agg_result, self.body_res.getValue(frame))
             else:
-                agg_result = self.bodyRes.getValue(frame)
+                agg_result = self.body_res.getValue(frame)
 
         loop(body, frame, loop_cb)
 
@@ -955,4 +955,4 @@ def simplify_aggregator(self, frame):
     # from the body is fully grounded, but the head variables are not grounded.
     # (Meaning that this is something like `f(X) += 5.`)
 
-    return Aggregator(self.result, self.head_vars, self.bodyRes, self.aggregator, body)
+    return Aggregator(self.result, self.head_vars, self.body_res, self.aggregator, body)
