@@ -318,3 +318,58 @@ def test_fib_null_memos():
     mt = fibm.body.memos.memos
     assert len(mt._children) == 41
     assert mt._children[(40, 102334155)] == [Terminal(1)]
+
+
+
+
+def test_reflect():
+    res, name, nargs, alist = variables_named(*'abcd')
+
+    rf = ReflectStructure(res, name, nargs, alist)
+
+    frame = Frame()
+    name.setValue(frame, 'test')
+    nargs.setValue(frame, 3)
+
+    rr = simplify(rf, frame)
+
+    assert isinstance(rr._children[0], BuildStructure)
+    assert rr._children[0].name == 'test'
+    assert len(rr._children[0].arguments) == 3
+
+
+    frame2 = Frame()
+    res.setValue(frame2, Term('test', (1,2,3)))
+
+    rr = simplify(rf, frame2)
+
+    assert alist.isBound(frame2)
+
+    assert alist.getValue(frame2) == Term.fromlist([1,2,3])
+    assert name.getValue(frame2) == 'test'
+    assert nargs.getValue(frame2) == 3
+
+
+def test_evaluate():
+    ret, name, nargs, alist = variables_named(*'abcd')
+
+    e = Evaluate(dyna_system, ret, name, nargs, alist)
+
+    dyna_system.define_term('test_foo', 3, Unify(VariableId(0), VariableId(1)))
+
+    frame = Frame()
+    name.setValue(frame, 'test_foo')
+    nargs.setValue(frame, 3)
+
+    rr = simplify(e, frame)
+
+    # this should be the same unify as the body of test_foo
+    assert isinstance(rr._children[0], Unify)
+
+    frame = Frame()
+    name.setValue(frame, 'test_no')
+    nargs.setValue(frame, 3)
+
+    rr = simplify(e, frame)
+
+    assert rr == Terminal(0)

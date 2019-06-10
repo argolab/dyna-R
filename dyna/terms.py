@@ -136,6 +136,9 @@ class ReflectStructure(RBaseType):
             remap(self.args_list)
         )
 
+    def _tuple_rep(self):
+        return self.__class__.__name__, self.result, self.name, self.num_args, self.args_list
+
 @simplify.define(ReflectStructure)
 def simplify_reflectStructure(self, frame):
     if self.result.isBound(frame):
@@ -199,6 +202,8 @@ class Evaluate(RBaseType):
     This should completement the reflect structure operator in that if we know the name and number of arguments then we can resolve the call
     without haivng to know the all of the arguments as ground.  To construct an `*X` operator then we can combine this with reflect structure
     so that both of these operators will get rewritten together
+
+    This is specific to dyna, as we are having the fact that there are positional arguments and that those are mapped in the tuple
     """
 
     def __init__(self, dyna_system, ret :Variable, name :Variable, nargs :Variable, args_list :Variable):
@@ -215,6 +220,9 @@ class Evaluate(RBaseType):
     def rename_vars(self, remap):
         return Evaluate(self.dyna_system, remap(self.ret_var), remap(self.name_var), remap(self.nargs_var), remap(self.args_list))
 
+    def _tuple_rep(self):
+        return self.__class__.__name__, self.ret, self.name, self.nargs, self.args_list
+
 @simplify.define(Evaluate)
 def simplify_evaluate(self, frame):
     if self.args_list.isBound(frame) and not self.nargs.isBound(frame):
@@ -222,7 +230,7 @@ def simplify_evaluate(self, frame):
         args = self.args_list.getValue(frame)
         args = args.aslist()  # TODO: catch an errors here???
         self.nargs.setValue(frame, len(args))
-    if self.name_var.isBound(frame) and self.nargs_var.isBound(frame):
+    if self.name.isBound(frame) and self.nargs.isBound(frame):
         name = self.name.getValue(frame)
         nargs = self.nargs.getValue(frame)
 
