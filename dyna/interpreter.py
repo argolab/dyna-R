@@ -58,6 +58,11 @@ class RBaseType:
         for c in self.children:
             yield from c.all_vars()
 
+    def all_children(self):
+        yield self
+        for c in self.children:
+            yield from c.all_children()
+
     def rename_vars_unique(self, nmap):
         # rename variables where new names are generated for variables that are not referenced
         nvars = {}
@@ -258,7 +263,7 @@ def constant(v):
     return ConstantVariable(None, v)
 
 class Frame(dict):
-    __slots__ = ('call_stack', 'Rargument')
+    __slots__ = ('call_stack',)
 
     def __init__(self, f=None):
         if f is not None:
@@ -267,7 +272,6 @@ class Frame(dict):
         else:
             super().__init__()
             self.call_stack = []
-        self.Rargument = None
 
     def __repr__(self):
         nice = {str(k).split('\n')[0]: v for k,v in self.items()}
@@ -464,7 +468,7 @@ def loop_partition(R, frame, callback, partition):
             pass
 
 
-def loop(R, frame, callback, till_terminal=False, partition=None):
+def loop(R, frame, callback, till_terminal=False, best_effort=False, partition=None):
     if isinstance(R, FinalState):
         # then this is done, so just callback
         callback(R, frame)
@@ -477,14 +481,20 @@ def loop(R, frame, callback, till_terminal=False, partition=None):
         for p in parts:  # just choose something, and ensure that we can iterate this whole list without a problem
             partition = p
 
-    assert isinstance(partition, Iterator)
+    if not best_effort:
+        assert isinstance(partition, Iterator)
+    else:
+        if partition is None:
+            # then we couldn't find something to iterate, so we are going to just callback
+            callback(R, frame)
+            return
 
-    if till_terminal:
+    if till_terminal or best_effort:
         def cb(r, f):
             if isinstance(r, FinalState):
                 callback(r, f)
             else:
-                loop(r, f, callback, till_terminal=True)
+                loop(r, f, callback, till_terminal=till_terminal, best_effort=best_effort)
     else:
         cb = callback
 
@@ -611,7 +621,7 @@ def partition(unioned_vars, children):
 
 
 @simplify.define(Partition)
-def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # TODO: better name than map_function???
+def simplify_partition(self :Partition, frame: Frame, *, map_function=None, reduce_to_single=True):  # TODO: better name than map_function???
     incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
     incoming_values = [v.getValue(frame) for v in self._unioned_vars]
 
@@ -639,8 +649,6 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
     # depending on the storage strategy of this, going to need to have something
     # better?  This is going to require that
 
-    #import ipdb; ipdb.set_trace()
-
     for grounds, Rexprs in self._children.filter([a if b else None for a,b in zip(incoming_values, incoming_mode)]):
 
         #for grounds, Rexprs in self._children.items():
@@ -663,8 +671,6 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
         for Rexpr in Rexprs:
             res = simplify(Rexpr, frame)
             save(res, frame)
-
-    # import ipdb; ipdb.set_trace()
 
     if not nc:
         # then nothing matched, so just return that the partition is empty
@@ -692,38 +698,14 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None):  # 
             r.append(Terminal(multiplicity))
         nc[k] = r
 
-
-
-    # ll = []
-    # for k, vv in nc.items():  # the partition should probably have more of a
-    #                           # dict structure, this needs to match what the
-    #                           # internal data structure is for partition
-    #     for i in range(len(self._unioned_vars)):  # identify variables that have the same value on all partitions
-    #         if set_values[i] != k[i]:
-    #             set_values[i] = None
-
-    #     multiplicity = 0
-
-    #     for v in vv:
-    #         if isinstance(v, Terminal):
-    #             multiplicity += v.multiplicity
-    #             assert None not in k
-    #         else:
-    #             ll.append((k, v))
-
-    #     if multiplicity != 0:
-    #         ll.append((k, Terminal(multiplicity)))
-
     for var, val in zip(self._unioned_vars, set_values):
         if val is not None:
             var.setValue(frame, val)
 
-    # if len(nc) == 1 and len(next(iter(nc.values()))) == 1:
-    #     return next(iter(nc.values()))[0]  # then we don't need the partition any more
-
-    r = nc.single_item()
-    if r is not None and len(r[1]) == 1:
-        return r[1][0]
+    if reduce_to_single:
+        r = nc.single_item()
+        if r is not None and len(r[1]) == 1:
+            return r[1][0]
 
     return Partition(self._unioned_vars, nc)
 
@@ -889,6 +871,9 @@ class Aggregator(RBaseType):
         self.body = body
         self.head_vars = head_vars
         self.aggregator = aggregator
+
+        assert result != body_res  # we require that there is some difference in variable so that there is someway that this can propagate through (maybe this should just rewrite the body itself before it attaches it?)
+
     @property
     def vars(self):
         return (self.result, self.body_res, *self.head_vars)

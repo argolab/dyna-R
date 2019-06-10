@@ -137,8 +137,6 @@ class MemoContainer:
         for a in all_assumptions:
             a.track(self.assumption_listener)
 
-        import ipdb; ipdb.set_trace()
-
     def invalidate(self):
         # in the case of a unk memo, this can just delete everything, but if it
         # is a null memo, then we are going to have to recompute or notify
@@ -172,11 +170,62 @@ class MemoContainer:
         # in this case, something used for the computation was invalidated, so
         # we are are going to have to mark the entries that are in the table
 
+        def has_ra(R):
+            for c in R.all_children():
+                if isinstance(c, ForwardMemoHole):
+                    return True
+            return False
 
+        argument_variables = tuple(VariableId() for _ in range(len(msg.key)))
 
-        assert False
+        propagators = []
 
-        pass
+        for rp, variables in rewrite_to_propagate(self._full_body, msg.table, ForwardMemoHole):
+            r = True
+            m = {}
+            for var, val, av in zip(variables, msg.key, argument_variables):
+                if isinstance(var, ConstantVariable):
+                    if val is not None and var.getValue(None) != val:
+                        r = False
+                m[var] = av
+
+            if not r:
+                continue
+
+            rp = rp.rename_vars(lambda x: m.get(x,x))
+
+            for pt in split_partitions(rp):
+                # if this doesn't have the arguments, then we are giong to want to simplify this or
+                if has_ra(pt):
+                    # then this is something that we are going to have to handle in that
+                    propagators.append(pt)
+
+        if not propagators:
+            return
+
+        # then we are going to merge the propagators together and determine
+        # which keys are impacted.  we can then use the set of the keys to mark
+        # those entries as having to be recmputed
+
+        res = partition(self.variables, propagators)
+
+        frame = Frame()
+        for var, val in zip(argument_variables, msg.key):
+            if val is not None:
+                var.setValue(frame, val)
+
+        nRes = simplify(res, frame, map_function=_flatten_keys, reduce_to_single=False)
+
+        if nRes.isEmpty():
+            return
+
+        refresh_keys = set(nRes._children.keys())
+
+        # now we are going to push invalidations/notifications to ourselves to recompute these keys
+
+        for k in refresh_keys:
+            msg = AgendaMessage(table=self, key=k)
+            push_work(lambda: process_agneda_message(msg))
 
 
 class RMemo(RBaseType):
@@ -254,126 +303,6 @@ def get_assumptions_memos(self):
     yield self.memos.assumption
 
 
-
-# class UnkMemo(RBaseType):
-
-#     def __init__(self, variables :Tuple[Variable], memos: MemoContainer):
-#         assert len(variables) == len(memos.variables)
-#         self.variables = variables
-#         self.memos = memos
-
-#     @property
-#     def vars(self):
-#         return self.variables
-
-#     def rename_vars(self, remap):
-#         return UnkMemo(tuple(remap(v) for v in self.variables), self.memos)
-
-#     def __eq__(self, other):
-#         return super().__eq__(other) and self.memos == other.memos
-
-#     def __hash__(self):
-#         return super().__hash__()
-
-# @simplify.define(UnkMemo)
-# def simplify_unkmemo(self, frame):
-#     # the idea should be that if we are handling different modes
-
-#     mode = tuple(v.isBound(frame) for v in self.variables)
-#     can_run = True
-#     for a, b in zip(mode, self.memos.supported_mode):
-#         if b and not a:
-#             can_run = False
-#     if not can_run:
-#         # then there isn't enough bound that we can attempt to look a memoized
-#         # value up
-#         return self
-#     key = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self.variables)
-#     res = self.memos.lookup(key)
-
-#     # rename the variables and make new spaces for things that were not
-#     # referenced
-#     vmap = dict(zip(self.memos.variables, self.variables))
-#     res2 = res.rename_vars_unique(vmap.get)
-
-
-#     # run the new result once, which can
-#     return simplify(res2, frame)
-
-
-
-# # this is very similar to the unk memos, and partition, so going to write this
-# # seperate first, and then work on mergining them later
-# class NullMemo(RBaseType):
-
-#     def __init__(self, variables :Tuple[Variable], memos :MemoContainer):
-#         assert len(variables) == len(memos.variables)
-#         self.variables = variables
-#         self.memos = memos
-
-#     @property
-#     def vars(self):
-#         return self.variables
-
-#     def rename_vars(self, remap):
-#         return NullMemo(tuple(remap(v) for v in self.variables), self.memos)
-
-#     def __eq__(self, other):
-#         return super().__eq__(other) and self.memos == other.memos
-
-#     def __hash__(self):
-#         return super().__hash__()
-
-
-# # these two types of memos should be merged
-# @get_all_assumptions.define(NullMemo)
-# @get_all_assumptions.define(UnkMemo)
-# def get_assumptions_memos(self):
-#     yield self.memos.assumption
-
-
-# @simplify.define(NullMemo)
-# def simplify_nullmemo(self, frame):
-#     mode = tuple(v.isBound(frame) for v in self.variables)
-#     can_run = True
-#     for a, b in zip(mode, self.memos.supported_mode):
-#         if b and not a:
-#             can_run = False
-#     if not can_run:
-#         # then there isn't enough bound that we can attempt to look a memoized
-#         # value up
-#         return self
-#     key = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self.variables)
-
-#     res = self.memos.lookup(key, compute_if_not_set=False)
-#     if res is None:
-#         # then it wasn't found in the memo table, so we are giong to mark this as null
-#         return terminal(0)
-
-#     vmap = dict(zip(self.memos.variables, self.variables))
-#     res2 = res.rename_vars_unique(vmap.get)
-
-#     return simplify(res2, frame)
-
-
-# @getPartitions.define(NullMemo)
-# def getpartition_nullmemo(self, frame):
-#     # a major difference between null and unk is that we can use the memo table
-#     # as an iterator over the domain of variables, as if it /wasn't/ null, then
-#     # it would be contained in the memo table.
-#     #
-#     # This is a basic version of null memos, so we are just going to assume that
-#     # all of the argument variables are iterable
-
-#     # we need to remap the variables so that we only pass the names that are the same on both sides
-#     f = Frame()
-#     for va, vb in zip(self.variables, self.memos.variables):
-#         if va.isBound(frame):
-#             vb.setValue(f, va.getValue(frame))
-#     vmap = dict(zip(self.memos.variables, self.variables))
-#     for it in getPartitions(self.memos.memos, f):
-#         yield RemapVarIterator(vmap, it, vmap[it.variable])
-
 def _flatten_keys(save, R, frame):
     # this needs to loop until all of the keys are ground, if we are
     # unable to ground everything, then we are going to have delayed
@@ -385,7 +314,7 @@ def _flatten_keys(save, R, frame):
         def cb(R, frame):
             #import ipdb; ipdb.set_trace()
             save(R, frame)
-        loop(R, frame, cb, till_terminal=True)
+        loop(R, frame, cb, best_effort=True)
 
 
 def naive_converge_memos(*tables):
@@ -425,33 +354,18 @@ def refresh_whole_table(table):
             if a != b:
                 # then this value has changed, and we are going to have to signal anything that depends on this
 
-
-                import ipdb; ipdb.set_trace()
-
                 msg = AgendaMessage(table=table, key=key)
+
+                # these things are going to have to push to the agenda that they have been modified
                 table.assumption.signal(msg)
 
-                assert False
 
-
-# we can have a pointer in an Rexpr where this should get replaced into it, in
-# which case we can just take the new expression and identify if there is
-# something?  There is going to have to be special handling for cases where
-# there are aggregators, so those are going to have to be deleted, or rewritten
-# such that the results of variables are set
-class RArgument(RBaseType):
+class ForwardMemoHole(RBaseType):
     pass
 
-@simplify.define(RArgument)
-def simplify_rargument(self, frame):
-    r = frame.Rargument
-    frame.Rargument = None
-    return simplify(r, frame)
-
-
-# def construct_memotable(R):
-#     # construct a memo table, we are going to rewrite the R-expr such that we can determien all of the
-#     pass
+@simplify.define(ForwardMemoHole)
+def simplift_memohole(self, frame):
+    return Terminal(1)
 
 class AgendaMessage(NamedTuple):
     table : MemoContainer  # the container that we are updating, this will be tracked via pointer instead of name
@@ -480,14 +394,34 @@ def process_agneda_message(msg: AgendaMessage):
     assert msg.addition is None and msg.deletition is None
 
 
+    import ipdb; ipdb.set_trace()
+
+
     t = msg.table
 
     if t.is_null_memo:
-        pass
+        frame = Frame()
+        for var, val in zip(t.variables, msg.key):
+            if val is not None:
+                var.setValue(frame, val)
+        nR = simplify(t._full_body, frame, map_function=_flatten_keys, reduce_to_single=False)
+        if nR.isEmpty():
+            return
+
+        # this needs to handle if the partition does the single
+
+        tf = t.memos._children.filter(msg.key)
+        tn = nR._children
+
+        # we are going to identify which keys are changes and then update those
+        for key, a, b in zip_tries(tf, tn):
+            if a != b:
+                import ipdb; ipdb.set_trace()
+
     else:
         # then we are just going to delete the memos as they are unk
         # we are also going to send messages to downstream entries
-        t.filter(msg.key).delete_all()
+        t.memos._children.filter(msg.key).delete_all()
 
     # send notifications to everything downstream
 
@@ -521,6 +455,40 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
     else:
         raise NotImplementedError()  # TODO:??? maybe just walk through the structure, or just wrap this in a partition, but then need to figure out what variables are going to be shared
 
+def split_partitions(R):
+    # split the program into different branches where there are no partitions,
+    # so that we can determine which branches are giong to actually contribute.
+    # If there are multiple partitions, then we are going to have to handle that
+
+    # we are going to find some partition, if there is none, then we are just going to yield this result
+
+    partition = None
+    for c in R.all_children():
+        if isinstance(c, Partition):
+            partition = c
+            break
+    if partition is None:
+        yield R
+        return
+
+    for k, vv in partition._children:
+        for v in vv:
+            def rewriter(R):
+                if R is partition:
+                    # then we are going to replace this partition with the branch
+                    inter = []
+                    for var, val in zip(partition._unioned_vars, k):
+                        if val is not None:
+                            inter.append(Unify(var, constant(val)))
+                    inter.append(v)
+                    return intersect(*inter)
+                else:
+                    return R.rewrite(rewriter)
+
+            z = rewriter(R)
+            assert R != z
+            yield from split_partitions(z)
+
 
 def rewrite_to_propagate(R, table, replace_with):
     counter = 0
@@ -530,20 +498,28 @@ def rewrite_to_propagate(R, table, replace_with):
     def rewriter(R):
         nonlocal counter, do_rewrite, variables
         if isinstance(R, RMemo):
-            if R.table == table:  # then this is something that needs to be changed
+            if R.memos == table:  # then this is something that needs to be changed
                 z = R
                 if counter == do_rewrite:
                     variables = R.variables
-                    z = replace_with
+                    z = replace_with()  # maybe this should get passed the R structure or something, so that we can use that to track the mapping?
                 counter += 1
                 return z
             return R  # this is another memo table that we are not rewriting atm
+        elif isinstance(R, Aggregator):
+            # then we want to remove the aggregator as we are unable to
+            # determine which operations should be considered to be going
+            # forward.  This means that the result of an aggregation will not be
+            # determined, but rather we are going to just avoid performing that
+            # computation (thus having an over estimate)
+            return rewriter(R.body)
         else:
             return R.rewrite(rewriter)
     while True:
         z = R.rewrite(rewriter)
-        assert counter > 0  # otherwise we didn't find anything, so maybe we should just not yield something, but this case shouldn't happen
-        yield z
+        if counter == 0:  # there is nothing that matched the memo table, so we are
+            return
+        yield z, variables
         if max_counter < counter:
             max_counter = counter
         do_rewrite += 1
