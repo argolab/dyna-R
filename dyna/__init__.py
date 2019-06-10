@@ -14,7 +14,7 @@ from .terms import (
     Term, BuildStructure, ReflectStructure
 )
 
-from .memos import MemoContainer, RMemo, naive_converge_memos as converge_memos, rewrite_to_memoize
+from .memos import MemoContainer, RMemo, naive_converge_memos, rewrite_to_memoize
 
 # This is a shortcut for writing code quickly where we are going to lookup a method
 # so we can write something like `M.add(1,2,3)`

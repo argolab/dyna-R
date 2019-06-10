@@ -322,10 +322,7 @@ def test_fib_null_memos():
 
     dyna_system.run_agenda()
 
-
-    # this should run until it has reached a fixed point
-    converge_memos(mtable)
-
     # going to lookup directly into the memo table to determien what the values are
-    assert len(mtable.memos._children) == 41
-    assert mtable.memos._children[(40, 102334155)] == [Terminal(1)]
+    mt = fibm.body.memos.memos
+    assert len(mt._children) == 41
+    assert mt._children[(40, 102334155)] == [Terminal(1)]

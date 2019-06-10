@@ -43,15 +43,15 @@ class MemoContainer:
         # will be triggered.
         self._full_body = None
 
-        # for identifying things we are currently computing in the case of a
-        # cycle that can only be forward chained.
+        # for identifying things we are currently computing via backchaining in
+        # the case of a cycle that can only be forward chained.
         self._error_cycle = set()
 
         self._setup_assumptions()
 
         if self.is_null_memo:
             # then we need to init the table as this is a null guess for all of
-            # the entries, which means that we are likely inconsistente with the guess
+            # the entries, which means that we are likely inconsistent with the guess
 
             push_work(lambda: refresh_whole_table(self))
 
@@ -74,16 +74,6 @@ class MemoContainer:
         nR = self.compute(values)
 
         self._error_cycle.remove(values)
-
-        # this is not as efficient as it could be given that this could handle
-        # adding something to the partition in the case that the keys overlap,
-        # but otherwise this should be fine
-
-        # nv = self.memos._children.copy()  # make a copy of this?  Though maybe we should just assume that we own it and update
-        # nv.setdefault(values, []).append(nR)
-
-        # nM = Partition(self.memos._unioned_vars, nv)
-        # self.memos = nM
 
         # modify the data structure in place, so we are assuming that we own
         # this (which better be the case), though it breaks the "ideal" that
@@ -128,6 +118,12 @@ class MemoContainer:
         return nR
 
     def _setup_assumptions(self):
+        # this identifies which expression this memoized expression is dependent
+        # on.  It inlines everything that it can into full_body and then
+        # collects all assumptions.  These assumptions contain other memo tables
+        # that we will read from as well as the definitions of different rules
+        # (so that they can be changed later)
+
         self.assumption = Assumption('memo container')
         self.assumption_listener = AssumptionListener(self)
         self._full_body = inline_all_calls(self.body, set())
@@ -138,20 +134,9 @@ class MemoContainer:
             a.track(self.assumption_listener)
 
     def invalidate(self):
-        # in the case of a unk memo, this can just delete everything, but if it
-        # is a null memo, then we are going to have to recompute or notify
-        # anything that is dependant on us.  So this system needs to know what
-        # behavior it is working under?
-
-
-        # this needs to delete all of the memos
-        # if this is null, then we are going to have to perform a full recompute
-
-        # if self.is_null_memo:
-        #     assert False
-
-        #     pass
-        # else:
+        # In the case of an invalidation, then the assumption has changed in
+        # such a way that we are unable to partially update ourselves.  So we
+        # are going to have to delete everything and then recompute from scratch.
 
 
         # just delete all of the memos
@@ -165,10 +150,18 @@ class MemoContainer:
         # signal anything that depends on us
         assumption.invalidate()
 
+        # if null, with a new empty table, we need to recompute all of the
+        # initial values
+        if self.is_null_memo:
+            push_work(lambda: refresh_whole_table(self))
+
 
     def signal(self, msg):
-        # in this case, something used for the computation was invalidated, so
-        # we are are going to have to mark the entries that are in the table
+        # an assumption can also send a more fine grained notification that
+        # something has changed.  In this case the signal will key the key in
+        # _another table_ that has changed, so we are going to identify _all_
+        # keys in this table which might be impacted.  We will push
+        # notifications to the keys in our table
 
         def has_ra(R):
             for c in R.all_children():
@@ -205,7 +198,7 @@ class MemoContainer:
 
         # then we are going to merge the propagators together and determine
         # which keys are impacted.  we can then use the set of the keys to mark
-        # those entries as having to be recmputed
+        # those entries as having to be recomputed
 
         res = partition(self.variables, propagators)
 
@@ -214,9 +207,14 @@ class MemoContainer:
             if val is not None:
                 var.setValue(frame, val)
 
+        # if msg.key == (2,1):
+        #     frame['ddd'] = True
+        #     import ipdb; ipdb.set_trace()
+
         nRes = simplify(res, frame, map_function=_flatten_keys, reduce_to_single=False)
 
         if nRes.isEmpty():
+            #import ipdb; ipdb.set_trace()
             return
 
         refresh_keys = set(nRes._children.keys())
@@ -225,7 +223,7 @@ class MemoContainer:
 
         for k in refresh_keys:
             msg = AgendaMessage(table=self, key=k)
-            push_work(lambda: process_agneda_message(msg))
+            push_work(lambda: process_agenda_message(msg))
 
 
 class RMemo(RBaseType):
@@ -307,6 +305,8 @@ def _flatten_keys(save, R, frame):
     # this needs to loop until all of the keys are ground, if we are
     # unable to ground everything, then we are going to have delayed
     # R-expr, but that needs to still avoid overlapping?
+    # if 'ddd' in frame:
+    #     import ipdb; ipdb.set_trace()
     if isinstance(R, FinalState):
         save(R, frame)
     else:
@@ -319,7 +319,8 @@ def _flatten_keys(save, R, frame):
 
 def naive_converge_memos(*tables):
     # this just keeps recomputing all of the memo tables until there are no
-    # changes.  In this case, we can
+    # changes.  This does not use an agenda and can be compared to naive
+    # forwardchaining as in datalog
 
     done = False
     while not done:
@@ -339,7 +340,14 @@ def naive_converge_memos(*tables):
 
 
 def refresh_whole_table(table):
-    nR = simplify(table._full_body, Frame(), map_function=_flatten_keys)
+    # this is what gets the memoization processes started once we have made a
+    # guess.  It performs a computation of the entire table using the program
+    # and then will signal anything that might depend on the changes.
+    #
+    # Eg, in the case of fib, this is going to identify that fib(0) = 0 and
+    # fib(1) = 1 are inconsistent with the guess that the whole table is null
+
+    nR = simplify(table._full_body, Frame(), map_function=_flatten_keys, reduce_to_single=False)
 
     if table.memos != nR:
         # then we are going to have to signal these entries, which means
@@ -380,11 +388,19 @@ class AgendaMessage(NamedTuple):
     invalidation : bool = True  # just always going to be true for the moment...
 
 
-def process_agneda_message(msg: AgendaMessage):
-    # identify which rows are impacted, and the perform a computation on them
+def process_agenda_message(msg: AgendaMessage):
+    # the msg contains a pointer to the table and which key needs to be
+    # updated/invalidated.
+    #
+    # This method does the computation of the impacted key (including handling
+    # cases with unground variables, meaning something like `fib(2) = 1` is
+    # really backed off to `fib(2) = ???` where the `???` is an unground
+    # variable that needs to get filled in and refined.
+    #
+    # for everything that has been identifed as changing, it signals any
+    # downstream dependants and then those dependants are responsible for
+    # enqueuing their own refresh updates to the agenda  as needed
 
-    # this needs to change the value in the memo table, which means that we are
-    # also going to have to send notifications to anything that depends on this.
 
 
     # first we update the memo table with this new entry
@@ -392,9 +408,6 @@ def process_agneda_message(msg: AgendaMessage):
 
     # TODO: handle these cases
     assert msg.addition is None and msg.deletition is None
-
-
-    import ipdb; ipdb.set_trace()
 
 
     t = msg.table
@@ -413,24 +426,35 @@ def process_agneda_message(msg: AgendaMessage):
         tf = t.memos._children.filter(msg.key)
         tn = nR._children
 
+
+        changes = []
+
         # we are going to identify which keys are changes and then update those
         for key, a, b in zip_tries(tf, tn):
             if a != b:
-                import ipdb; ipdb.set_trace()
+                changes.append((key, b))  # given that we are iterating the table, we don't want to make changes to the table while we are iterating.  So we are instead going
+
+        for key, value in changes:
+            # we are going to write this memo to the table
+            # and then also notify anything that is downstream that might depend on this
+
+            # this was a fully recompute, so we are going to replace everything for this key rather than just update
+            t.memos._children[key] = value
+
+            mm = AgendaMessage(table=t, key=key)  # make a new message, as this might be more fine grained than before
+            t.assumption.signal(mm)
 
     else:
         # then we are just going to delete the memos as they are unk
         # we are also going to send messages to downstream entries
         t.memos._children.filter(msg.key).delete_all()
 
-    # send notifications to everything downstream
+        # send notifications to everything downstream
 
-    # this is going to singnal that this key is invalidated, which will have to then be pushed forward
-    t.assumption.signal(msg)
+        # this is going to singnal that this key is invalidated, which will have to then be pushed forward
+        t.assumption.signal(msg)
 
 
-# TODO: atm we require that the memoized entry is a partition.  But we should be
-# able to lift that requirement if we just wrap whatever in in a partition.  for the time being, we are
 def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
     if isinstance(R, Aggregator):
         # then we are going mark that we require the keys for now I suppose?
@@ -455,9 +479,10 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
     else:
         raise NotImplementedError()  # TODO:??? maybe just walk through the structure, or just wrap this in a partition, but then need to figure out what variables are going to be shared
 
+
 def split_partitions(R):
     # split the program into different branches where there are no partitions,
-    # so that we can determine which branches are giong to actually contribute.
+    # so that we can determine which branches are going to actually contribute.
     # If there are multiple partitions, then we are going to have to handle that
 
     # we are going to find some partition, if there is none, then we are just going to yield this result
@@ -491,6 +516,16 @@ def split_partitions(R):
 
 
 def rewrite_to_propagate(R, table, replace_with):
+    # Identify places in R which referencing the memo table then replace those
+    # with a new expression and return the names of the variables that attach at
+    # that point.
+    #
+    # we additionally _delete_ from the program, as given that we only have a
+    # single key that we are receiving a message from, we are not going to
+    # properly compute the value of an aggregator unless we go and identify all
+    # of the other keys that contribute.
+
+
     counter = 0
     max_counter = 1
     do_rewrite = 0

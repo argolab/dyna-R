@@ -631,9 +631,9 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
     def saveL(res, frame):
         # this would have bound new values in the frame potentially, so we going to unset those (if they were unset on being called)
         nkey = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self._unioned_vars)
-        for var, imode in zip(self._unioned_vars, incoming_mode):
-            if not imode:
-                var._unset(frame)  # TODO: figure out a better way to do this in python
+        # for var, imode in zip(self._unioned_vars, incoming_mode):
+        #     if not imode:
+        #         var._unset(frame)  # TODO: figure out a better way to do this in python
 
         if not res.isEmpty():
             #nc[nkey].append(res)
@@ -672,9 +672,16 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
             res = simplify(Rexpr, frame)
             save(res, frame)
 
+            for var, imode, val in zip(self._unioned_vars, incoming_mode, grounds):
+                if not imode and val is None:
+                    var._unset(frame)
+
     if not nc:
         # then nothing matched, so just return that the partition is empty
         return Terminal(0)
+
+    # if 'ddd' in frame:
+    #     import ipdb; ipdb.set_trace()
 
     set_values = list(next(iter(nc.keys())))
 
@@ -700,7 +707,10 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
 
     for var, val in zip(self._unioned_vars, set_values):
         if val is not None:
-            var.setValue(frame, val)
+            try:
+                var.setValue(frame, val)
+            except UnificationFailure:
+                assert False # ??? shouldn't happen
 
     if reduce_to_single:
         r = nc.single_item()

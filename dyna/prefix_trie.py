@@ -253,7 +253,22 @@ def zip_tries(Ta, Tb):
                     yield from r(None, b[None], prefix+(None,))
                 yield r(a.get(az), b.get(bz), prefix+(az,))
             else:
-                assert False  # this will have to handle different filters,
+                if az is None:
+                    yield from r(a.get(bz), b.get(bz), prefix+(bz,))
+                    for k, v in a.items():
+                        if k != bz:
+                            yield from r(v, None, prefix+(k,))
+
+                elif bz is None:
+                    yield from r(a.get(az), b.get(az), prefix+(az,))
+                    for k,v in b.items():
+                        if k != az:
+                            yield from r(None, v, prefix+(k,))
+                else:
+                    yield from r(a.get(az), None, prefix+(az,))
+                    yield from r(None, b.get(bz), prefix+(bz,))
+
+                    #assert False  # this will have to handle different filters,
                               # where we are going to get keys from one of the
                               # maps but not the others.  idk if that would
                               # actually be used?
