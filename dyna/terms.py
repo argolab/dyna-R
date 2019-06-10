@@ -239,45 +239,6 @@ def simplify_evaluate(self, frame):
     return self
 
 
-
-# class Evaluate(RBaseType):
-#     """
-#     *X, evaluation construct where we lookup the name and the number of arguments.
-#     This is only takes a single variable (there is no return variable) and will rewrite as the R-expr that defines that term
-
-#     This needs to be able to handle the case where this is attached to a build structure, in which case, it should just identify
-#     the variables and the relevant variables
-#     """
-
-#     def __init__(self, ret_var, term_var, dyna_system):
-#         self.ret_var = ret_var  # where the return value (of this function) is set
-#         self.term_var = term_var  # represents the name + the arguments
-#         self.dyna_system = dyna_system  # which dynabase we are going to look this operation up in
-
-#     @property
-#     def vars(self):
-#         return (self.ret_var, self.term_var)
-
-#     def rename_vars(self, remap):
-#         return Evaluate(remap(self.ret_var), remap(self.term_var), self.dyna_system)
-
-
-# @simplify.define(Evaluate)
-# def simplify_evaluate(self, frame):
-#     if self.term_var.isBound(frame):
-#         t = self.term_var.getValue(frame)
-#         if not isinstance(t, Term):
-#             # this should maybe be an error
-#             return Terminal(0)
-#         vmap = {ret_variable: self.ret_var}
-#         for i, j in enumerate(t.arguments):
-#             vmap[i] = constant(j)
-#         r = CallTerm(vmap, self.dyna_system, (t.name, len(t.arguments)))
-#         return simplify(r, frame)
-
-#     return self
-
-
 class CallTerm(RBaseType):
     """
     This is a call to an external expression that has not yet been included.  If the modes match, then we could attempt
@@ -321,17 +282,19 @@ class CallTerm(RBaseType):
 
 @simplify.define(CallTerm)
 def simplify_call(self, frame):
-    for c in frame.call_stack:
-        if c.term_ref == self.term_ref:
-            # then don't try to run this
-            assert tuple(self.var_map.keys()) == tuple(c.var_map.keys())  # check that the ordres are the same, will have to remap otherwise
-            r = CallTerm(self.var_map, self.dyna_system, self.term_ref)
-            r.parent_calls_blocker += c.parent_calls_blocker
-            r.parent_calls_blocker.append(tuple(c.var_map.values()))
-            return r
+    if not self.parent_calls_blocker:
+        for c in reversed(frame.call_stack):
+            if c.term_ref == self.term_ref:
+                # then don't try to run this
+                assert tuple(self.var_map.keys()) == tuple(c.var_map.keys())  # check that the ordres are the same, will have to remap otherwise
+                r = CallTerm(self.var_map, self.dyna_system, self.term_ref)
+                r.parent_calls_blocker += c.parent_calls_blocker
+                r.parent_calls_blocker.append(tuple(c.var_map.values()))
+                self = r
+                break
 
     # sanitity check for now
-    assert len(self.parent_calls_blocker) < 5
+    assert len(self.parent_calls_blocker) < 10
 
     # check if the arguments are unique, otherwise don't try and run this
     vs = [tuple(v.getValue(frame) for v in vv) for vv in self.parent_calls_blocker]

@@ -676,6 +676,10 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
                 if not imode and val is None:
                     var._unset(frame)
 
+        for var, imode in zip(self._unioned_vars, incoming_mode):
+            if not imode:
+                var._unset(frame)
+
     if not nc:
         # then nothing matched, so just return that the partition is empty
         return Terminal(0)
@@ -940,6 +944,8 @@ def simplify_aggregator(self, frame):
                 agg_result = self.aggregator.combine(agg_result, self.body_res.getValue(frame))
             else:
                 agg_result = self.body_res.getValue(frame)
+
+        body = saturate(body, frame)
 
         loop(body, frame, loop_cb)
 
