@@ -1,7 +1,10 @@
 
-from .interpreter import *
+
 from functools import reduce
 import operator
+
+from .interpreter import *
+from .optimize import optimizer
 
 
 class Term:
@@ -72,11 +75,11 @@ class BuildStructure(RBaseType):
         return (self.result, *self.arguments)
 
     def rename_vars(self, remap):
-        return BuildStructure(
-            self.name,
-            remap(self.result),
-            map(remap, self.arguments)
-        )
+        res = remap(self.result)
+        args = [remap(a) for a in self.arguments]
+        if res in args:  # occurs check at a single level, so something like `X=s(X)`
+            return Terminal(0)
+        return BuildStructure(self.name, res, args)
 
     def _tuple_rep(self):
         return self.__class__.__name__, self.name, self.result, self.arguments
@@ -183,6 +186,12 @@ def simplify_reflectStructure(self, frame):
         return simplify(R, frame)
 
     return self
+
+@optimizer.define(ReflectStructure)
+def optimzier_reflectstructure(self, info):
+    # this should check if there are other conjunctive constraints that contain
+    # the type info, and then we can use those to rewrite this constraint to not exist
+    raise NotImplementedError()
 
 
 class Evaluate(RBaseType):

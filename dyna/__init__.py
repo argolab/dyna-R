@@ -16,6 +16,8 @@ from .terms import (
 
 from .memos import MemoContainer, RMemo, naive_converge_memos, rewrite_to_memoize
 
+from .optimize import run_optimizer
+
 # This is a shortcut for writing code quickly where we are going to lookup a method
 # so we can write something like `M.add(1,2,3)`
 class M(object):

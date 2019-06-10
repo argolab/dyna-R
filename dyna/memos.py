@@ -257,6 +257,10 @@ class RMemo(RBaseType):
 def simplify_memo(self, frame):
     # the idea should be that if we are handling different modes
 
+    if not frame.memo_reads:
+        # then we are not allowed to perform any reads of a memo table
+        return self
+
     mode = tuple(v.isBound(frame) for v in self.variables)
     can_run = True
     for a, b in zip(mode, self.memos.supported_mode):
@@ -283,7 +287,7 @@ def simplify_memo(self, frame):
 
 @getPartitions.define(RMemo)
 def getPartition_memos(self, frame):
-    if not self.memos.is_null_memo:
+    if not self.memos.is_null_memo or not frame.memo_reads:
         # then we can not use this table to iterate as we do not know all of the non-null values
         return
 
@@ -397,7 +401,7 @@ def process_agenda_message(msg: AgendaMessage):
     # really backed off to `fib(2) = ???` where the `???` is an unground
     # variable that needs to get filled in and refined.
     #
-    # for everything that has been identifed as changing, it signals any
+    # for everything that has been identified as changing, it signals any
     # downstream dependants and then those dependants are responsible for
     # enqueuing their own refresh updates to the agenda  as needed
 

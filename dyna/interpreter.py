@@ -170,6 +170,9 @@ class Variable:
     __slots__ = ()
     def __repr__(self):
         return f'var({str(self)})'
+    def __lt__(self, other):
+        # just something so that we can order these and select something consistently
+        return str(self) < str(other)
 
 class VariableId(Variable):
     __slots__ = ('__name',)
@@ -230,6 +233,13 @@ class ConstantVariable(Variable):
             raise UnificationFailure()
         return True
 
+    def __lt__(self, other):
+        assert isinstance(other, Variable)
+        if isinstance(other, ConstantVariable):
+            return self.__value < other.__value
+        else:
+            return True
+
 class UnitaryVariable(Variable):
     # a variable that is not referenced in more than 1 place, so we are going to
     # ignore the value, it isn't even a constant
@@ -263,7 +273,7 @@ def constant(v):
     return ConstantVariable(None, v)
 
 class Frame(dict):
-    __slots__ = ('call_stack',)
+    __slots__ = ('call_stack', 'memo_reads')
 
     def __init__(self, f=None):
         if f is not None:
@@ -272,6 +282,7 @@ class Frame(dict):
         else:
             super().__init__()
             self.call_stack = []
+        self.memo_reads = True
 
     def __repr__(self):
         nice = {str(k).split('\n')[0]: v for k,v in self.items()}
@@ -631,9 +642,6 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
     def saveL(res, frame):
         # this would have bound new values in the frame potentially, so we going to unset those (if they were unset on being called)
         nkey = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self._unioned_vars)
-        # for var, imode in zip(self._unioned_vars, incoming_mode):
-        #     if not imode:
-        #         var._unset(frame)  # TODO: figure out a better way to do this in python
 
         if not res.isEmpty():
             #nc[nkey].append(res)
@@ -820,6 +828,8 @@ def getPartitions_partition(self :Partition, frame):
 
 class Unify(RBaseType):
     def __init__(self, v1, v2):
+        if v2 < v1:
+            v2, v1 = v1, v2
         self.v1 = v1
         self.v2 = v2
     @property
