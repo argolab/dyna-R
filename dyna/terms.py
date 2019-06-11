@@ -103,6 +103,32 @@ def simplify_buildStructure(self, frame):
 
     return self
 
+@optimizer.define(BuildStructure)
+def optimizer_buildStructure(self, info):
+
+    ac = info.all_constraints[self.result]
+
+    if len(ac) == 1:
+        # then we are the only constraint that is this result variable, so we
+        # are just going to delete ourselves as we are not needed anymore
+        return Terminal(1)
+
+    cc = info.conjunctive_constraints[self.result]
+
+    for c in cc:
+        if c is self:
+            break
+        if isinstance(c, BuildStructure):
+            # this should unify the variables that are arguments, and just delete itself
+            if c.name != self.name or len(c.arguments) != len(self.arguments):
+                return Terminal(0)  # unification fails in this case
+            const = [Unify(c.result, self.result)]
+            for a,b in zip(c.arguments, self.arguments):
+                const.append(Unify(a,b))
+            return intersect(*const)
+
+    return self
+
 
 
 class ReflectStructure(RBaseType):
@@ -139,6 +165,25 @@ class ReflectStructure(RBaseType):
     def _tuple_rep(self):
         return self.__class__.__name__, self.result, self.name, self.num_args, self.args_list
 
+def reflect_buildMatch(self, name, num_args):
+    if not isinstance(name, str) or not isinstance(num_args, int):
+        return Terminal(0)
+
+    arg_vars = [VariableId(('reflected', object())) for _ in range(num_args)]
+    consts = [BuildStructure(name, self.result, arg_vars)]
+    # have to construct a list constraints out of these variables
+    prev = constant(Term('nil', ()))  # the end of the list
+    for v in reversed(arg_vars):
+        np = VariableId(('reflected_list', object()))
+        c = BuildStructure('.', np, (v, prev))
+        consts.append(c)
+        prev = np
+    consts.append(Unify(prev, self.args_list))  # this should just rewrite rather than adding in this additional constraint, but it should be fine...
+
+    R = Intersect(tuple(consts))
+    return R
+
+
 @simplify.define(ReflectStructure)
 def simplify_reflectStructure(self, frame):
     if self.result.isBound(frame):
@@ -171,21 +216,7 @@ def simplify_reflectStructure(self, frame):
         name = self.name.getValue(frame)
         num_args = self.num_args.getValue(frame)
 
-        if not isinstance(name, str) or not isinstance(num_args, int):
-            return Terminal(0)
-
-        arg_vars = [VariableId(('reflected', object())) for _ in range(num_args)]
-        consts = [BuildStructure(name, self.result, arg_vars)]
-        # have to construct a list constraints out of these variables
-        prev = constant(Term('nil', ()))  # the end of the list
-        for v in reversed(arg_vars):
-            np = VariableId(('reflected_list', object()))
-            c = BuildStructure('.', np, (v, prev))
-            consts.append(c)
-            prev = np
-        consts.append(Unify(prev, self.args_list))  # this should just rewrite rather than adding in this additional constraint, but it should be fine...
-
-        R = Intersect(tuple(consts))
+        R = reflect_buildMatch(self, name, num_args)
         return simplify(R, frame)
 
     return self
@@ -194,7 +225,21 @@ def simplify_reflectStructure(self, frame):
 def optimzier_reflectstructure(self, info):
     # this should check if there are other conjunctive constraints that contain
     # the type info, and then we can use those to rewrite this constraint to not exist
-    raise NotImplementedError()
+
+    # the only case that we have to handle here is when the type of the head
+    # variable is know, otherwise this can be handled via the
+
+    cc = info.conjunctive_constraints[self.result]
+    for c in cc:
+        if isinstance(c, BuildStructure) and c.result == self.result:
+            # if there are more than 2 conjunctive constraints with the same name, then there will be some unification failure at some point, which is ok I suppose?
+            self.name.setValue(info.frame, c.name)
+            self.num_args.setValue(info.frame, len(c.arguments))
+            return reflect_buildMatch(self, c.name, len(c.arguments))
+
+    # we might also want to do something about the arguments list lengths in this case
+
+    return self
 
 
 class Evaluate(RBaseType):

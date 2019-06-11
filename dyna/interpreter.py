@@ -891,6 +891,8 @@ def unify(a, b):
         return Terminal(1)
     if isinstance(a, ConstantVariable) and isinstance(b, ConstantVariable):
         if a.getValue(None) == b.getValue(None):  # should have a better way of doing this???
+            # this should be handled in the above case???
+            assert False
             return Terminal(1)
         else:
             return Terminal(0)

@@ -376,7 +376,6 @@ def test_evaluate():
 
 
 def test_merge_rules():
-
     z, rv = variables_named(0, 'RR')
 
     agg_op = AggregatorOpImpl(lambda a,b: a+b)
@@ -392,7 +391,6 @@ def test_merge_rules():
                     Partition((z, rv),
                               [add(constant(1), z, ret=rv)]))
 
-
     dyna_system.add_to_term('merge_rule', 1, r2)
 
     mc = dyna_system.call_term('merge_rule', 1)
@@ -404,5 +402,49 @@ def test_merge_rules():
     assert interpreter.ret_variable.getValue(frame) == 7
 
 
-def test_optimizer():
+def test_optimizer1():
     fibo = run_optimizer(fib, variables_named(0,interpreter.ret_variable))
+
+def test_optimizer2():
+    # check that we can perform inference on the types of a tuple and use that
+    # to perform the approperate reflection and then inline calls.  This should
+    # also eleminate excess variables from the expression.
+
+    dyna_system.define_term('opt_call', 2, Intersect(Unify(constant(True), interpreter.ret_variable), Unify(*variables_named(0,1))))  # opt_call(X,X).
+
+    res, sv, a1, a2, sname, snargs, alist = variables_named(*'abcdefg')
+
+    # res = *&opt_call(A1, A2)
+    rx = Intersect(BuildStructure('opt_call', sv, (a1, a2)), ReflectStructure(sv, sname, snargs, alist), Evaluate(dyna_system, res, sname, snargs, alist))
+
+    rr = run_optimizer(rx, (a1, a2, res))
+
+    import ipdb; ipdb.set_trace()
+
+
+def test_optimizer3():
+
+    dyna_system.define_term('opt_call', 2, Intersect(Unify(constant(True), interpreter.ret_variable), Unify(*variables_named(0,1))))  # opt_call(X,X).
+
+    res, sv, a1, a2, sname, snargs, alist = variables_named(*'abcdefg')
+
+    # res = *&opt_call(A1, 7).
+    rx = Intersect(BuildStructure('opt_call', sv, (a1, constant(7))), ReflectStructure(sv, sname, snargs, alist), Evaluate(dyna_system, res, sname, snargs, alist))
+
+    rr = run_optimizer(rx, (a1, a2, res))
+
+    # there should just be two unify expressions with constants
+    import ipdb; ipdb.set_trace()
+
+
+def test_optimizer4():
+    # the occurs check performed by the optimizer
+
+    a, b, c = variables_named(*'abc')
+
+    # X = s(s(X))
+    rx = Intersect(BuildStructure('s', a, (b,)), BuildStructure('s', b, (c,)))
+
+    rr = run_optimizer(rx, (a,b,c))
+
+    assert rr == Terminal(0)

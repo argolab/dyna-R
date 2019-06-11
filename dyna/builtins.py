@@ -225,7 +225,8 @@ dyna_system.define_term('>=', 2, gteq)
 # unions of variables across different branches.
 int_v = check_op('int', 1, lambda x: isinstance(x, int))
 float_v = check_op('float', 1, lambda x: isinstance(x, float))
-term_type = check_op('term_type', 1, lambda x: exec('raise NotImplementedError()'))
+from .terms import Term
+term_type = check_op('term_type', 1, lambda x: isinstance(x, Term))
 str_v = check_op('str', 1, lambda x: isinstance(x, str))
 bool_v = moded_op('bool', {
     (False, True): lambda a,b: (isinstance(b, bool), b),
@@ -244,7 +245,7 @@ dyna_system.define_term('term_type', 1, term_type)
 dyna_system.define_term('str', 1, str_v)
 dyna_system.define_term('bool', 1, bool_v)
 dyna_system.define_term('number', 1, number_v)
-dyna_system.define_term('primitive', 1, primitive_v)
+dyna_system.define_term('primitive', 1, primitive_v)  # anything that is not a term
 
 
 def imath_op(name, op, inverse):
@@ -331,38 +332,37 @@ class ArrayEinsum(RBaseType):
 ####################################################################################################
 # infered constraints
 
-if 0:
-    # THIS ISN'T WORKING ATM, just brainstorming this
-    dyna_system.define_infered(
-        intersect(int_v('v'), gteq('v', 'a'), lt('v', 'b')),
-        range_v('v', 'a', 'b'))
 
-    dyna_system.define_infered(
-        intersect(int_v('v'), gt('v', 'a'), lt('v', 'b')),
-        # then we need to add a new variable that is 1 greater than a for the range constraint as it normally includes the lower bound
-        intersect(add('a', constant(1), ret='_ap1'), range_v('v', '_ap1', 'b'))  # the `_` would indicate that this needs to allocate a new variable in this case
-    )
+dyna_system.define_infered(
+    intersect(int_v('v'), gteq('v', 'a'), lt('v', 'b')),
+    range_v('v', 'a', 'b'))
 
-    dyna_system.define_infered(
-        # a < b < c => a < c
-        intersect(lt('a', 'b'), lt('b', 'c')),
-        lt('a', 'c')
-    )
+dyna_system.define_infered(
+    intersect(int_v('v'), gt('v', 'a'), lt('v', 'b')),
+    # then we need to add a new variable that is 1 greater than a for the range constraint as it normally includes the lower bound
+    intersect(add('a', constant(1), ret='_ap1'), range_v('v', '_ap1', 'b'))  # the `_` would indicate that this needs to allocate a new variable in this case
+)
 
-    dyna_system.define_infered(
-        intersect(lt('a', 'b'), lt('b', 'a')),
-        Terminal(0)  # failure, there is no value such that a < b & b < a
-    )
+dyna_system.define_infered(
+    # a < b < c => a < c
+    intersect(lt('a', 'b'), lt('b', 'c')),
+    lt('a', 'c')
+)
 
-    dyna_system.define_infered(
-        intersect(lteq('a', 'b'), lteq('b', 'a')),
-        Unify('a', 'b')  # a <= b & b <= a  ==>  a == b
-    )
+dyna_system.define_infered(
+    intersect(lt('a', 'b'), lt('b', 'a')),
+    Terminal(0)  # failure, there is no value such that a < b & b < a
+)
 
-    dyna_system.define_infered(
-        lt('a', 'b'),
-        lteq('a', 'b')  # would like this to be able to use this to identify redudant constraints also, which means that we can delete stuff?
-    )
+dyna_system.define_infered(
+    intersect(lteq('a', 'b'), lteq('b', 'a')),
+    Unify('a', 'b')  # a <= b & b <= a  ==>  a == b
+)
+
+dyna_system.define_infered(
+    lt('a', 'b'),
+    lteq('a', 'b')  # would like this to be able to use this to identify redudant constraints also, which means that we can delete stuff?
+)
 
 
 # this needs to be able ot check if some constraint could have been valid, so if
@@ -371,12 +371,28 @@ if 0:
 # conditional branch way of including it
 
 
+# if one of the variables is bound as a constant, then we should be allowed to
+# just evaulate the constraint directly to see if it is true.
+
+dtypes = [int_v, float_v, term_type, str_v, bool_v]
+
+for a in dtypes:
+    for b in dtypes:
+        # for types that do not overlap, we are going to mark these as terminal
+        # up front, so we can just delete these branches
+        if a != b and (a not in (int_v, float_v) and b not in (int_v, float_v)):
+            dyna_system.define_infered(
+                intersect(a('a'), b('a')),
+                Terminal(0)
+            )
+
+
 
 ####################################################################################################
 # bultins that are defined in terms of other R-exprs, these should probably just
 # be defined in a prelude once there is some parser
 
-from .terms import BuildStructure
+from .terms import BuildStructure, Term
 
 # list_length(0, []).
 # list_length(L+1, [X|Xs]) :- list_length(L, Xs).
@@ -392,3 +408,15 @@ list_length = intersect(Unify(constant(True), ret_variable),  # set the "returne
                                    ))))
 
 dyna_system.define_term('list_length', 2, list_length)
+
+
+# prepend([], A, A).
+# prepend([X|Y], A, [X|B]) :- prepend(Y, A, B).
+append = intersect(Unify(constant(True), ret_variable),
+                    partition(variables_named(0,1,2),
+                              (intersect(Unify(constant(Term('nil', ())), VariableId(0)), Unify(VariableId(1), VariableId(2))),
+                               intersect(BuildStructure('.', VariableId(0), [VariableId('X'), VariableId('Y')]),
+                                         BuildStructure('.', VariableId(2), [VariableId('X'), VariableId('B')]),
+                                         dyna_system.call_term('append', 3)(VariableId('Y'), VariableId(1), VariableId('B')))
+                              )))
+dyna_system.define_term('append', 3, append)

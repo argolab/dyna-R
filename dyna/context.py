@@ -27,9 +27,11 @@ class SystemContext:
         # the memo tables that are wrapped around the terms.
         self.memoized_terms = {}
 
-        self.term_assumptions = {}#defaultdict(Assumption)
+        self.term_assumptions = {}
 
         self.agenda = Agenda()
+
+        self.infered_constraints = []  # going to want some matching expression against having multiple
 
         # where we fallback for pther defined
         self.parent = None
@@ -98,8 +100,7 @@ class SystemContext:
         self.invalidate_term_assumption(a)
 
     def define_infered(self, required :RBaseType, added :RBaseType):
-        raise NotImplementedError()
-        pass
+        self.infered_constraints.append((required, added))
 
     def call_term(self, name, arity) -> RBaseType:
         # this should return a method call to a given term.

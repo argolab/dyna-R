@@ -1,6 +1,5 @@
 from collections import defaultdict
 from typing import *
-from contextlib import contextmanager
 
 from .interpreter import *
 
@@ -23,6 +22,8 @@ class RStrctureInfo:
 
     conjunctive_constraints : Dict[Variable,List[RBaseType]]
 
+    all_constraints : Dict[Variable,List[RBaseType]]  # all constraints that match against a given expression
+
     alias_vars : Dict[Variable,Set[Variable]]
 
     exposed_variables : Set[Variable]
@@ -35,21 +36,25 @@ class RStrctureInfo:
         self.exposed_variables = exposed_variables
         self.frame = frame
 
-    @contextmanager
+
     def recurse(self, *, frame=None):
         # want to restore the state as this explores different children branches
         # this should also identify cases where we can rewrite to remove expressions
-        old_cojunctis = self.conjunctive_constraints.copy()
-        old_alias = self.alias_vars.copy()
-        old_frame = self.frame
-        if frame is not None:
-            self.frame = frame
-        try:
-            yield
-        finally:
-            self.conjunctive_constraints = old_cojunctis
-            self.alias_vars = old_alias
-            self.frame = old_frame
+
+        return RStrctureInfo(
+            conjunctive_constraints=dict((k, v.copy()) for k,v in self.conjunctive_constraints.items())
+            alias_vars=dict((k, v.copy()) for k,v in self.alias_vars.items()),
+            exposed_variables=self.exposed_variables,
+            frame=frame or self.frame)
+
+        # if frame is not None:
+        #     self.frame = frame
+        # try:
+        #     yield
+        # finally:
+        #     self.conjunctive_constraints = old_cojunctis
+        #     self.alias_vars = old_alias
+        #     self.frame = old_frame
 
     def get_constraints(self, var, typ):
         for c in conjunctive_constraints[var]:
@@ -57,11 +62,13 @@ class RStrctureInfo:
                 yield c
 
 
-optimizer = Visitor()
+def optimzer_aliased_vars(R, info):
+    # this should take the variables and perform renaming on the variables.
+    if info.alias_vars:
 
-# @optimizer.default
-# def optimzier_default(R, info):
-#     return R.rewrite(lambda x: optimizer(x, info))
+
+
+optimizer = Visitor()
 
 @optimizer.define(Partition)
 def optimzier_partition(R, info):
@@ -75,13 +82,15 @@ def optimzier_partition(R, info):
 
         # we are going to identify which conjunctive constraints are used here first
 
-        with info.recurse(frame=frame):
+        i2 = info.recurse(frame=frame)
 
-            # add in the conjunctive constraints to this expression
-            for var, cons in map_constraints_to_vars(get_intersecting_constraints(R)).items():
-                info.conjunctive_constraints[var] += cons
+        # add in the conjunctive constraints to this expression
+        for var, cons in map_constraints_to_vars(get_intersecting_constraints(R)).items():
+            i2.conjunctive_constraints[var] += cons
 
-            save(optimizer(R, info), frame)
+        rr = optimizer(R, i2)
+        # this should construct aliased variables so that we can handle cases where there are expressions which
+        save(rr, frame)
 
     # ???: do we want to run the simplify before we get the callback?  That
     # could delete some constraint that we might be able to use for pattern
@@ -93,7 +102,18 @@ def optimzier_partition(R, info):
 
 @optimizer.define(Unify)
 def optimizer_unify(R, info):
-    raise NotImplementedError()
+    # in this case, we want to mark these variables as unified together?
+    # or can we
+
+    info.alias_vars[R.v1].add(R.v2)
+    info.alias_vars[R.v2].add(R.v1)
+
+    if (len(info.all_constraints[R.v1]) == 1 and R.v1 not in info.exposed_variables) or (len(info.all_constraints[R.v2]) == 1 and R.v2 not in info.exposed_variables):
+        import ipdb; ipdb.set_trace()
+        # just delete self, there is no use for this additional variable
+        return Terminal(1)
+
+    return R
 
 
 def run_optimizer(R, exposed_variables):
@@ -105,30 +125,33 @@ def run_optimizer(R, exposed_variables):
 
     done = False
     exposed_constants = []
+    frame = Frame()
+    frame.memo_reads = False  # prevent memo tables from being read at this step so optimizations are not dependant
     while not done:
         last_R = R
-        frame = Frame()
-        frame.memo_reads = False  # prevent memo tables from being read at this step so optimizations are not dependant
-        R = saturate(R, frame)
 
-        if frame:
-            # then there are constants that we can embed in the program rather than having to perform reads on the frame
-            def rn(x):
-                if x.isBound(frame):
-                    return constant(x.getValue(frame))
-                return x
-            R = R.rename_vars(rn)
-            for var in exposed_variables:
-                if var.isBound(frame):
-                    exposed_constants.append(Unify(constant(var.getValue(frame)), var))
+        R = simplify(R, frame)
+
 
         info = RStrctureInfo(exposed_variables=exposed_variables,frame=frame)
         info.conjunctive_constraints = map_constraints_to_vars(get_intersecting_constraints(R))
+        info.all_constraints = map_constraints_to_vars(R.all_children())
 
         R = optimizer(R, info)
 
         if R == last_R:
             break
+
+    if frame:
+        # then there are constants that we can embed in the program rather than having to perform reads on the frame
+        def rn(x):
+            if x.isBound(frame):
+                return constant(x.getValue(frame))
+            return x
+        R = R.rename_vars(rn)
+        for var in exposed_variables:
+            if var.isBound(frame):
+                exposed_constants.append(Unify(constant(var.getValue(frame)), var))
 
     R = intersect(*exposed_constants, R)
 
