@@ -373,3 +373,36 @@ def test_evaluate():
     rr = simplify(e, frame)
 
     assert rr == Terminal(0)
+
+
+def test_merge_rules():
+
+    z, rv = variables_named(0, 'RR')
+
+    agg_op = AggregatorOpImpl(lambda a,b: a+b)
+
+
+    r1 = Aggregator(interpreter.ret_variable, (z,), rv, agg_op,
+                    Partition((z, rv),
+                              [Unify(z, rv)]))
+
+    dyna_system.add_to_term('merge_rule', 1, r1)
+
+    r2 = Aggregator(interpreter.ret_variable, (z,), rv, agg_op,
+                    Partition((z, rv),
+                              [add(constant(1), z, ret=rv)]))
+
+
+    dyna_system.add_to_term('merge_rule', 1, r2)
+
+    mc = dyna_system.call_term('merge_rule', 1)
+    frame = Frame()
+    z.setValue(frame, 3)
+
+    rr = simplify(mc, frame)
+
+    assert interpreter.ret_variable.getValue(frame) == 7
+
+
+def test_optimizer():
+    fibo = run_optimizer(fib, variables_named(0,interpreter.ret_variable))

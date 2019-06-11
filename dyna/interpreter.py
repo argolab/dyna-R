@@ -79,6 +79,19 @@ class RBaseType:
             return r
         return self.rename_vars(rmap)
 
+    def weak_equiv(self):
+        # try and make the expressions the same by renaming variables in a
+        # consistent way.  ideally, we can pattern match against these
+        # expressions more easily later?
+        vs = set()
+        vl = []
+        for var in self.all_vars():
+            if not isinstance(var, ConstantVariable) and var not in vs:
+                vl.append(var)
+        rm = dict(zip(vl, variables_named(*range(len(vl)))))
+        return self.rename_vars(lambda x: rm.get(x,x))
+
+
     def __call__(self, *args, ret=None):
         # TODO: this needs to check that we are not calling this with more arguments than are present in the code
         # otherwise that will just be a subtle bug that is hard to detect..
@@ -384,12 +397,13 @@ class Visitor:
         return f
     def default(self, method):
         self._default = method
-    def delay(self, typ):
-        # this should basically be used for external calls that this rewrite can
-        # not see into.  If these are delayed rewrites, then we are going to
-        # want to get all of the referenced expressions.
-        # if there is some rewrite that is being applied to an operation, then we can
-        raise NotImplementedError()
+
+    # def delay(self, typ):
+    #     # this should basically be used for external calls that this rewrite can
+    #     # not see into.  If these are delayed rewrites, then we are going to
+    #     # want to get all of the referenced expressions.
+    #     # if there is some rewrite that is being applied to an operation, then we can
+    #     raise NotImplementedError()
 
     def __call__(self, R :RBaseType, *args, **kwargs):
         res = self.lookup(R)(R, *args, **kwargs)
@@ -410,6 +424,33 @@ class Visitor:
     def lookup(self, R):
         return self._methods.get(type(R), self._default)
 
+
+class RefinedVisitor(Visitor):
+    def __init__(self, track_source=True):
+        super().__init__(track_source)
+        self._refined_methods = {}
+    def define_refined(self, refined):
+        # for things like moded op, there are lots of expressions which are
+        # under the same operator, but we might want to match against specific
+        # patterns.  So we attempt to normalize the varible names and then use
+        # that as an equality matching on these expressions
+        assert isinstance(refined, RBaseType)
+        rf = refined.weak_equiv()
+
+        def f(method):
+            self._refined_methods.setdefault(type(rf), {})[rf] = method
+            return method
+        return f
+    def lookup(self, R):
+        # don't make this virtual in C++....
+        typ = type(R)
+        if self._refined_methods:
+            z = self._refined_methods.get(typ)
+            if z is not None:
+                rf = z.get(R.weak_equiv())
+                if rf is not None:
+                    return rf
+        return self._methods.get(typ, self._default)
 
 
 class SimplifyVisitor(Visitor):
@@ -632,7 +673,7 @@ def partition(unioned_vars, children):
 
 
 @simplify.define(Partition)
-def simplify_partition(self :Partition, frame: Frame, *, map_function=None, reduce_to_single=True):  # TODO: better name than map_function???
+def simplify_partition(self :Partition, frame: Frame, *, map_function=None, reduce_to_single=True, simplify_rexprs=True):  # TODO: better name than map_function???
     incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
     incoming_values = [v.getValue(frame) for v in self._unioned_vars]
 
@@ -677,7 +718,10 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
                 var.setValue(frame, val)
 
         for Rexpr in Rexprs:
-            res = simplify(Rexpr, frame)
+            if simplify_rexprs:
+                res = simplify(Rexpr, frame)
+            else:
+                res = Rexpr
             save(res, frame)
 
             for var, imode, val in zip(self._unioned_vars, incoming_mode, grounds):

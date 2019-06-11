@@ -234,11 +234,17 @@ bool_v = moded_op('bool', {
 })
 
 
+# just a partition over the two different identifies for these expressions
+number_v = partition((VariableId(0), ret_variable), (int_v, float_v))
+primitive_v = partition((VariableId(0), ret_variable), (int_v, float_v, str_v, bool_v))
+
 dyna_system.define_term('int', 1, int_v)
 dyna_system.define_term('float', 1, float_v)
 dyna_system.define_term('term_type', 1, term_type)
 dyna_system.define_term('str', 1, str_v)
 dyna_system.define_term('bool', 1, bool_v)
+dyna_system.define_term('number', 1, number_v)
+dyna_system.define_term('primitive', 1, primitive_v)
 
 
 def imath_op(name, op, inverse):

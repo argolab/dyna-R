@@ -67,23 +67,53 @@ class SystemContext:
         # check that the aggregator is the same and the combine the expressions
         # together anything that depends on the value of the expression will
         # need to be invalided.
-        assert False
+        a = (name, arity)
+        if a not in self.terms_as_defined:
+            self.terms_as_defined[a] = rexpr
+        else:
+            # then we need to combine these expressions together
+            prev = self.terms_as_defined[a]
+            # there should be an aggregator on the outer level, so we first check that, and it doesn't match then we are going to raise an error
+            if not isinstance(prev, Aggregator) or not isinstance(rexpr, Aggregator) or prev.aggregator != rexpr.aggregator:
+                raise RuntimeError("mismatch aggregator")
+            # we are giong to rewrite the new expression to match the current expression
+            nm = {}
+            nm.update(dict(zip(rexpr.head_vars, prev.head_vars)))
+            nm[rexpr.result] = prev.result
+            nm[rexpr.body_res] = prev.body_res
+
+            nr = rexpr.rename_vars(lambda x: nm.get(x,x))
+
+            # merge the branches of the partition
+            assert isinstance(prev.body, Partition) and isinstance(nr.body, Partition)
+            assert prev.body._unioned_vars == nr.body._unioned_vars  # check that the orders are the same, otherwise this would require a more complicated merge
+
+            # this is going to modify the branches of the currently stored body rather than create something new...sigh, I guess we also do this with the memos
+
+            mt = prev.body._children
+            for key, vals in nr.body._children.items():
+                mt.setdefault(key, []).extend(vals)
+
+        # track that this expression has changed, which can cause things to get recomputed/propagated to the agenda etc
+        self.invalidate_term_assumption(a)
 
     def define_infered(self, required :RBaseType, added :RBaseType):
-        assert False
+        raise NotImplementedError()
         pass
 
     def call_term(self, name, arity) -> RBaseType:
         # this should return a method call to a given term.
-        # this should be lazy.  In the case that this instead determines that
+        # this should be lazy.
 
         m = {x:x for x in variables_named(*range(arity))}
         m[ret_variable] = ret_variable
         return CallTerm(m, self, (name, arity))
 
     def lookup_term(self, name):
-        # if this isn't defined, then we can delay, or report an error to the
-        # user that they are trying to use a method that isn't defined.
+        # if a term isn't defined, we are going to return Terminal(0) as there
+        # is nothing that could have unified with the given expression.  we do
+        # included tracking with the assumption, so if it later defined, we are
+        # able to change the expression.
 
         if name in self.terms_as_rewritten:
             r = self.terms_as_rewritten[name]
