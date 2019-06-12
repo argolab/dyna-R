@@ -872,6 +872,7 @@ def getPartitions_partition(self :Partition, frame):
 
 class Unify(RBaseType):
     def __init__(self, v1, v2):
+        super().__init__()
         if v2 < v1:
             v2, v1 = v1, v2
         self.v1 = v1
@@ -936,6 +937,7 @@ class AggregatorOpImpl(AggregatorOpBase):
 class Aggregator(RBaseType):
 
     def __init__(self, result: Variable, head_vars: Tuple[Variable], body_res: Variable, aggregator :AggregatorOpBase, body :RBaseType):
+        super().__init__()
         self.result = result
         self.body_res = body_res
         self.body = body

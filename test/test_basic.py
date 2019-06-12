@@ -419,7 +419,7 @@ def test_optimizer2():
 
     rr = run_optimizer(rx, (a1, a2, res))
 
-    import ipdb; ipdb.set_trace()
+    assert set(rr._children) == set((Unify(constant(True), res), Unify(a1,a2)))
 
 
 def test_optimizer3():
@@ -434,17 +434,17 @@ def test_optimizer3():
     rr = run_optimizer(rx, (a1, a2, res))
 
     # there should just be two unify expressions with constants
-    import ipdb; ipdb.set_trace()
+    assert set(rr._children) == set((Unify(constant(True), res), Unify(a1,constant(7))))
 
 
 def test_optimizer4():
     # the occurs check performed by the optimizer
 
-    a, b, c = variables_named(*'abc')
+    a, b = variables_named(*'ab')
 
     # X = s(s(X))
-    rx = Intersect(BuildStructure('s', a, (b,)), BuildStructure('s', b, (c,)))
+    rx = Intersect(BuildStructure('s', a, (b,)), BuildStructure('s', b, (a,)))
 
-    rr = run_optimizer(rx, (a,b,c))
+    rr = run_optimizer(rx, (a,b))
 
     assert rr == Terminal(0)

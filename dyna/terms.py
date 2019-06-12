@@ -36,6 +36,11 @@ class Term:
              len(self.arguments) == len(other.arguments) and
              all(a == b for a,b in zip(self.arguments, other.arguments)))
 
+    def __lt__(self, other):
+        if not isinstance(other, Term):
+            return False
+        return self.__hashcache < other.__hashcache  # we just need some order on these
+
     def __hash__(self):
         return self.__hashcache
 
@@ -103,14 +108,19 @@ def simplify_buildStructure(self, frame):
 
     return self
 
+
 @optimizer.define(BuildStructure)
 def optimizer_buildStructure(self, info):
 
     ac = info.all_constraints[self.result]
 
-    if len(ac) == 1:
+    if len(ac) == 1 and not self.result.isBound(info.frame):
+        #assert not self.result.isBound(info.frame)
+        assert ac[0] is self
+        assert info.conjunctive_constraints[self.result] == ac
         # then we are the only constraint that is this result variable, so we
         # are just going to delete ourselves as we are not needed anymore
+
         return Terminal(1)
 
     cc = info.conjunctive_constraints[self.result]
@@ -118,7 +128,7 @@ def optimizer_buildStructure(self, info):
     for c in cc:
         if c is self:
             break
-        if isinstance(c, BuildStructure):
+        if isinstance(c, BuildStructure) and c.result == self.result:  # only unified if the same result variable
             # this should unify the variables that are arguments, and just delete itself
             if c.name != self.name or len(c.arguments) != len(self.arguments):
                 return Terminal(0)  # unification fails in this case
@@ -152,7 +162,7 @@ class ReflectStructure(RBaseType):
 
     @property
     def vars(self):
-        return (self.result, self.num_args, self.args_list)
+        return (self.result, self.name, self.num_args, self.args_list)
 
     def rename_vars(self, remap):
         return ReflectStructure(
@@ -237,7 +247,7 @@ def optimzier_reflectstructure(self, info):
             self.num_args.setValue(info.frame, len(c.arguments))
             return reflect_buildMatch(self, c.name, len(c.arguments))
 
-    # we might also want to do something about the arguments list lengths in this case
+    # we might also want to do something about the arguments list lengths in this case?
 
     return self
 

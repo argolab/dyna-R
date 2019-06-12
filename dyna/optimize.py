@@ -38,37 +38,82 @@ class RStrctureInfo:
 
 
     def recurse(self, *, frame=None):
-        # want to restore the state as this explores different children branches
-        # this should also identify cases where we can rewrite to remove expressions
-
         return RStrctureInfo(
-            conjunctive_constraints=dict((k, v.copy()) for k,v in self.conjunctive_constraints.items())
+            conjunctive_constraints=dict((k, v.copy()) for k,v in self.conjunctive_constraints.items()),
             alias_vars=dict((k, v.copy()) for k,v in self.alias_vars.items()),
             exposed_variables=self.exposed_variables,
             frame=frame or self.frame)
-
-        # if frame is not None:
-        #     self.frame = frame
-        # try:
-        #     yield
-        # finally:
-        #     self.conjunctive_constraints = old_cojunctis
-        #     self.alias_vars = old_alias
-        #     self.frame = old_frame
 
     def get_constraints(self, var, typ):
         for c in conjunctive_constraints[var]:
             if isinstance(c, typ):
                 yield c
 
+    def replace(self, old_R, R):
+        if old_R != R:
+            # TODO: handle the old_R and delete it from the tracking
 
-def optimzer_aliased_vars(R, info):
+            # for when new expressions are generated, we want to track that which will allow for this
+            for var, cons in map_constraints_to_vars(get_intersecting_constraints(R)).items():
+                self.conjunctive_constraints[var] += cons
+            for var, cons in map_constraints_to_vars(R.all_children()).items():
+                self.all_constraints[var] += cons
+
+
+def optimizer_aliased_vars(R, info):
     # this should take the variables and perform renaming on the variables.
     if info.alias_vars:
+        # then we are going to want to determine if there are more variables at
+        # the outer scope which are referencing these variables, which will
+        # inform us if we can just delete these variables.  In this case, we
+        # want to determine which expressions are
 
+        alias_vars = info.alias_vars
 
+        for k, v in alias_vars.items():
+            v.add(k)  # add the var to its own collection
 
-optimizer = Visitor()
+        exposed = set(info.exposed_variables)
+
+        done_progagate = False
+        while not done_progagate:
+            done_progagate = True
+            for var in alias_vars:
+                for v in alias_vars[var]:
+                    if alias_vars[var] != alias_vars[v]:
+                        r = alias_vars[var] | alias_vars[v]
+                        alias_vars[v] = r
+                        alias_vars[var] = r
+                        done_progagate = False
+
+        # if there are any exposed variables in this expression, then we want to
+        # use those instead of these variables we are going to have to add in
+        # these variables.  Then we might be able to delete some of the
+        # variables from the program
+
+        for var in alias_vars:
+            if alias_vars[var] & exposed:  # then there is something that is one of the exposed variables
+                alias_vars[var] &= exposed
+
+        renames = dict((a,b) for a,b in ((k, min(vs)) for k, vs in info.alias_vars.items()) if a != b)
+
+        if renames:
+            # then we are going to rename these variables, and then add in unify constraints which could be later delated if considered save
+            assert all(n not in renames for n in info.exposed_variables)
+
+            R = R.rename_vars(lambda x: renames.get(x,x))
+            R = intersect(*(Unify(k, v) for k,v in renames.items()), R)
+            return R
+
+    return R
+
+class OptimizeVisitor(Visitor):
+    def __call__(self, R, info, *args, **kwargs):
+        rr = super().__call__(R, info, *args, **kwargs)
+        info.replace(R, rr)
+        return rr
+
+optimizer = OptimizeVisitor()
 
 @optimizer.define(Partition)
 def optimzier_partition(R, info):
@@ -90,6 +135,8 @@ def optimzier_partition(R, info):
 
         rr = optimizer(R, i2)
         # this should construct aliased variables so that we can handle cases where there are expressions which
+
+        rr = optimizer_aliased_vars(R, info)
         save(rr, frame)
 
     # ???: do we want to run the simplify before we get the callback?  That
@@ -97,21 +144,22 @@ def optimzier_partition(R, info):
     # matching.  But I suppose that this tracks that there are
     res = simplify(R, info.frame, map_function=opt_mapper)
 
+
     return res
 
 
 @optimizer.define(Unify)
 def optimizer_unify(R, info):
-    # in this case, we want to mark these variables as unified together?
-    # or can we
+    # mark that these variables are unified together.  Also look if we can
+    # delete this constraint, essentially deleting not needed variables from our
+    # expression
+
+    if (len(info.all_constraints[R.v1]) == 1 or len(info.all_constraints[R.v2]) == 1) and not (R.v1 in info.exposed_variables or R.v2 in info.exposed_variables) and not (R.v1.isBound(info.frame) or R.v2.isBound(info.frame)):
+        # just delete self, there is no use for this additional variable
+        return Terminal(1)
 
     info.alias_vars[R.v1].add(R.v2)
     info.alias_vars[R.v2].add(R.v1)
-
-    if (len(info.all_constraints[R.v1]) == 1 and R.v1 not in info.exposed_variables) or (len(info.all_constraints[R.v2]) == 1 and R.v2 not in info.exposed_variables):
-        import ipdb; ipdb.set_trace()
-        # just delete self, there is no use for this additional variable
-        return Terminal(1)
 
     return R
 
@@ -130,6 +178,10 @@ def run_optimizer(R, exposed_variables):
     while not done:
         last_R = R
 
+        # print(R)
+        # print(frame)
+        # print('-'*50)
+
         R = simplify(R, frame)
 
 
@@ -138,6 +190,8 @@ def run_optimizer(R, exposed_variables):
         info.all_constraints = map_constraints_to_vars(R.all_children())
 
         R = optimizer(R, info)
+
+        R = optimizer_aliased_vars(R, info)
 
         if R == last_R:
             break
