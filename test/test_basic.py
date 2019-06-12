@@ -424,12 +424,12 @@ def test_optimizer2():
 
 def test_optimizer3():
 
-    dyna_system.define_term('opt_call', 2, Intersect(Unify(constant(True), interpreter.ret_variable), Unify(*variables_named(0,1))))  # opt_call(X,X).
+    dyna_system.define_term('opt_call2', 2, Intersect(Unify(constant(True), interpreter.ret_variable), Unify(*variables_named(0,1))))  # opt_call(X,X).
 
     res, sv, a1, a2, sname, snargs, alist = variables_named(*'abcdefg')
 
     # res = *&opt_call(A1, 7).
-    rx = Intersect(BuildStructure('opt_call', sv, (a1, constant(7))), ReflectStructure(sv, sname, snargs, alist), Evaluate(dyna_system, res, sname, snargs, alist))
+    rx = Intersect(BuildStructure('opt_call2', sv, (a1, constant(7))), ReflectStructure(sv, sname, snargs, alist), Evaluate(dyna_system, res, sname, snargs, alist))
 
     rr = run_optimizer(rx, (a1, a2, res))
 

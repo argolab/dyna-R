@@ -39,8 +39,8 @@ class RStrctureInfo:
 
     def recurse(self, *, frame=None):
         return RStrctureInfo(
-            conjunctive_constraints=dict((k, v.copy()) for k,v in self.conjunctive_constraints.items()),
-            alias_vars=dict((k, v.copy()) for k,v in self.alias_vars.items()),
+            conjunctive_constraints=defaultdict(list, ((k, v.copy()) for k,v in self.conjunctive_constraints.items())),
+            alias_vars=defaultdict(set, ((k, v.copy()) for k,v in self.alias_vars.items())),
             exposed_variables=self.exposed_variables,
             frame=frame or self.frame)
 
@@ -99,7 +99,7 @@ def optimizer_aliased_vars(R, info):
 
         if renames:
             # then we are going to rename these variables, and then add in unify constraints which could be later delated if considered save
-            assert all(n not in renames for n in info.exposed_variables)
+            #assert all(n not in renames for n in info.exposed_variables)
 
             R = R.rename_vars(lambda x: renames.get(x,x))
             R = intersect(*(Unify(k, v) for k,v in renames.items()), R)
@@ -154,7 +154,10 @@ def optimizer_unify(R, info):
     # delete this constraint, essentially deleting not needed variables from our
     # expression
 
-    if (len(info.all_constraints[R.v1]) == 1 or len(info.all_constraints[R.v2]) == 1) and not (R.v1 in info.exposed_variables or R.v2 in info.exposed_variables) and not (R.v1.isBound(info.frame) or R.v2.isBound(info.frame)):
+
+    if (((len(info.all_constraints[R.v1]) == 1 and R.v1 not in info.exposed_variables) or
+        (len(info.all_constraints[R.v2]) == 1 and R.v2 not in info.exposed_variables))
+        and not (R.v1.isBound(info.frame) or R.v2.isBound(info.frame))):
         # just delete self, there is no use for this additional variable
         return Terminal(1)
 

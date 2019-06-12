@@ -137,7 +137,28 @@ def optimizer_buildStructure(self, info):
                 const.append(Unify(a,b))
             return intersect(*const)
 
+    # the occurs check
+    if self.result in buildStructure_determine_constructed_from(self.result, info, {}):
+        # the occurs check fails
+        return Terminal(0)
+
+
     return self
+
+
+def buildStructure_determine_constructed_from(variable, info, mapping):
+    if isinstance(variable, ConstantVariable):
+        return set()
+    if variable in mapping:
+        return mapping[variable]
+    mapping[variable] = set((variable,))
+    ns = set()
+    for c in info.conjunctive_constraints[variable]:
+        if isinstance(c, BuildStructure) and c.result == variable:
+            for a in c.arguments:
+                ns |= buildStructure_determine_constructed_from(a, info, mapping)
+    mapping[variable] = ns
+    return ns
 
 
 
