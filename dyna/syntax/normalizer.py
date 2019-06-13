@@ -27,7 +27,7 @@ def normalize(x):
     def genvar():
         nonlocal n
         n += 1
-        return FVar(f'$V{n}')
+        return VariableId(f'$V{n}')
 
     def run(x, unif=False):
         assert not isinstance(x, Rule)
@@ -64,16 +64,18 @@ def normalize(x):
             return a
 
         else:
-            v = VariableId()   # generate a new variable name.
+            v = genvar()   # generate a new variable name.
             x = x.apply(run)
 
             if unif:
+                fn = x.fn.getValue(Frame())
                 xs.append(
-                    BuildStructure(x.fn, arguments = x.args, result = v)
+                    BuildStructure(fn, arguments = x.args, result = v)
                 )
             else:
+                fn = x.fn.getValue(Frame())
                 xs.append(
-                    dyna_system.call_term(x.fn.getValue(Frame()), x.arity)(*x.args, ret = v)
+                    dyna_system.call_term(fn.getValue(Frame()), x.arity)(*x.args, ret = v)
                 )
 
             return v
@@ -219,56 +221,110 @@ def all_fvars_outside(ctx, x):
         for y in x:
             yield from all_fvars_outside(ctx, y)
 
+from dyna import AggregatorOpImpl
+AGGR = {
+    '=': AggregatorOpImpl(lambda a,b: 1/0),   # should never combine
+    '+=': AggregatorOpImpl(lambda a,b: a+b),
+    'max=': AggregatorOpImpl(max),
+    'min=': AggregatorOpImpl(min),
+}
 
-# TODO: these are currently just eye-ball tests. Need to make them pass/fail.
 def test():
 
-    x = normalize(term('f(X)'))
-    print(x)
+#    x = normalize(term('f(X)'))
+#    print(x)
 
-    x = normalize(term('f(X), g(X)'))
-    print(x)
+#    x = normalize(term('f(X), g(X)'))
+#    print(x)
 
-    [r] = run_parser('goal += f(X) * g(X).')
-    x = normalize(r)
-    print(x)
+#    [r] = run_parser('goal += f(X) * g(X).')
+#    x = normalize(r)
+#    print(x)
 
 
     # REFERENCE: Manual fib program.
     from dyna.builtins import gteq, lteq, sub, add
     from dyna import interpreter, M, Frame, constant, Unify, Partition, \
         variables_named, BuildStructure, MemoContainer, Intersect, \
-        Terminal, Term, context, Aggregator, AggregatorOpImpl
+        Terminal, Term, context, Aggregator
 
-    ret_variable = interpreter.ret_variable
+    if 0:
+        ret_variable = interpreter.ret_variable
 
-    fib = Partition(variables_named(0, ret_variable),
-                    (# fib(0) = 0
-                     Intersect(Unify(constant(0), VariableId(0)), Unify(constant(0), ret_variable)),
+        fib = Partition(variables_named(0, ret_variable),
+                        (# fib(0) = 0
+                         Intersect(Unify(constant(0), VariableId(0)), Unify(constant(0), ret_variable)),
 
-                     # fib(1) = 1
-                     Intersect(Unify(constant(1), VariableId(0)), Unify(constant(1), ret_variable)),
+                         # fib(1) = 1
+                         Intersect(Unify(constant(1), VariableId(0)), Unify(constant(1), ret_variable)),
 
-                     # fib(X) = X >= 2, X <= 150, fib(X-1) + fib(X-2).
-                     Intersect(gteq(VariableId(0), constant(2)), lteq(VariableId(0), constant(150)),
-                               sub(VariableId(0), constant(1), ret=VariableId('Xm1')),
-                               sub(VariableId(0), constant(2), ret=VariableId('Xm2')),
-                               dyna_system.call_term('fib', 1)(VariableId('Xm1'), ret=VariableId('F1')),
-                               dyna_system.call_term('fib', 1)(VariableId('Xm2'), ret=VariableId('F2')),
-                               add(VariableId('F1'), VariableId('F2'), ret=ret_variable)
-                     )))
-    dyna_system.define_term('fib', 1, fib)
-    print(fib)
+                         # fib(X) = X >= 2, X <= 150, fib(X-1) + fib(X-2).
+                         Intersect(gteq(VariableId(0), constant(2)), lteq(VariableId(0), constant(150)),
+                                   sub(VariableId(0), constant(1), ret=VariableId('Xm1')),
+                                   sub(VariableId(0), constant(2), ret=VariableId('Xm2')),
+                                   dyna_system.call_term('fib', 1)(VariableId('Xm1'), ret=VariableId('F1')),
+                                   dyna_system.call_term('fib', 1)(VariableId('Xm2'), ret=VariableId('F2')),
+                                   add(VariableId('F1'), VariableId('F2'), ret=ret_variable)
+                         )))
+        dyna_system.define_term('fib', 1, fib)
+#        print(fib)
 
 
     for x in run_parser("""
     fib(0) = 1.
-    fib(1) = 1.
-    fib(N) = fib(N-1) + fib(N-2) for N > 1.
+%    fib(1) = 1.
+%    fib(N) = fib(N-1) + fib(N-2) for N > 1, N < 150.
     """):
         print()
         print(colors.green % 'parsed:', x)
-        print(colors.green % 'normed:', normalize(x))
+
+        # The "direct" translation of Dyna into R-exprs will create named calls
+        # for each distinct functor/arity
+
+        r = normalize(x)
+
+        # patch-in my return variable with the expected return variable
+        head = None
+        for s in r.sides:
+            # grab build structure operation that corresponds to the head of the rule
+            if isinstance(s, BuildStructure) and s.result == r.head:
+                head = s
+        assert head is not None
+        r.sides.remove(head)
+
+
+        argvars = [Unify(VariableId(i), a) for i, a in enumerate(head.arguments)]
+
+        body = interpreter.intersect(
+            *argvars,
+            *r.sides
+        )
+
+        arity = len(head.arguments)
+        args = [VariableId(i) for i in range(arity)]
+
+        rule = Aggregator(interpreter.ret_variable,
+                          args,
+                          r.value,         # inner return; value being aggregated
+                          AGGR[r.aggr],
+                          Partition((*args, r.value), [body]))
+
+        print(colors.green % 'normed:', body)
+
+        dyna_system.add_to_term(head.name, arity, rule)
+
+
+    fib_call = dyna_system.call_term('fib', 1)
+
+    frame = Frame()
+    frame[0] = 0     # $0 = 0
+
+    from dyna import saturate
+    rr = saturate(fib_call, frame)
+
+    assert rr == Terminal(1)
+    assert interpreter.ret_variable.getValue(frame) == 1
+    print('yay!')
 
 
 if __name__ == '__main__':
