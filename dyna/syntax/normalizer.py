@@ -272,7 +272,7 @@ def test():
 
     for x in run_parser("""
     fib(0) = 1.
-%    fib(1) = 1.
+    fib(1) = 1.
 %    fib(N) = fib(N-1) + fib(N-2) for N > 1, N < 150.
     """):
         print()
