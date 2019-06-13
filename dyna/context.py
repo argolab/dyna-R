@@ -1,4 +1,3 @@
-
 # this file should probably be renamed to something like dynabase or something,
 # it is holding the references to the different terms that are defined.
 
@@ -121,8 +120,10 @@ class SystemContext:
         elif name in self.terms_as_defined:
             r = self.terms_as_defined[name]
         elif self.parent:
-            r = parent.lookup_term(name)
+            r = self.parent.lookup_term(name)
         else:
+            from dyna.syntax.util import colors
+            print(colors.light.red % 'lookup failed', name)
             r = Terminal(0)  # this should probably be an error or something so that we can identify that this method doesn't exit
 
         # wrapped the returned result in an assumption so we can track if the

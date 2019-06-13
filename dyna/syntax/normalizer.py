@@ -60,7 +60,8 @@ def normalize(x):
                 raise NotImplementedError('indirect evaluation not yet supported')
 
             a = run(True)
-            xs.append(Term('=', run(v), run(k)))
+            xs.append(Unify(run(v), run(k)))
+
             return a
 
         else:
@@ -229,6 +230,49 @@ AGGR = {
     'min=': AggregatorOpImpl(min),
 }
 
+
+from dyna import Aggregator, Unify, interpreter, Partition
+
+def add_rule(x):
+    print()
+    print(colors.green % 'parsed:', x)
+
+    # The "direct" translation of Dyna into R-exprs will create named calls
+    # for each distinct functor/arity
+
+    r = normalize(x)
+
+    # patch-in my return variable with the expected return variable
+    head = None
+    for s in r.sides:
+        # grab build structure operation that corresponds to the head of the rule
+        if isinstance(s, BuildStructure) and s.result == r.head:
+            head = s
+    assert head is not None
+    r.sides.remove(head)
+
+
+    argvars = [Unify(VariableId(i), a) for i, a in enumerate(head.arguments)]
+
+    body = interpreter.intersect(
+        *argvars,
+        *r.sides
+    )
+
+    arity = len(head.arguments)
+    args = [VariableId(i) for i in range(arity)]
+
+    rule = Aggregator(interpreter.ret_variable,
+                      args,
+                      r.value,         # inner return; value being aggregated
+                      AGGR[r.aggr],
+                      Partition((*args, r.value), [body]))
+
+    print(colors.green % 'normed:', body)
+
+    dyna_system.add_to_term(head.name, arity, rule)
+
+
 def test():
 
 #    x = normalize(term('f(X)'))
@@ -242,79 +286,18 @@ def test():
 #    print(x)
 
 
-    # REFERENCE: Manual fib program.
-    from dyna.builtins import gteq, lteq, sub, add
-    from dyna import interpreter, M, Frame, constant, Unify, Partition, \
-        variables_named, BuildStructure, MemoContainer, Intersect, \
-        Terminal, Term, context, Aggregator
-
-    if 0:
-        ret_variable = interpreter.ret_variable
-
-        fib = Partition(variables_named(0, ret_variable),
-                        (# fib(0) = 0
-                         Intersect(Unify(constant(0), VariableId(0)), Unify(constant(0), ret_variable)),
-
-                         # fib(1) = 1
-                         Intersect(Unify(constant(1), VariableId(0)), Unify(constant(1), ret_variable)),
-
-                         # fib(X) = X >= 2, X <= 150, fib(X-1) + fib(X-2).
-                         Intersect(gteq(VariableId(0), constant(2)), lteq(VariableId(0), constant(150)),
-                                   sub(VariableId(0), constant(1), ret=VariableId('Xm1')),
-                                   sub(VariableId(0), constant(2), ret=VariableId('Xm2')),
-                                   dyna_system.call_term('fib', 1)(VariableId('Xm1'), ret=VariableId('F1')),
-                                   dyna_system.call_term('fib', 1)(VariableId('Xm2'), ret=VariableId('F2')),
-                                   add(VariableId('F1'), VariableId('F2'), ret=ret_variable)
-                         )))
-        dyna_system.define_term('fib', 1, fib)
-#        print(fib)
-
 
     for x in run_parser("""
     fib(0) = 1.
     fib(1) = 1.
-    fib(N) = fib(N-1) + fib(N-2) for N > 1, N < 150.
+    fib(N) = fib(N-1) + fib(N-2) for N > 1, N <= 150.
     """):
-        print()
-        print(colors.green % 'parsed:', x)
+        add_rule(x)
 
-        # The "direct" translation of Dyna into R-exprs will create named calls
-        # for each distinct functor/arity
-
-        r = normalize(x)
-
-        # patch-in my return variable with the expected return variable
-        head = None
-        for s in r.sides:
-            # grab build structure operation that corresponds to the head of the rule
-            if isinstance(s, BuildStructure) and s.result == r.head:
-                head = s
-        assert head is not None
-        r.sides.remove(head)
+    # TODO: create user_query normalizer that automates all frame stuff.
 
 
-        argvars = [Unify(VariableId(i), a) for i, a in enumerate(head.arguments)]
-
-        body = interpreter.intersect(
-            *argvars,
-            *r.sides
-        )
-
-        arity = len(head.arguments)
-        args = [VariableId(i) for i in range(arity)]
-
-        rule = Aggregator(interpreter.ret_variable,
-                          args,
-                          r.value,         # inner return; value being aggregated
-                          AGGR[r.aggr],
-                          Partition((*args, r.value), [body]))
-
-        print(colors.green % 'normed:', body)
-
-        dyna_system.add_to_term(head.name, arity, rule)
-
-
-    # TODO: create user_query normalizer that automates this stuff
+    from dyna import Terminal
 
     # query `fib(0)`
     fib_call = dyna_system.call_term('fib', 1)
@@ -324,10 +307,14 @@ def test():
     assert rr == Terminal(1)
     assert interpreter.ret_variable.getValue(frame) == 1
 
+    print('fib(0)', colors.green % 'ok')
+    print()
+
     # query `fib(5)`
     frame = Frame(); frame[0] = 5     # $0 = 0
 
     rr = saturate(fib_call, frame)
+
     assert rr == Terminal(1), rr
     got = interpreter.ret_variable.getValue(frame)
     print(got)

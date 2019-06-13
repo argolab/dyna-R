@@ -1,4 +1,3 @@
-
 from .interpreter import *
 
 class ModedOp(RBaseType):
@@ -154,6 +153,13 @@ dyna_system.define_term('*', 2, mul)
 div = mul(ret_variable,1,ret=0)
 dyna_system.define_term('div', 2, div)
 dyna_system.define_term('/', 2, div)
+
+
+dyna_system.define_term(
+    ',', 2,
+    intersect(Unify(VariableId(0), constant(True)),
+              Unify(VariableId(1), ret_variable))
+)
 
 
 
