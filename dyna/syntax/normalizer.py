@@ -259,8 +259,11 @@ def add_rule(x):
     for s in commas:
         r.sides.remove(s)
     r.sides = commas + r.sides
+    dummy = VariableId('Dummy')
+
     body = interpreter.intersect(
         *[Unify(VariableId(i), a) for i, a in enumerate(head.arguments)],
+        Unify(dummy, r.value),   # XXX: funky... the thing that combines rules is not very smart yet.
         *r.sides
     )(*args)
 
@@ -268,9 +271,9 @@ def add_rule(x):
 
     rule = Aggregator(interpreter.ret_variable,
                       args,
-                      r.value,         # inner return; value being aggregated
+                      dummy,
                       AGGR[r.aggr],
-                      Partition((*args, r.value), [body]))
+                      Partition((*args, dummy), [body]))
 
     #from dyna.optimize import run_optimizer
     print(colors.green % 'rule', rule)
