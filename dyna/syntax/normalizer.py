@@ -259,18 +259,27 @@ def add_rule(x):
     for s in commas:
         r.sides.remove(s)
     r.sides = commas + r.sides
+    iret = VariableId()
     body = interpreter.intersect(
         *[Unify(VariableId(i), a) for i, a in enumerate(head.arguments)],
-        *r.sides
-    )(*args)
+        *r.sides,
+        Unify(iret, r.value),
+    )
+
+    # rename the variables that are not explicitly referenced to be unique to this rule
+    rm = {VariableId(x): VariableId(x) for x in range(arity)}
+    rm[iret] = iret
+    body = body.rename_vars_unique(rm.get)
 
     print(f'r.value= {r.value}')
 
     rule = Aggregator(interpreter.ret_variable,
                       args,
-                      r.value,         # inner return; value being aggregated
+                      iret,         # inner return; value being aggregated
                       AGGR[r.aggr],
-                      Partition((*args, r.value), [body]))
+                      Partition((*args, iret), [body]))
+
+    assert iret in set(body.all_vars())
 
     #from dyna.optimize import run_optimizer
     print(colors.green % 'rule', rule)

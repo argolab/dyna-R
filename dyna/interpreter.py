@@ -129,7 +129,7 @@ class Terminal(FinalState):
     def __eq__(self, other):
         return type(self) is type(other) and self.multiplicity == other.multiplicity
     def __hash__(self):
-        return hash(type(self)) ^ self.count
+        return hash(type(self)) ^ self.multiplicity
     def isEmpty(self):
         return self.multiplicity == 0
     def _tuple_rep(self):
@@ -187,12 +187,15 @@ class Variable:
         # just something so that we can order these and select something consistently
         return str(self) < str(other)
 
+annon_variable_name = 0
 class VariableId(Variable):
     __slots__ = ('__name',)
 
     def __init__(self, name=None):
+        global annon_variable_name
         if name is None:
-            name = object()
+            name = f'$V{annon_variable_name}'
+            annon_variable_name += 1
         self.__name = name
 
     def isBound(self, frame):
@@ -222,6 +225,11 @@ class VariableId(Variable):
         return hash(type(self)) ^ hash(self.__name)
     def __str__(self):
         return str(self.__name)
+
+    def __lt__(self, other):
+        if isinstance(other, ConstantVariable):
+            return False
+        return super().__lt__(other)
 
 class ConstantVariable(Variable):
     __slots__ = ('__value',)
@@ -655,6 +663,8 @@ class Partition(RBaseType):
              # all(a == b for a,b in zip(self._children, other._children)))
 
     def __hash__(self):
+        # anytime that the children are updated, the hash would change, which is
+        # something that sorta breaks the idea of hashing this object or the immutablility
         return super().__hash__()
 
 
@@ -873,6 +883,7 @@ def getPartitions_partition(self :Partition, frame):
 class Unify(RBaseType):
     def __init__(self, v1, v2):
         super().__init__()
+        assert v1 != v2
         if v2 < v1:
             v2, v1 = v1, v2
         self.v1 = v1
