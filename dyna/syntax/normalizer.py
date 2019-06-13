@@ -8,12 +8,9 @@ from dyna.context import dyna_system
 from dyna.syntax.util import colors
 
 from dyna import Frame
-
-
-
-# linearization pass
-# `call_term` instead of `is`
-# `build_structure` instead unify
+from dyna import Aggregator, Unify, interpreter, Partition
+from dyna import saturate
+from dyna import AggregatorOpImpl
 
 
 def normalize(x):
@@ -221,8 +218,7 @@ def all_fvars_outside(ctx, x):
         for y in x:
             yield from all_fvars_outside(ctx, y)
 
-from dyna import saturate
-from dyna import AggregatorOpImpl
+
 AGGR = {
     '=': AggregatorOpImpl(lambda a,b: 1/0),   # should never combine
     '+=': AggregatorOpImpl(lambda a,b: a+b),
@@ -230,8 +226,6 @@ AGGR = {
     'min=': AggregatorOpImpl(min),
 }
 
-
-from dyna import Aggregator, Unify, interpreter, Partition
 
 def add_rule(x):
     print()
@@ -252,15 +246,25 @@ def add_rule(x):
     r.sides.remove(head)
 
 
-    argvars = [Unify(VariableId(i), a) for i, a in enumerate(head.arguments)]
-
-    body = interpreter.intersect(
-        *argvars,
-        *r.sides
-    )
-
     arity = len(head.arguments)
     args = [VariableId(i) for i in range(arity)]
+
+    # Move commas to the front of the subgoal list...
+    # TODO: the optimizer should be able to take care of this.
+    from dyna.terms import CallTerm
+    commas = []
+    for s in r.sides:
+        if isinstance(s, CallTerm) and s.term_ref == (',', 2):
+            commas.append(s)
+    for s in commas:
+        r.sides.remove(s)
+    r.sides = commas + r.sides
+    body = interpreter.intersect(
+        *[Unify(VariableId(i), a) for i, a in enumerate(head.arguments)],
+        *r.sides
+    )(*args)
+
+    print(f'r.value= {r.value}')
 
     rule = Aggregator(interpreter.ret_variable,
                       args,
@@ -268,29 +272,20 @@ def add_rule(x):
                       AGGR[r.aggr],
                       Partition((*args, r.value), [body]))
 
-    print(colors.green % 'normed:', body)
+    #from dyna.optimize import run_optimizer
+    print(colors.green % 'rule', rule)
+    #rule = run_optimizer(rule, (*args, interpreter.ret_variable))
+    #print(colors.light.yellow % 'optimized rule', rule)
 
     dyna_system.add_to_term(head.name, arity, rule)
 
 
 def test():
 
-#    x = normalize(term('f(X)'))
-#    print(x)
-
-#    x = normalize(term('f(X), g(X)'))
-#    print(x)
-
-#    [r] = run_parser('goal += f(X) * g(X).')
-#    x = normalize(r)
-#    print(x)
-
-
-
     for x in run_parser("""
     fib(0) = 1.
     fib(1) = 1.
-    fib(N) = fib(N-1) + fib(N-2) for N > 1, N <= 150.
+    fib(N) = fib(N-1) + fib(N-2) for N > 1. %, N <= 150.
     """):
         add_rule(x)
 
@@ -300,28 +295,21 @@ def test():
     from dyna import Terminal
 
     # query `fib(0)`
-    fib_call = dyna_system.call_term('fib', 1)
-    frame = Frame(); frame[0] = 0     # $0 = 0
+    def run_fib(N):
+        fib_call = dyna_system.call_term('fib', 1)
+        frame = Frame(); frame[0] = N     # $0 = 0
+        rr = saturate(fib_call, frame)
+        assert rr == Terminal(1)
+        #print(frame)
 
-    rr = saturate(fib_call, frame)
-    assert rr == Terminal(1)
-    assert interpreter.ret_variable.getValue(frame) == 1
+        return interpreter.ret_variable.getValue(frame)
 
-    print('fib(0)', colors.green % 'ok')
-    print()
+    for N in range(0, 6):
+        print(f'fib({N})')
+        got = run_fib(N)
+        print('  =', got)
+        print()
 
-    # query `fib(5)`
-    frame = Frame(); frame[0] = 5     # $0 = 0
-
-    rr = saturate(fib_call, frame)
-
-    assert rr == Terminal(1), rr
-    got = interpreter.ret_variable.getValue(frame)
-    print(got)
-    assert got == 1
-
-
-    print('yay!')
 
 
 if __name__ == '__main__':
