@@ -67,15 +67,14 @@ def normalize(x):
             v = genvar()   # generate a new variable name.
             x = x.apply(run)
 
+            fn = x.fn.getValue(Frame()) if not isinstance(x.fn, str) else x.fn
             if unif:
-                fn = x.fn.getValue(Frame())
                 xs.append(
                     BuildStructure(fn, arguments = x.args, result = v)
                 )
             else:
-                fn = x.fn.getValue(Frame())
                 xs.append(
-                    dyna_system.call_term(fn.getValue(Frame()), x.arity)(*x.args, ret = v)
+                    dyna_system.call_term(fn, x.arity)(*x.args, ret = v)
                 )
 
             return v
@@ -221,6 +220,7 @@ def all_fvars_outside(ctx, x):
         for y in x:
             yield from all_fvars_outside(ctx, y)
 
+from dyna import saturate
 from dyna import AggregatorOpImpl
 AGGR = {
     '=': AggregatorOpImpl(lambda a,b: 1/0),   # should never combine
@@ -273,7 +273,7 @@ def test():
     for x in run_parser("""
     fib(0) = 1.
     fib(1) = 1.
-%    fib(N) = fib(N-1) + fib(N-2) for N > 1, N < 150.
+    fib(N) = fib(N-1) + fib(N-2) for N > 1, N < 150.
     """):
         print()
         print(colors.green % 'parsed:', x)
@@ -314,16 +314,26 @@ def test():
         dyna_system.add_to_term(head.name, arity, rule)
 
 
+    # TODO: create user_query normalizer that automates this stuff
+
+    # query `fib(0)`
     fib_call = dyna_system.call_term('fib', 1)
+    frame = Frame(); frame[0] = 0     # $0 = 0
 
-    frame = Frame()
-    frame[0] = 0     # $0 = 0
-
-    from dyna import saturate
     rr = saturate(fib_call, frame)
-
     assert rr == Terminal(1)
     assert interpreter.ret_variable.getValue(frame) == 1
+
+    # query `fib(5)`
+    frame = Frame(); frame[0] = 5     # $0 = 0
+
+    rr = saturate(fib_call, frame)
+    assert rr == Terminal(1), rr
+    got = interpreter.ret_variable.getValue(frame)
+    print(got)
+    assert got == 1
+
+
     print('yay!')
 
 
