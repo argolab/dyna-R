@@ -30,8 +30,9 @@ class RStrctureInfo:
 
     frame : Frame
 
-    def __init__(self, conjunctive_constraints=None, alias_vars=None, exposed_variables=None, frame=None):
+    def __init__(self, *, conjunctive_constraints=None, all_constraints=None, alias_vars=None, exposed_variables=None, frame=None):
         self.conjunctive_constraints = conjunctive_constraints or defaultdict(list)
+        self.all_constraints = all_constraints
         self.alias_vars = alias_vars or defaultdict(set)
         self.exposed_variables = exposed_variables
         self.frame = frame
@@ -40,6 +41,7 @@ class RStrctureInfo:
     def recurse(self, *, frame=None):
         return RStrctureInfo(
             conjunctive_constraints=defaultdict(list, ((k, v.copy()) for k,v in self.conjunctive_constraints.items())),
+            all_constraints=self.all_constraints,
             alias_vars=defaultdict(set, ((k, v.copy()) for k,v in self.alias_vars.items())),
             exposed_variables=self.exposed_variables,
             frame=frame or self.frame)
@@ -154,7 +156,6 @@ def optimizer_unify(R, info):
     # delete this constraint, essentially deleting not needed variables from our
     # expression
 
-
     if (((len(info.all_constraints[R.v1]) == 1 and R.v1 not in info.exposed_variables) or
         (len(info.all_constraints[R.v2]) == 1 and R.v2 not in info.exposed_variables))
         and not (R.v1.isBound(info.frame) or R.v2.isBound(info.frame))):
@@ -166,6 +167,58 @@ def optimizer_unify(R, info):
 
     return R
 
+def delete_useless_unions(R, info):
+    # we need to identify branches of the union that we are unable to actually
+    # use.  This means that we take a union and then identify that there are
+    # branches that are not going to contribute
+    #
+    # only do this at the top level
+
+    partitions = [p for p in get_intersecting_constraints(R) if isinstance(p, Partition)]
+
+    deletes = {}
+
+    if partitions:
+        for p in partitions:
+            for kk, vv in p._children:
+                for v in vv:
+                    frame = Frame(info.frame)
+                    for val, var in zip(kk, p._unioned_vars):
+                        if val is not None:
+                            var.setValue(frame, val)
+                    i2 = info.recurse(frame=frame)
+                    # there could be more rounds of running the optimizer/simplification here, but this should be sufficient for our current use cases....
+                    rr = simplify(intersect(v, R), i2.frame)
+                    if not rr.isEmpty():
+                        rr = optimizer(rr, i2)
+
+                    if rr.isEmpty():
+                        # then we have found something that we can delete, so mark that
+                        deletes.setdefault(p, set()).add((kk, v))
+
+    if deletes:
+        def rewriter(r):
+            if isinstance(r, Partition):
+                if r in deletes:
+                    d = deletes[r]
+                    np = PrefixTrie(len(r._unioned_vars))
+                    for k, vv in r._children.items():
+                        for v in vv:
+                            if (k, v) not in d:
+                                np.setdefault(k,[]).append(v)
+                    return Partition(r._unioned_vars, np)
+                else:
+                    return r
+            return r.rewrite(rewriter)
+        R0 = R
+        R1 = rewriter(R)
+        R = simplify(R1, info.frame)
+
+        import ipdb; ipdb.set_trace()
+
+    return R
+
+
 
 def run_optimizer(R, exposed_variables):
     # This is the entry point for the optimizer, we can use simplify in this
@@ -174,11 +227,12 @@ def run_optimizer(R, exposed_variables):
     # consistent as they are used by something external.  But any other
     # variables that are in this expression can be renamed or eleminated
 
-    done = False
+    ex = set(R.all_vars()) & set(exposed_variables)
+
     exposed_constants = []
     frame = Frame()
     frame.memo_reads = False  # prevent memo tables from being read at this step so optimizations are not dependant
-    while not done:
+    while True:
         last_R = R
 
         # print(R)
@@ -187,12 +241,13 @@ def run_optimizer(R, exposed_variables):
 
         R = simplify(R, frame)
 
-
         info = RStrctureInfo(exposed_variables=exposed_variables,frame=frame)
         info.conjunctive_constraints = map_constraints_to_vars(get_intersecting_constraints(R))
         info.all_constraints = map_constraints_to_vars(R.all_children())
 
         R = optimizer(R, info)
+
+        R = delete_useless_unions(R, info)
 
         R = optimizer_aliased_vars(R, info)
 
@@ -211,5 +266,7 @@ def run_optimizer(R, exposed_variables):
                 exposed_constants.append(Unify(constant(var.getValue(frame)), var))
 
     R = intersect(*exposed_constants, R)
+
+    assert ex.issubset(set(R.all_vars())) or R.isEmpty()
 
     return R

@@ -448,3 +448,48 @@ def test_optimizer4():
     rr = run_optimizer(rx, (a,b))
 
     assert rr == Terminal(0)
+
+
+def test_even_odd():
+    even = Intersect(Unify(interpreter.ret_variable, constant(True)),
+                           Partition(variables_named(0),
+                                     (BuildStructure('nil', VariableId(0), ()),  # even([]).
+                                      Intersect(BuildStructure('.', VariableId(0), (VariableId('J1'), VariableId('L'))),
+                                                BuildStructure('.', VariableId('L'), (VariableId('J2'), VariableId('Ls'))),
+                                                dyna_system.call_term('even_list', 1)(VariableId('Ls')))
+                                      )))
+
+    dyna_system.define_term('even_list', 1, even)
+
+    odd = Intersect(Unify(interpreter.ret_variable, constant(True)),
+                    BuildStructure('.', VariableId(0), (VariableId('X'), VariableId('Xs'))),
+                    dyna_system.call_term('even_list', 1)(VariableId('Xs')))
+
+    dyna_system.define_term('odd_list', 1, odd)
+
+
+    el = Term.fromlist([1,2,3,4])
+    ol = Term.fromlist([1,2,3])
+
+
+    frame = Frame()
+    frame[0] = el
+    assert saturate(even, frame) == Terminal(1)
+
+    frame = Frame()
+    frame[0] = ol
+    assert saturate(even, frame) == Terminal(0)
+
+    frame = Frame()
+    frame[0] = ol
+    assert saturate(odd, frame) == Terminal(1)
+
+    combined = Intersect(even(0), odd(0))  # combine the two rules, if we can identify that the states are the same then this should just be empty
+
+    frame = Frame()
+
+    rr = saturate(combined, frame)
+
+    rx = run_optimizer(combined, variables_named(0))
+
+    assert rx == Terminal(0)

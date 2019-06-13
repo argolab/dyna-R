@@ -3,6 +3,7 @@ from .interpreter import *
 
 class ModedOp(RBaseType):
     def __init__(self, name, det, nondet, vars):
+        super().__init__()
         self.det = det
         self.nondet = nondet
         self.name = name
@@ -295,32 +296,34 @@ matrix_v = check_op('matrix', 1, lambda x: isinstance(x, np.ndarray))
 # would like to allow numpy style arrays as some primitive type.  Then we can figure out how to identify these cases
 # and perform automatic rewrites? There should be some access operation, and then some einsum
 
-class ArrayElement(RBaseType):
-    # the keys are going to be desugared by the program.  So if the key was an
-    # array which was positional.  Then we are only going to be taking the variables that should be ints that indicate
-    # what value is contained in some slot.  Once the array is bound, we should be able to provide iterators over the domains
-    # of the variables.
-    def __init__(self, matrix, result, *keys):
-        pass
+# class ArrayElement(RBaseType):
+#     # the keys are going to be desugared by the program.  So if the key was an
+#     # array which was positional.  Then we are only going to be taking the variables that should be ints that indicate
+#     # what value is contained in some slot.  Once the array is bound, we should be able to provide iterators over the domains
+#     # of the variables.
+#     def __init__(self, matrix, result, *keys):
+#         super().__init__()
+#         pass
 
 
 
-class ArrayEinsum(RBaseType):
-    # operator can be a constant or some variable that will evaluate to a string.
-    # The first variable will be the result, and then there are multiple arrays that are passed into numpy.einsum
-    #
-    # reverse mode not supported?  As that would require parsing the einsum and figuring out what
-    #
-    # This is created by identifying a rewrite such as a(I, J) += b(J) * C(I,J).
-    # then this entire expression can be replaced with
-    # intersect(Einsum('ij->j,ij', result_new_name, bref, cref), arrayElement(result_new_name, I, J))
-    # this requires that b(J) and C(I,J) are already some array element accessors.  Which would require that was identified
-    # based off how those elements were stored.  Or we might have that those are specified somehow already?
+# class ArrayEinsum(RBaseType):
+#     # operator can be a constant or some variable that will evaluate to a string.
+#     # The first variable will be the result, and then there are multiple arrays that are passed into numpy.einsum
+#     #
+#     # reverse mode not supported?  As that would require parsing the einsum and figuring out what
+#     #
+#     # This is created by identifying a rewrite such as a(I, J) += b(J) * C(I,J).
+#     # then this entire expression can be replaced with
+#     # intersect(Einsum('ij->j,ij', result_new_name, bref, cref), arrayElement(result_new_name, I, J))
+#     # this requires that b(J) and C(I,J) are already some array element accessors.  Which would require that was identified
+#     # based off how those elements were stored.  Or we might have that those are specified somehow already?
 
 
-    def __init__(self, operator, result, *arrays):
-        self.operator = operator
-        self.result = result
+#     def __init__(self, operator, result, *arrays):
+#         super().__init__()
+#         self.operator = operator
+#         self.result = result
 
 
 

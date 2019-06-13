@@ -234,6 +234,7 @@ class RMemo(RBaseType):
     """
 
     def __init__(self, variables :Tuple[Variable], memos: MemoContainer):
+        super().__init__()
         assert len(variables) == len(memos.variables)
         self.variables = variables
         self.memos = memos
@@ -452,6 +453,7 @@ def process_agenda_message(msg: AgendaMessage):
         # then we are just going to delete the memos as they are unk
         # we are also going to send messages to downstream entries
         t.memos._children.filter(msg.key).delete_all()
+        t.memos._hashcache = None
 
         # send notifications to everything downstream
 

@@ -129,7 +129,7 @@ class Terminal(FinalState):
     def __eq__(self, other):
         return type(self) is type(other) and self.multiplicity == other.multiplicity
     def __hash__(self):
-        return hash(type(self)) ^ self.count
+        return hash(type(self)) ^ self.multiplicity
     def isEmpty(self):
         return self.multiplicity == 0
     def _tuple_rep(self):
@@ -655,6 +655,8 @@ class Partition(RBaseType):
              # all(a == b for a,b in zip(self._children, other._children)))
 
     def __hash__(self):
+        # anytime that the children are updated, the hash would change, which is
+        # something that sorta breaks the idea of hashing this object or the immutablility
         return super().__hash__()
 
 
@@ -873,6 +875,7 @@ def getPartitions_partition(self :Partition, frame):
 class Unify(RBaseType):
     def __init__(self, v1, v2):
         super().__init__()
+        assert v1 != v2
         if v2 < v1:
             v2, v1 = v1, v2
         self.v1 = v1

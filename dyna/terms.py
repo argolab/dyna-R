@@ -71,6 +71,7 @@ class BuildStructure(RBaseType):
     """
 
     def __init__(self, name :str, result :Variable, arguments :List[Variable]):
+        super().__init__()
         self.name = name
         self.result = result
         self.arguments = tuple(arguments)
@@ -114,7 +115,7 @@ def optimizer_buildStructure(self, info):
 
     ac = info.all_constraints[self.result]
 
-    if len(ac) == 1 and not self.result.isBound(info.frame):
+    if len(ac) == 1 and not self.result.isBound(info.frame) and self.result not in info.exposed_variables:
         #assert not self.result.isBound(info.frame)
         assert ac[0] is self
         assert info.conjunctive_constraints[self.result] == ac
@@ -132,7 +133,7 @@ def optimizer_buildStructure(self, info):
             # this should unify the variables that are arguments, and just delete itself
             if c.name != self.name or len(c.arguments) != len(self.arguments):
                 return Terminal(0)  # unification fails in this case
-            const = [Unify(c.result, self.result)]
+            const = [unify(c.result, self.result)]
             for a,b in zip(c.arguments, self.arguments):
                 const.append(Unify(a,b))
             return intersect(*const)
@@ -176,6 +177,7 @@ class ReflectStructure(RBaseType):
     """
 
     def __init__(self, result: Variable, name :Variable, num_args :Variable, args_list :Variable):
+        super().__init__()
         self.result = result  # the resulting variable that we are trying to reflect
         self.name = name  # the variable that is going to take on the string value for the name
         self.num_args = num_args  # the number of arguments (length of the list), will let us rewrite in the case that not fully ground
@@ -283,6 +285,7 @@ class Evaluate(RBaseType):
     """
 
     def __init__(self, dyna_system, ret :Variable, name :Variable, nargs :Variable, args_list :Variable):
+        super().__init__()
         self.ret = ret
         self.name = name
         self.nargs = nargs
@@ -339,6 +342,7 @@ class CallTerm(RBaseType):
     """
 
     def __init__(self, var_map: Dict[Variable,Variable], dyna_system, term_ref):
+        super().__init__()
         # this needs to have some positional arguments or something so that we
         # can use a tuple in tracking?
 
