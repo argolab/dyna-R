@@ -405,6 +405,8 @@ def test_merge_rules():
 def test_optimizer1():
     fibo = run_optimizer(fib, variables_named(0,interpreter.ret_variable))
 
+    import ipdb; ipdb.set_trace()
+
 def test_optimizer2():
     # check that we can perform inference on the types of a tuple and use that
     # to perform the approperate reflection and then inline calls.  This should
@@ -468,7 +470,7 @@ def test_even_odd():
     dyna_system.define_term('odd_list', 1, odd)
 
 
-    el = Term.fromlist([1,2,3,4])
+    el = Term.fromlist([1,2,3,4,5,6,7,8,9,10])
     ol = Term.fromlist([1,2,3])
 
 
@@ -489,6 +491,8 @@ def test_even_odd():
     frame = Frame()
 
     rr = saturate(combined, frame)
+
+    assert not rr.isEmpty()
 
     rx = run_optimizer(combined, variables_named(0))
 

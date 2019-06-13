@@ -129,13 +129,29 @@ def optimizer_buildStructure(self, info):
     for c in cc:
         if c is self:
             break
+
+        # we can only do this if we are not in a partition
+        # as otherwise the partition has to be made aware of the fact that we are reading and setting these additional variables.
         if isinstance(c, BuildStructure) and c.result == self.result:  # only unified if the same result variable
             # this should unify the variables that are arguments, and just delete itself
             if c.name != self.name or len(c.arguments) != len(self.arguments):
                 return Terminal(0)  # unification fails in this case
+
+    for c in info.partition_constraints[self.result]:
+        if c is self:
+            break
+        if isinstance(c, BuildStructure) and c.result == self.result:
+            # if we are in a partition, then we would require that all of the
+            # arguments of one side are present, otherwise this isn't giong to
+            # work?
+            #
+            # This requires that both of the constraints are in the same
+            # partition, otherwise this is not correct.  So we are giong to need
+            # to map the partition's constraints?
+            #import ipdb; ipdb.set_trace()
             const = [unify(c.result, self.result)]
             for a,b in zip(c.arguments, self.arguments):
-                const.append(Unify(a,b))
+                const.append(unify(a,b))
             return intersect(*const)
 
     # the occurs check

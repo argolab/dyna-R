@@ -187,12 +187,15 @@ class Variable:
         # just something so that we can order these and select something consistently
         return str(self) < str(other)
 
+annon_variable_name = 0
 class VariableId(Variable):
     __slots__ = ('__name',)
 
     def __init__(self, name=None):
+        global annon_variable_name
         if name is None:
-            name = object()
+            name = f'$V{annon_variable_name}'
+            annon_variable_name += 1
         self.__name = name
 
     def isBound(self, frame):

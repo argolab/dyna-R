@@ -20,7 +20,9 @@ def map_constraints_to_vars(constraints):
 
 class RStrctureInfo:
 
-    conjunctive_constraints : Dict[Variable,List[RBaseType]]
+    conjunctive_constraints : Dict[Variable,List[RBaseType]]  # all the current constraints in the partition + what is in the parent
+
+    partition_constraints : Dict[Variable,List[RBaseType]]  # the constraints that are just in the current active partition
 
     all_constraints : Dict[Variable,List[RBaseType]]  # all constraints that match against a given expression
 
@@ -30,8 +32,9 @@ class RStrctureInfo:
 
     frame : Frame
 
-    def __init__(self, *, conjunctive_constraints=None, all_constraints=None, alias_vars=None, exposed_variables=None, frame=None):
+    def __init__(self, *, conjunctive_constraints=None, partition_constraints=None, all_constraints=None, alias_vars=None, exposed_variables=None, frame=None):
         self.conjunctive_constraints = conjunctive_constraints or defaultdict(list)
+        self.partition_constraints = partition_constraints if partition_constraints is not None else self.conjunctive_constraints
         self.all_constraints = all_constraints
         self.alias_vars = alias_vars or defaultdict(set)
         self.exposed_variables = exposed_variables
@@ -42,7 +45,7 @@ class RStrctureInfo:
         return RStrctureInfo(
             conjunctive_constraints=defaultdict(list, ((k, v.copy()) for k,v in self.conjunctive_constraints.items())),
             all_constraints=self.all_constraints,
-            alias_vars=defaultdict(set, ((k, v.copy()) for k,v in self.alias_vars.items())),
+            # don't pass alias vars, as we want to handle that at every scope seperatly
             exposed_variables=self.exposed_variables,
             frame=frame or self.frame)
 
@@ -130,15 +133,16 @@ def optimzier_partition(R, info):
         # we are going to identify which conjunctive constraints are used here first
 
         i2 = info.recurse(frame=frame)
+        i2.partition_constraints = map_constraints_to_vars(get_intersecting_constraints(R))
 
         # add in the conjunctive constraints to this expression
-        for var, cons in map_constraints_to_vars(get_intersecting_constraints(R)).items():
+        for var, cons in i2.partition_constraints.items():
             i2.conjunctive_constraints[var] += cons
 
         rr = optimizer(R, i2)
         # this should construct aliased variables so that we can handle cases where there are expressions which
 
-        rr = optimizer_aliased_vars(R, info)
+        rr = optimizer_aliased_vars(R, i2)
         save(rr, frame)
 
     # ???: do we want to run the simplify before we get the callback?  That
@@ -178,6 +182,8 @@ def delete_useless_unions(R, info):
 
     deletes = {}
 
+    st = str(R)
+
     if partitions:
         for p in partitions:
             for kk, vv in p._children:
@@ -187,6 +193,9 @@ def delete_useless_unions(R, info):
                         if val is not None:
                             var.setValue(frame, val)
                     i2 = info.recurse(frame=frame)
+                    for var, cons in map_constraints_to_vars(get_intersecting_constraints(v)).items():
+                        i2.conjunctive_constraints[var] += cons
+
                     # there could be more rounds of running the optimizer/simplification here, but this should be sufficient for our current use cases....
                     rr = simplify(intersect(v, R), i2.frame)
                     if not rr.isEmpty():
@@ -194,7 +203,10 @@ def delete_useless_unions(R, info):
 
                     if rr.isEmpty():
                         # then we have found something that we can delete, so mark that
+                        #import ipdb; ipdb.set_trace()
                         deletes.setdefault(p, set()).add((kk, v))
+
+    assert st == str(R)
 
     if deletes:
         def rewriter(r):
@@ -235,17 +247,27 @@ def run_optimizer(R, exposed_variables):
     while True:
         last_R = R
 
-        # print(R)
-        # print(frame)
-        # print('-'*50)
+        print(R)
+        print(frame)
+        print('-'*50)
 
-        R = simplify(R, frame)
+        R = saturate(R, frame)
+        if R.isEmpty():
+            import ipdb; ipdb.set_trace()
+            break
 
         info = RStrctureInfo(exposed_variables=exposed_variables,frame=frame)
-        info.conjunctive_constraints = map_constraints_to_vars(get_intersecting_constraints(R))
+        info.partition_constraints = info.conjunctive_constraints = map_constraints_to_vars(get_intersecting_constraints(R))
         info.all_constraints = map_constraints_to_vars(R.all_children())
 
+        R0 = R
         R = optimizer(R, info)
+        R1 = R
+        R = saturate(R, info.frame)
+
+        if R.isEmpty():
+            import ipdb; ipdb.set_trace()
+            break
 
         R = delete_useless_unions(R, info)
 
