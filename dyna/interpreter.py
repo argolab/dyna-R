@@ -1009,17 +1009,21 @@ def simplify_aggregator(self, frame):
             # need to perform more loops?
             assert isinstance(R, FinalState)
 
-            if agg_result is not None:
-                agg_result = self.aggregator.combine(agg_result, self.body_res.getValue(frame))
-            else:
-                agg_result = self.body_res.getValue(frame)
+            if not R.isEmpty():
+                if agg_result is not None:
+                    agg_result = self.aggregator.combine(agg_result, self.body_res.getValue(frame))
+                else:
+                    agg_result = self.body_res.getValue(frame)
 
         body = saturate(body, frame)
 
         loop(body, frame, loop_cb)
 
-        self.result.setValue(frame, agg_result)
-        return terminal(1)  # return that we are done and the result of aggregation has been computed
+        if agg_result is not None:
+            self.result.setValue(frame, agg_result)
+            return terminal(1)  # return that we are done and the result of aggregation has been computed
+        else:
+            return terminal(0)  # then the aggregator failed to get anything
 
     # There also needs to be some handling in the case that the result variable
     # from the body is fully grounded, but the head variables are not grounded.
