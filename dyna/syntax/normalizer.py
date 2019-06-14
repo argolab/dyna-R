@@ -271,7 +271,6 @@ def add_rule(x):
     rm[iret] = iret
     body = body.rename_vars_unique(rm.get)
 
-    print(f'r.value= {r.value}')
 
     rule = Aggregator(interpreter.ret_variable,
                       args,
@@ -289,36 +288,68 @@ def add_rule(x):
     dyna_system.add_to_term(head.name, arity, rule)
 
 
+DEBUG = True
+
+def user_query_to_rexpr(x):
+    "Map a user's textual query to an R-expression."
+    q = run_parser(f'{x} ?')
+    if DEBUG: print(colors.green % 'parsed:', q)
+    q = normalize(q)
+    if DEBUG: print(colors.green % 'normed:', q)
+    q = interpreter.intersect(*q)
+    if DEBUG: print(colors.green % 'rexped:', q)
+    if DEBUG: print(colors.green % 'vardom:', q.vars)
+    return q
+
+
+def user_query(x):
+    r = user_query_to_rexpr(x)
+
+    def callback(rr, ff):
+        print(colors.yellow % 'result:', {v: v.getValue(ff) for v in r.vars},
+              colors.yellow % '@', rr)
+
+        #print('  value:', r.var_map[interpreter.ret_variable].getValue(ff))
+        #print('  value', interpreter.ret_variable.getValue(ff))
+        #from IPython import embed; embed()
+
+    frame = Frame()
+    interpreter.loop(saturate(r, frame), frame, callback)
+    #interpreter.loop(r, frame, callback, till_terminal=True)
+
+
+
 def test():
 
     for x in run_parser("""
     fib(0) = 1.
     fib(1) = 1.
-    fib(N) = fib(N-1) + fib(N-2) for N > 1. %, N <= 150.
+    fib(N) = fib(N-1) + fib(N-2) for N > 1, N <= 10.
     """):
         add_rule(x)
 
-    # TODO: create user_query normalizer that automates all frame stuff.
-
-
     from dyna import Terminal
 
-    # query `fib(0)`
+
     def run_fib(N):
         fib_call = dyna_system.call_term('fib', 1)
         frame = Frame(); frame[0] = N     # $0 = 0
         rr = saturate(fib_call, frame)
         assert rr == Terminal(1)
         #print(frame)
-
         return interpreter.ret_variable.getValue(frame)
 
     for N in range(0, 6):
         print(f'fib({N})')
-        got = run_fib(N)
+        got = run_fib(N)         # TODO: use new user_query method.
         print('  =', got)
         print()
 
+
+    user_query('fib(5)')
+
+
+    # TODO: create use answer type and printing from dyna-pi
 
 
 if __name__ == '__main__':

@@ -1,5 +1,3 @@
-import ipdb
-
 from functools import reduce
 import operator
 
@@ -387,7 +385,7 @@ def simplify_call(self, frame):
                 break
 
     # sanitity check for now
-    assert len(self.parent_calls_blocker) < 10, ipdb.set_trace()
+    assert len(self.parent_calls_blocker) < 10
 
     # check if the arguments are unique, otherwise don't try and run this
     vs = [tuple(v.getValue(frame) for v in vv) for vv in self.parent_calls_blocker]
