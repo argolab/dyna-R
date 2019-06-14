@@ -13,6 +13,9 @@ from dyna import saturate, AggregatorOpImpl
 from dyna.terms import CallTerm
 
 
+DEBUG = False
+
+
 def normalize(x):
     """
     Normalize `x` into a form where all intermediate queries have a value slot.
@@ -228,8 +231,8 @@ AGGR = {
 
 
 def add_rule(x):
-    print()
-    print(colors.green % 'parsed:', x)
+    if DEBUG: print()
+    if DEBUG: print(colors.green % 'parsed:', x)
 
     # The "direct" translation of Dyna into R-exprs will create named calls
     # for each distinct functor/arity
@@ -280,14 +283,12 @@ def add_rule(x):
     assert iret in set(body.all_vars())
 
     #from dyna.optimize import run_optimizer
-    print(colors.green % 'rule', rule)
+    if DEBUG: print(colors.green % 'rule', rule)
     #rule = run_optimizer(rule, (*args, interpreter.ret_variable))
-    #print(colors.light.yellow % 'optimized rule', rule)
+    #if DEBUG: print(colors.light.yellow % 'optimized rule', rule)
 
     dyna_system.add_to_term(head.name, arity, rule)
 
-
-DEBUG = True
 
 def user_query_to_rexpr(x):
     "Map a user's textual query to an R-expression."
@@ -317,7 +318,7 @@ def user_query(x):
     #interpreter.loop(r, frame, callback, till_terminal=True)
 
 
-def test():
+def test_fib():
 
     for x in run_parser("""
     fib(0) = 1.
@@ -331,7 +332,7 @@ def test():
         frame = Frame(); frame[0] = N     # $0 = 0
         rr = saturate(fib_call, frame)
         assert rr == Terminal(1)
-        #print(frame)
+        #if DEBUG: print(frame)
         return interpreter.ret_variable.getValue(frame)
 
     f = {0: 1, 1: 1, 2: 2, 3: 5, 4: 8, 5: 12, 6: 5+12}
@@ -350,5 +351,17 @@ def test():
     # TODO: create use answer type and printing from dyna-pi
 
 
+def test_simple():
+
+    for x in run_parser("""
+    goal += 1.
+    goal += 2.
+    """):
+        add_rule(x)
+
+    user_query('goal')
+
+
 if __name__ == '__main__':
-    test()
+    test_simple()
+    test_fib()
