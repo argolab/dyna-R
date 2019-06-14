@@ -25,9 +25,10 @@ def normalize(x):
     n = 0
 
     def genvar():
-        nonlocal n
-        n += 1
-        return VariableId(f'$V{n}')
+        return VariableId()
+        # nonlocal n
+        # n += 1
+        # return VariableId(f'$V{n}')
 
     def run(x, unif=False):
         assert not isinstance(x, Rule)
@@ -323,19 +324,27 @@ def test_fib():
     for x in run_parser("""
     fib(0) = 1.
     fib(1) = 1.
-    fib(N) = fib(N-1) + fib(N-2) for N > 1, N <= 10.
+    fib(N) = fib(N-1) + fib(N-2) for N > 1. %, N <= 10.
     """):
         add_rule(x)
 
     def run_fib(N):
         fib_call = dyna_system.call_term('fib', 1)
-        frame = Frame(); frame[0] = N     # $0 = 0
-        rr = saturate(fib_call, frame)
+        frame = Frame(); #frame[0] = N     # $0 = 0
+        rr1 = saturate(fib_call, frame)
+        frame[0] = N
+        rr = saturate(rr1, frame)
         assert rr == Terminal(1)
         #if DEBUG: print(frame)
         return interpreter.ret_variable.getValue(frame)
 
-    f = {0: 1, 1: 1, 2: 2, 3: 5, 4: 8, 5: 12, 6: 5+12}
+    f = {0: 1,
+         1: 1,
+         2: 2,
+         3: 3,
+         4: 5,
+         5: 8,
+         6: 13}
     for N in range(0, 6):
         print(f'fib({N})')
         got = run_fib(N)         # TODO: use new user_query method.
