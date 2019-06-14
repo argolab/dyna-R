@@ -2,7 +2,7 @@ from dyna.syntax.generic import Term, FVar, Rule
 from dyna.syntax.aggregators import AGG
 from dyna.syntax.syntax import term, run_parser
 
-from dyna.interpreter import VariableId, constant
+from dyna.interpreter import VariableId, constant, ConstantVariable
 from dyna import BuildStructure
 from dyna.context import dyna_system
 from dyna.syntax.util import colors
@@ -175,16 +175,18 @@ def user_query_to_rexpr(x):
 
 
 def user_query(x):
-    r = user_query_to_rexpr(x)
+    r = user_query_to_rexpr(f'Result is {x}')
+
+    # extracts the user's variable names
+    user_vars = [v for v in r.all_vars()
+                 if not str(v).startswith('$') and not isinstance(v, ConstantVariable)
+    ]
 
     def callback(rr, ff):
-        print(colors.yellow % 'result:', {v: v.getValue(ff) for v in r.vars},
+        print(colors.yellow % 'result:', {str(v): v.getValue(ff) for v in user_vars},
               colors.yellow % '@', rr)
 
-        #print('  value:', r.var_map[interpreter.ret_variable].getValue(ff))
-        #print('  value', interpreter.ret_variable.getValue(ff))
-        #from IPython import embed; embed()
-
+    print(r.vars)
     frame = Frame()
     interpreter.loop(saturate(r, frame), frame, callback)
     #interpreter.loop(r, frame, callback, till_terminal=True)
@@ -195,7 +197,7 @@ def test_fib():
     for x in run_parser("""
     fib(0) = 1.
     fib(1) = 1.
-    fib(N) = fib(N-1) + fib(N-2) for N > 1. %, N <= 10.
+    fib(N) = fib(N-1) + fib(N-2) for N > 1, N <= 10.
     """):
         add_rule(x)
 
@@ -230,12 +232,17 @@ def test_fib():
         print()
 
     print('------')
-
     user_query('fib(5)')
 
+    print('------')
+    user_query('fib(N) for range(N,0,11)')
 
     # TODO: create use answer type and printing from dyna-pi
+    
+    print('------')
+    user_query('N^2+1/N for range(N,0,11)')
 
+    
 
 def test_simple():
 
