@@ -201,22 +201,28 @@ def test_fib():
 
     def run_fib(N):
         fib_call = dyna_system.call_term('fib', 1)
-        frame = Frame(); #frame[0] = N     # $0 = 0
+        frame = Frame()
         rr1 = saturate(fib_call, frame)
         frame[0] = N
         rr = saturate(rr1, frame)
-        assert rr == Terminal(1), rr, rr1
+        assert rr == Terminal(1), [rr, rr1]
         #if DEBUG: print(frame)
         return interpreter.ret_variable.getValue(frame)
 
-    f = {0: 1,
-         1: 1,
-         2: 2,
-         3: 3,
-         4: 5,
-         5: 8,
-         6: 13}
-    for N in range(0, 6):
+    f = {
+        0: 1,
+        1: 1,
+        2: 2,
+        3: 3,
+        4: 5,
+        5: 8,
+        6: 13,
+        7: 21,
+        8: 34,
+        9: 55,
+        10: 89,
+    }
+    for N in range(0, 11):
         print(f'fib({N})')
         got = run_fib(N)         # TODO: use new user_query method.
         print('  =', got)
