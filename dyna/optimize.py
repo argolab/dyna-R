@@ -1,6 +1,8 @@
 from collections import defaultdict
 from typing import *
 
+import networkx as nx
+
 from .interpreter import *
 
 def get_intersecting_constraints(R):
@@ -16,6 +18,87 @@ def map_constraints_to_vars(constraints):
         for v in f.vars:
             ret[v].append(f)
     return ret
+
+
+def construct_intersecting(R):
+    # remove the partitions from the R-expr so that we still capture some of the
+    # expressions?
+    if isinstance(R, Partition):
+        return Terminal(1)
+    return R.rewrite(construct_intersecting)
+
+def sort_intersections(R):
+    if isinstance(R, Intersect):
+        return intersect(*sorted(R._children))
+    return R.rewrite(sort_intersections)
+
+
+def make_graph(R):
+    G = nx.Graph()
+    for cons in R.all_children():
+        if not isinstance(cons, Intersect):
+            assert not isinstance(cons, Partition)  # not supported atm
+            G.add_node(cons)
+            for i, v in enumerate(cons.vars):
+                if not isinstance(v, ConstantVariable):
+                    G.add_node(v)
+                    G.add_edge(cons, v, eid=i)
+            assert cons.vars
+
+    return G
+
+
+def split_heuristic(R):
+    from .terms import CallTerm, BuildStructure  # sigh
+
+    # determine which expressions we want to split out (if any) for the purposes
+    # of making a more specalized compiled version.
+    #
+    # we want to get as much type information into the recursive calls, so we
+    # are giong to try and pass relevant build structures into the new methods.
+    # We should also attempt to merge any operation that only depends on a
+    # subset of the variables that are in the new expression.  (eg if something
+    # is like `int(X)`) then if X is included, we should push it down but also
+    # keep a copy for ourselves)
+
+    constraints = list(R.all_children())
+    assert all(not isinstance(r, Partition) for r in constraints)  # TODO:? or just ignore these
+
+    vmap = map_constraints_to_vars(constraints)
+
+    calls = [c for c in constraints if isinstance(c, CallTerm)]
+    ecalls = {}
+
+    for c in calls:
+        ecall = set((c,))  # the external call we are interested in constructing?
+        oecall = None
+        vs = set(c.vars)  # start with the variables that we are interested in
+        while ecall != oecall:
+            oecall = ecall.copy()
+            for c2 in constraints:
+                if c2 in ecalls:
+                    pass
+                elif isinstance(c2, BuildStructure) and c2.result in vs:
+                    ecall.add(c2)
+                    vs |= set(c2.arguments)
+                elif isinstance(c2, CallTerm):
+                    # if this is something that is interesting, then we should
+                    # include it, which emans that there aren't additional variables
+                    # that would have to be included
+
+                    assert c2.dyna_system is c.dyna_system  # is this going to be a requirement, or just something that we should instead check, how to mix different "dynabases?"
+
+                    lv = set(v for v in c2.vars if len(vmap[v]) != 1)
+                    if lv.issubset(vs) and lv:  # if there are some vars that intersect and it is a subset of the vars that we are interested in
+                        ecall.add(c2)
+        if len(ecall) > 1:
+            ecalls[c] = ecall
+
+    # we are going to filter out calls that are not interesting
+
+    ecalls = dict((k, v) for (k,v) in ecalls.items() if all((not v.issubset(y) or v is y) for y in ecalls.values()))
+
+    return ecalls
 
 
 class RStrctureInfo:
@@ -226,18 +309,16 @@ def delete_useless_unions(R, info):
         R1 = rewriter(R)
         R = simplify(R1, info.frame)
 
-        import ipdb; ipdb.set_trace()
-
     return R
 
 
 
-def run_optimizer(R, exposed_variables):
-    # This is the entry point for the optimizer, we can use simplify in this
-    # case as we it can run with the ground values of variables.  The
-    # exposed_variables are the names of variables that we _have_ to keep
-    # consistent as they are used by something external.  But any other
-    # variables that are in this expression can be renamed or eleminated
+def run_optimizer_local(R, exposed_variables):
+    """This is the entry point for the optimizer that is _only_ going to operate on
+    a single R-expr.  This will return a new R-expr that is semantically
+    equivalent and at least the variables listed in exposed_variables will have
+    the _same_ name (this is not gaurenteed for any other variables which might
+    be eleminated) """
 
     ex = set(R.all_vars()) & set(exposed_variables)
 
@@ -289,6 +370,31 @@ def run_optimizer(R, exposed_variables):
 
     R = intersect(*exposed_constants, R)
 
+    Rz = sort_intersections(construct_intersecting(R))
+
+    # G = make_graph(Rz)
+
+    # import matplotlib.pyplot as plt
+    # labels = {}
+    # for v in Rz.all_vars():
+    #     labels[v] = str(v)
+
+    # nx.draw(G, with_labels=True)
+    # plt.show()
+    # assert nx.is_connected(G)
+
+    sp = split_heuristic(Rz)
+
+    import ipdb; ipdb.set_trace()
+
     assert ex.issubset(set(R.all_vars())) or R.isEmpty()
 
     return R
+
+
+def run_optimizer(R, exposed_variables):
+    """this will potentially construct new method names that are the same for
+    different operations.  These operations will be saved in the dyna_system."""
+
+
+    return run_optimizer_local(R, exposed_variables)

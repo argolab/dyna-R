@@ -108,6 +108,11 @@ class RBaseType:
     def __bool__(self):
         raise RuntimeError('Should not check Rexpr with bool test, use None test')
 
+    def __lt__(self, other):
+        if not isinstance(other, type(self)):
+            return self.__class__.__name__ < other.__class__.__name__
+        return self._tuple_rep() < other._tuple_rep()
+
     # def build_graph(self, graph):
     #     for v in self.vars:
     #         v.build_graph(graph)

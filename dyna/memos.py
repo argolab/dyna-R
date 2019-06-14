@@ -207,14 +207,9 @@ class MemoContainer:
             if val is not None:
                 var.setValue(frame, val)
 
-        # if msg.key == (2,1):
-        #     frame['ddd'] = True
-        #     import ipdb; ipdb.set_trace()
-
         nRes = simplify(res, frame, map_function=_flatten_keys, reduce_to_single=False)
 
         if nRes.isEmpty():
-            #import ipdb; ipdb.set_trace()
             return
 
         refresh_keys = set(nRes._children.keys())
@@ -386,7 +381,7 @@ class AgendaMessage(NamedTuple):
 
     # used in the case that this is an update, and we are able to just add these changes
     addition : RBaseType = None  # an Rexpr that we are adding to the table or None to indicate nothing here
-    deletition : RBaseType = None# an Rexpr that we are removing form the table or None
+    deletion : RBaseType = None# an Rexpr that we are removing form the table or None
 
     # if this is going through an unmemoized aggregator, then we might not be able to just directly modify the value in the table
     # so we are going to have to invalidate something and the perform a recomputation
@@ -409,10 +404,10 @@ def process_agenda_message(msg: AgendaMessage):
 
 
     # first we update the memo table with this new entry
-    assert msg.deletition is None  # TODO handle this case
+    assert msg.deletion is None  # TODO handle this case
 
     # TODO: handle these cases
-    assert msg.addition is None and msg.deletition is None
+    assert msg.addition is None and msg.deletion  is None
 
 
     t = msg.table
@@ -558,7 +553,7 @@ def rewrite_to_propagate(R, table, replace_with):
             return R.rewrite(rewriter)
     while True:
         z = R.rewrite(rewriter)
-        if counter == 0:  # there is nothing that matched the memo table, so we are
+        if counter == 0:  # there is nothing that matched the memo table, so we are done
             return
         yield z, variables
         if max_counter < counter:

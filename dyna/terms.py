@@ -392,6 +392,17 @@ class CallTerm(RBaseType):
     def __hash__(self):
         return super().__hash__()
 
+    def __lt__(self, other):
+        if isinstance(other, CallTerm):
+            if self.term_ref != other.term_ref:
+                return self.term_ref < other.term_ref
+            # then the term maps should be the same, so we are going to loop over the keys
+            for k in sorted(self.var_map):
+                if self.var_map[k] != other.var_map[k]:
+                    return self.var_map[k] < other.var_map[k]
+            return False
+        return super().__lt__(other)
+
 
 @simplify.define(CallTerm)
 def simplify_call(self, frame):

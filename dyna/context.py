@@ -121,7 +121,7 @@ class SystemContext:
         elif name in self.terms_as_defined:
             r = self.terms_as_defined[name]
         elif self.parent:
-            r = parent.lookup_term(name)
+            r = self.parent.lookup_term(name)
         else:
             r = Terminal(0)  # this should probably be an error or something so that we can identify that this method doesn't exit
 

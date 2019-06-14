@@ -405,8 +405,6 @@ def test_merge_rules():
 def test_optimizer1():
     fibo = run_optimizer(fib, variables_named(0,interpreter.ret_variable))
 
-    import ipdb; ipdb.set_trace()
-
 def test_optimizer2():
     # check that we can perform inference on the types of a tuple and use that
     # to perform the approperate reflection and then inline calls.  This should
@@ -456,7 +454,7 @@ def test_even_odd():
     even = Intersect(Unify(interpreter.ret_variable, constant(True)),
                            Partition(variables_named(0),
                                      (BuildStructure('nil', VariableId(0), ()),  # even([]).
-                                      Intersect(BuildStructure('.', VariableId(0), (VariableId('J1'), VariableId('L'))),
+                                      Intersect(BuildStructure('.', VariableId(0), (VariableId('J1'), VariableId('L'))),  # even([X,Y|Xs]) :- even(Xs).
                                                 BuildStructure('.', VariableId('L'), (VariableId('J2'), VariableId('Ls'))),
                                                 dyna_system.call_term('even_list', 1)(VariableId('Ls')))
                                       )))
