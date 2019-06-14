@@ -7,10 +7,10 @@ from dyna import BuildStructure
 from dyna.context import dyna_system
 from dyna.syntax.util import colors
 
-from dyna import Frame
+from dyna import Frame, Terminal
 from dyna import Aggregator, Unify, interpreter, Partition
-from dyna import saturate
-from dyna import AggregatorOpImpl
+from dyna import saturate, AggregatorOpImpl
+from dyna.terms import CallTerm
 
 
 def normalize(x):
@@ -251,7 +251,6 @@ def add_rule(x):
 
     # Move commas to the front of the subgoal list...
     # TODO: the optimizer should be able to take care of this.
-    from dyna.terms import CallTerm
     commas = []
     for s in r.sides:
         if isinstance(s, CallTerm) and s.term_ref == (',', 2):
@@ -327,9 +326,6 @@ def test():
     """):
         add_rule(x)
 
-    from dyna import Terminal
-
-
     def run_fib(N):
         fib_call = dyna_system.call_term('fib', 1)
         frame = Frame(); frame[0] = N     # $0 = 0
@@ -338,10 +334,12 @@ def test():
         #print(frame)
         return interpreter.ret_variable.getValue(frame)
 
+    f = {0: 1, 1: 1, 2: 2, 3: 5, 4: 8, 5: 12, 6: 5+12}
     for N in range(0, 6):
         print(f'fib({N})')
         got = run_fib(N)         # TODO: use new user_query method.
         print('  =', got)
+        assert got == f[N], f'`fib({N})` got `{got}`, expected `{f[N]}`.'
         print()
 
     print('------')
