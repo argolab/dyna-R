@@ -419,7 +419,7 @@ class DynaTransformer(Transformer):
         # nontrivial program transform.
 
         if self.HANDLE_DISJUNCTIONS:
-            from dyna.syntax.normalizer import handle_disjunctions
+            from dyna.syntax.prefixagg import handle_disjunctions
             return [rr for r in rs for rr in handle_disjunctions(r)]
         else:
             return rs

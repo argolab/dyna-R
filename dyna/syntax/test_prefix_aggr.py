@@ -1,7 +1,5 @@
-from dyna.syntax.generic import Term, FVar, Rule
-from dyna.syntax.aggregators import AGG
-from dyna.syntax.syntax import term, run_parser
-from dyna.syntax.normalizer import normalize, handle_disjunctions, gen_functor
+from dyna.syntax.syntax import run_parser
+from dyna.syntax.prefixagg import handle_disjunctions, gen_functor
 from dyna.syntax.util import colors
 
 
