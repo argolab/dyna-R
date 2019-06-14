@@ -318,7 +318,6 @@ def user_query(x):
     #interpreter.loop(r, frame, callback, till_terminal=True)
 
 
-
 def test():
 
     for x in run_parser("""
@@ -345,6 +344,7 @@ def test():
         print('  =', got)
         print()
 
+    print('------')
 
     user_query('fib(5)')
 
