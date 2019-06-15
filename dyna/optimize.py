@@ -48,8 +48,29 @@ def make_graph(R):
     return G
 
 
-def split_heuristic(R):
+def is_known_semidet(R):
+    from .terms import BuildStructure
+    from .builtins import ModedOp  # sigh
+
+    if isinstance(R, ModedOp):
+        return not R.nondet  # if there is no non-det opereators, then it is semi-det, and we can duplicate it
+
+    if isinstance(R, BuildStructure):
+        return True
+
+    # if it is an aggregator, then it is semi-det, but it might involve loops
+    # internally (expensive stuff), so we are going to avoid duplicating them
+    # for now.  But idk how this will work out with aggregators, given that we
+    # are removing partitions from the consideration of splitting atm
+
+    # if isinstance(R, Aggregator):
+    #     return True  # then this returns 0 or 1... but
+    return False
+
+
+def split_heuristic(R, info=None):
     from .terms import CallTerm, BuildStructure  # sigh
+    from .builtins import ModedOp
 
     # determine which expressions we want to split out (if any) for the purposes
     # of making a more specalized compiled version.
@@ -75,7 +96,9 @@ def split_heuristic(R):
         vs = set(c.vars)  # start with the variables that we are interested in
         while ecall != oecall:
             oecall = ecall.copy()
-            for c2 in constraints:
+            def consider(c2):
+                nonlocal ecalls, vs, vmap
+                lv = set(v for v in c2.vars if len(vmap[v]) != 1 and not isinstance(v, ConstantVariable))
                 if c2 in ecalls:
                     pass
                 elif isinstance(c2, BuildStructure) and c2.result in vs:
@@ -87,18 +110,62 @@ def split_heuristic(R):
                     # that would have to be included
 
                     assert c2.dyna_system is c.dyna_system  # is this going to be a requirement, or just something that we should instead check, how to mix different "dynabases?"
-
-                    lv = set(v for v in c2.vars if len(vmap[v]) != 1)
                     if lv.issubset(vs) and lv:  # if there are some vars that intersect and it is a subset of the vars that we are interested in
                         ecall.add(c2)
+                elif isinstance(c2, ModedOp):
+                    # take moded ops if they are dealing with this operator
+                    # specifically, so, if there was something like `f(X, X+1)`
+                    # that would take the addition operator.  But this currently
+                    # wouldn't take something like: `f(X,Z), Y=X+1, Z=Y+1`
+                    # because it goes through two different operators to combine
+                    if lv.issubset(vs) and lv:
+                        ecall.add(lv)
+
+            for c2 in constraints:
+                consider(c2)
+
+            if info is not None:
+                for v in vs:
+                    for c2 in info.conjunctive_constraints[v]:
+                        consider(c2)
+
         if len(ecall) > 1:
             ecalls[c] = ecall
 
-    # we are going to filter out calls that are not interesting
-
+    # we are going to filter out calls that are not interesting.  maybe this should go into refine?
     ecalls = dict((k, v) for (k,v) in ecalls.items() if all((not v.issubset(y) or v is y) for y in ecalls.values()))
 
     return ecalls
+
+
+def refine_splits(splits):
+    # determine which operators we want to have in each split.  If some operator
+    # is duplicated between two places, check that it semidet, or choose once
+    # side or another for it, or just leave it in the origional program.
+
+    if len(splits) == 1:
+        return [list(splits.values())[0]]  # just return this single split
+
+    raise NotImplementedError()  # if there are multiple places where we want to split
+
+
+def make_split(R, splits):
+    # the chunking operator.  Will break out an expression and determine which
+    # variables are shared between the two sides.  From that point it will
+
+    all_Rs = dict((b,b) for a in splits for b in a)
+
+    def rewriter(r):
+        if all_Rs.get(r) is r:
+            return Terminal(1)  # this is getting removed
+        return r.rewrite(rewriter)
+    R = rewriter(R)
+
+    Rvs = set(R.all_vars())
+
+
+
+
 
 
 class RStrctureInfo:
@@ -370,22 +437,22 @@ def run_optimizer_local(R, exposed_variables):
 
     R = intersect(*exposed_constants, R)
 
-    Rz = sort_intersections(construct_intersecting(R))
+    # Rz = sort_intersections(construct_intersecting(R))
 
-    # G = make_graph(Rz)
+    # # G = make_graph(Rz)
 
-    # import matplotlib.pyplot as plt
-    # labels = {}
-    # for v in Rz.all_vars():
-    #     labels[v] = str(v)
+    # # import matplotlib.pyplot as plt
+    # # labels = {}
+    # # for v in Rz.all_vars():
+    # #     labels[v] = str(v)
 
-    # nx.draw(G, with_labels=True)
-    # plt.show()
-    # assert nx.is_connected(G)
+    # # nx.draw(G, with_labels=True)
+    # # plt.show()
+    # # assert nx.is_connected(G)
 
-    sp = split_heuristic(Rz)
+    # sp = split_heuristic(Rz)
 
-    import ipdb; ipdb.set_trace()
+    # import ipdb; ipdb.set_trace()
 
     assert ex.issubset(set(R.all_vars())) or R.isEmpty()
 
@@ -396,5 +463,17 @@ def run_optimizer(R, exposed_variables):
     """this will potentially construct new method names that are the same for
     different operations.  These operations will be saved in the dyna_system."""
 
+    rr = run_optimizer_local(R, exposed_variables)
 
-    return run_optimizer_local(R, exposed_variables)
+    splits = split_heuristic(construct_intersecting(rr))
+
+    for sp in splits:
+        # then we are going to want to identify which operations are
+
+
+        import ipdb; ipdb.set_trace()
+        pass
+
+
+
+    return rr

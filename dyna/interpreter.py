@@ -89,7 +89,7 @@ class RBaseType:
             if not isinstance(var, ConstantVariable) and var not in vs:
                 vl.append(var)
         rm = dict(zip(vl, variables_named(*range(len(vl)))))
-        return self.rename_vars(lambda x: rm.get(x,x))
+        return self.rename_vars(lambda x: rm.get(x,x)), dict((v,k) for k,v in rm.items())
 
 
     def __call__(self, *args, ret=None):
@@ -294,16 +294,19 @@ def constant(v):
     return ConstantVariable(None, v)
 
 class Frame(dict):
-    __slots__ = ('call_stack', 'memo_reads')
+    __slots__ = ('call_stack', 'memo_reads', 'assumption_tracker')
 
     def __init__(self, f=None):
         if f is not None:
             super().__init__(f)
             self.call_stack = f.call_stack.copy()
+            self.memo_reads = f.memo_reads
+            self.assumption_tracker = f.assumption_tracker
         else:
             super().__init__()
             self.call_stack = []
-        self.memo_reads = True
+            self.memo_reads = True  # if the memo tables are allowed to perform reads (making the results dependent on the values saved, otherwise just don't run)
+            self.assumption_tracker = lambda x: None  # when we encounter an assumption during simplification, log that here
 
     def __repr__(self):
         nice = {str(k).split('\n')[0]: v for k,v in self.items()}
@@ -443,7 +446,7 @@ class RefinedVisitor(Visitor):
         # patterns.  So we attempt to normalize the varible names and then use
         # that as an equality matching on these expressions
         assert isinstance(refined, RBaseType)
-        rf = refined.weak_equiv()
+        rf, _ = refined.weak_equiv()
 
         def f(method):
             self._refined_methods.setdefault(type(rf), {})[rf] = method
@@ -455,7 +458,7 @@ class RefinedVisitor(Visitor):
         if self._refined_methods:
             z = self._refined_methods.get(typ)
             if z is not None:
-                rf = z.get(R.weak_equiv())
+                rf = z.get(R.weak_equiv()[0])
                 if rf is not None:
                     return rf
         return self._methods.get(typ, self._default)

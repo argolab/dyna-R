@@ -80,6 +80,7 @@ class AssumptionWrapper(RBaseType):
 @simplify.define(AssumptionWrapper)
 def simplify_assumption(self, frame):
     # this doesn't do anything, as something else is going to have to get all of the assumptions
+    frame.assumption_tracker(self.assumption)
     return simplify(self.body, frame)
 
 get_all_assumptions = Visitor(track_source=False)

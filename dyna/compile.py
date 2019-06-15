@@ -1,5 +1,24 @@
 from .interpreter import *
 
+class CompiledFrame:
+
+    def __init__(self, variables):
+        self._values = len(variables)
+        # the map from variables to slots should be done before we are running or something
+        self._vmap = dict((v, i) for i,v in enumerate(variables))
+
+
+class CompiledCallTerm(RBaseType):
+    """The compiler uses a different operator for calling terms, as we want to be a
+    bit more "static" about what return types we might get back.  We can
+    additionally be more static about which expressions we are giong to use
+
+    """
+
+
+    def __init__(self, dyna_system, term_ref, call_mode):
+        assert False
+
 def compile(R, argument_variables, incoming_mode):
     # take an R-expr, and wrap it such that we compile it.  For now this should
     # just be the moded operations and determining which results are going to be

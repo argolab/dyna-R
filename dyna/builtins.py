@@ -14,9 +14,13 @@ class ModedOp(RBaseType):
     def rename_vars(self, remap):
         return ModedOp(self.name, self.det, self.nondet, tuple(map(remap, self.vars)))
     def possibly_equal(self, other):
-        return type(self) is type(other) and self.op is other.op
+        return type(self) is type(other) and self.det is other.det and self.nondet is other.nondet
     def _tuple_rep(self):
         return (self.__class__.__name__, self.name, self.vars)
+    def __eq__(self, other):
+        return super().__eq__(other) and self.det is other.det and self.nondet is other.nondet
+    def __hash__(self):
+        return super().__hash__() ^ object.__hash__(self.det) ^ object.__hash__(self.nondet)
 
 class IteratorFromIterable(Iterator):
     def __init__(self, variable, iterable):
@@ -43,6 +47,7 @@ def modedop_simplify(self, frame):
         vals = tuple(v.getValue(frame) for v in self.vars)
         r = self.det[mode](*vals)
         if isinstance(r, FinalState):
+            assert not isinstance(r, Terminal) or r.multiplicity <= 1  # force to be semi-det
             return r
         if r == ():
             return self  # made no progress
@@ -379,11 +384,11 @@ dyna_system.define_infered(
 
 dtypes = [int_v, float_v, term_type, str_v, bool_v]
 
-for a in dtypes:
-    for b in dtypes:
+for i, a in enumerate(dtypes):
+    for b in dtypes[i+1:]:
         # for types that do not overlap, we are going to mark these as terminal
         # up front, so we can just delete these branches
-        if a != b and (a not in (int_v, float_v) and b not in (int_v, float_v)):
+        if not (a in (int_v, float_v) and b in (int_v, float_v)):
             dyna_system.define_infered(
                 intersect(a('a'), b('a')),
                 Terminal(0)

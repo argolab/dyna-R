@@ -32,6 +32,7 @@ class SystemContext:
         self.agenda = Agenda()
 
         self.infered_constraints = []  # going to want some matching expression against having multiple
+        self.infered_constraints_index = {}
 
         # where we fallback for pther defined
         self.parent = None
@@ -100,7 +101,14 @@ class SystemContext:
         self.invalidate_term_assumption(a)
 
     def define_infered(self, required :RBaseType, added :RBaseType):
-        self.infered_constraints.append((required, added))
+        z = (required, added)
+        self.infered_constraints.append(z)
+
+        # this is the constraint with the most number of variables attached, so
+        # the thing that we are going to look for an index on
+        ri = max(required.all_children(), key=lambda x: len(x.vars))
+        self.infered_constraints_index.setdefault(type(ri), {}).setdefault(ri.weak_equiv()[0], []).append(z)
+
 
     def call_term(self, name, arity) -> RBaseType:
         # this should return a method call to a given term.

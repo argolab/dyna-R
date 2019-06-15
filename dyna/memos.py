@@ -257,6 +257,8 @@ def simplify_memo(self, frame):
         # then we are not allowed to perform any reads of a memo table
         return self
 
+    frame.assumption_tracker(self.memos.assumption)
+
     mode = tuple(v.isBound(frame) for v in self.variables)
     can_run = True
     for a, b in zip(mode, self.memos.supported_mode):
