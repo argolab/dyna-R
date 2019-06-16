@@ -65,6 +65,24 @@ class AssumptionListener:
         # something else that should be done here
         self.invalidate()
 
+class AssumptionResponse:
+
+    def __init__(self, method):
+        self.method = method
+
+    def signal(self, msg):
+        raise NotImplementedError()
+
+    def invalidate(self):
+        if self.method is not None:
+            r = self.method
+            self.method = None
+            r()
+
+    def notify_invalidated(self):
+        self.invalidate()
+
+
 
 class AssumptionWrapper(RBaseType):
 

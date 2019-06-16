@@ -7,7 +7,7 @@
 # maybe these should be imported later or not at all, so this will instead
 from .interpreter import *
 from .terms import CallTerm, Evaluate, Evaluate_reflect
-from .guards import Assumption, AssumptionWrapper
+from .guards import Assumption, AssumptionWrapper, AssumptionResponse
 from .agenda import Agenda
 from .optimize import run_optimizer
 
@@ -47,8 +47,10 @@ class SystemContext:
 
     def invalidate_term_assumption(self, name):
         a = self.term_assumption(name)
-        self.term_assumptions[name] = Assumption(name)
+        n = Assumption(name)
+        self.term_assumptions[name] = n
         a.invalidate()
+        return n
 
     def delete_term(self, name, arity):
         a = (name, arity)
@@ -56,6 +58,8 @@ class SystemContext:
             del self.terms_as_defined[a]
         if a in self.terms_as_optimized:
             del self.terms_as_optimized[a]
+        if a in self.terms_as_memoized:
+            del self.terms_as_memoized[a]
 
         # do invalidation last as we want anything that rechecks to get the new values
         self.invalidate_term_assumption(a)
@@ -192,26 +196,30 @@ class SystemContext:
             exposed = (ret_variable, *variables_named(range(arity)))
         rr, assumptions = run_optimizer(r, exposed)
 
+        assumptions.add(assumpt)
+
         bc = check_basecases(rr, stack=(term,))
         if bc == 0:
             # then there is no way for this to ever match something, so just report it as empty
             rr = Terminal(0)
+
+        assumption_response = AssumptionResponse(lambda: self._optimize_term(term))
+        invalidate = False
 
         if rr != popt:
             if rr.isEmpty() or popt is not None:
                 # then we have "proven" something interesting, so we are going
                 # to use the assumption to notify anything that might want to
                 # read from this expression.
-
-                pass
+                invalidate = True
             self.terms_as_optimized[term] = rr
 
+        if invalidate:
+            assumptions.remove(assumpt)
+            assumptions.add(self.invalidate_term_assumption(term))
+
         for a in assumptions:
-            # TODO: subscribe to all of the assumptions or something
-            pass
-
-        import ipdb; ipdb.set_trace()
-
+            a.track(assumption_response)
 
 
 # where we will define the builtins etc the base dyna base, for now there will
@@ -291,23 +299,6 @@ def check_basecases(R, stack=()):
             if x > y: x = y
             if x == 0: return x
         return x
-
-class AssumptionOptimizationHandler:
-
-    def __init__(self, dyna_system, term_ref):
-        self.dyna_system = dyna_system
-        self.term_ref = term_ref
-
-
-    def signal(self, msg):
-        raise NotImplementedError()  # wtf? not expected, maybe if we are depending on some value in a memo table, we can just treat this as an invalidation
-
-    def notify_invalidated(self):
-        self.invalidate()
-
-    def invalidate(self):
-        # we are going to delete some optimized version of the code, and then requeue generation of this expression
-        assert False  # TODO
 
 
 # class TaskContext:

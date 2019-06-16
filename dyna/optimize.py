@@ -373,7 +373,6 @@ def delete_useless_unions(R, info):
 
                     if rr.isEmpty():
                         # then we have found something that we can delete, so mark that
-                        #import ipdb; ipdb.set_trace()
                         deletes.setdefault(p, set()).add((kk, v))
 
     assert st == str(R)
@@ -418,13 +417,12 @@ def run_optimizer_local(R, exposed_variables):
     while True:
         last_R = R
 
-        print(R)
-        print(frame)
-        print('-'*50)
+        # print(R)
+        # print(frame)
+        # print('-'*50)
 
         R = saturate(R, frame)
         if R.isEmpty():
-            import ipdb; ipdb.set_trace()
             break
 
         info = RStrctureInfo(exposed_variables=exposed_variables,frame=frame)
@@ -437,7 +435,6 @@ def run_optimizer_local(R, exposed_variables):
         R = saturate(R, info.frame)
 
         if R.isEmpty():
-            import ipdb; ipdb.set_trace()
             break
 
         R = delete_useless_unions(R, info)
@@ -490,6 +487,8 @@ def run_optimizer(R, exposed_variables):
 
     splits = split_heuristic(construct_intersecting(rr))
 
+    assert isinstance(rr, RBaseType)
+
     if not splits:
         return rr, assumptions
 
@@ -498,5 +497,7 @@ def run_optimizer(R, exposed_variables):
     # this now is a new program with some common states combined out into
     # external calls.
     mk = make_split(rr, rsplits)
+
+    assert isinstance(mk, RBaseType)
 
     return mk, assumptions

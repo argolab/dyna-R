@@ -427,7 +427,7 @@ def test_optimizer2():
     # res = *&opt_call(A1, A2)
     rx = Intersect(BuildStructure('opt_call', sv, (a1, a2)), ReflectStructure(sv, sname, snargs, alist), Evaluate_reflect(dyna_system, res, sname, snargs, alist))
 
-    rr = run_optimizer(rx, (a1, a2, res))
+    rr, assumptions = run_optimizer(rx, (a1, a2, res))
 
     assert set(rr._children) == set((Unify(constant(True), res), Unify(a1,a2)))
 
@@ -441,7 +441,7 @@ def test_optimizer3():
     # res = *&opt_call(A1, 7).
     rx = Intersect(BuildStructure('opt_call2', sv, (a1, constant(7))), ReflectStructure(sv, sname, snargs, alist), Evaluate_reflect(dyna_system, res, sname, snargs, alist))
 
-    rr = run_optimizer(rx, (a1, a2, res))
+    rr, assumptions = run_optimizer(rx, (a1, a2, res))
 
     # there should just be two unify expressions with constants
     assert set(rr._children) == set((Unify(constant(True), res), Unify(a1,constant(7))))
@@ -455,7 +455,7 @@ def test_optimizer4():
     # X = s(s(X))
     rx = Intersect(BuildStructure('s', a, (b,)), BuildStructure('s', b, (a,)))
 
-    rr = run_optimizer(rx, (a,b))
+    rr, assumptions = run_optimizer(rx, (a,b))
 
     assert rr == Terminal(0)
 
@@ -511,3 +511,50 @@ def test_even_odd():
     rr2 = saturate(rx, frame)
 
     assert rr2 == Terminal(0)
+
+
+def test_mapl_neural_network():
+    ret_variable = interpreter.ret_variable
+
+    add_agg = AggregatorOpImpl(lambda a,b: a+b)
+    eq_agg = AggregatorOpImpl(lambda a,b: 1/0)  # error if there are more than one key
+
+
+    ws = [(0,0),
+         (-1,-1),
+         (1,1)]
+    weights = Partition((VariableId(0), ret_variable),
+                        [Intersect(Unify(VariableId(0), constant(w[0])),
+                                   Unify(ret_variable, constant(w[1]))) for w in ws])
+    dyna_system.define_term('weights', 1, weights)
+
+    neural_input = Aggregator(ret_variable, (VariableId(0),), VariableId('RR'), eq_agg, Intersect(BuildStructure('inp', VariableId(0), (VariableId('X'),)),
+                                                                                                  dyna_system.call_term('weights', 1)(VariableId('X'), ret=VariableId('RR'))))
+
+    dyna_system.define_term('neural_input', 1, neural_input)
+
+    neural_output = Aggregator(ret_variable, (VariableId(0),), VariableId('RR'), add_agg, Intersect(dyna_system.call_term('neural_input', 1)(VariableId('Y'), ret=VariableId('Yr')),
+                                                                                                    dyna_system.call_term('neural_edge', 2)(VariableId(0), VariableId('Y'), ret=VariableId('Er')),
+                                                                                                    dyna_system.call_term('*', 2)(VariableId('Er'), VariableId('Yr'), ret=VariableId('RR'))))
+
+    dyna_system.define_term('neural_output', 1, neural_output)
+
+    edge = Aggregator(ret_variable, (VariableId(0), VariableId(1),), VariableId('RR'), eq_agg,
+                      Intersect(BuildStructure('inp', VariableId(1), (VariableId('X'),)),
+                                BuildStructure('out', VariableId(0), (VariableId('Y'),)),
+                                dyna_system.call_term('+', 2)(VariableId('X'), VariableId('Z'), ret=VariableId('Y')),
+                                dyna_system.call_term('weights', 1)(VariableId('Z'), ret=VariableId('RR'))))
+
+    dyna_system.define_term('neural_edge', 2, edge)
+
+
+    eo = dyna_system.call_term('neural_output', 1)
+
+    frame = Frame()
+    def cb(R, frame):
+        assert isinstance(R, Terminal)
+        print(frame[0], ret_variable.getValue(frame))
+        import ipdb; ipdb.set_trace()
+
+    eo = saturate(eo, frame)
+    loop(eo, frame, cb, best_effort=True)
