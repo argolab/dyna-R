@@ -701,6 +701,8 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
             #nc[nkey].append(res)
             nc.setdefault(nkey,[]).append(res)
 
+    saveL.unioned_vars = self._unioned_vars
+
     # a hook so that we can handle perform some remapping and control what gets save back into the partition
     if map_function is None:
         save = saveL
@@ -1029,6 +1031,37 @@ def simplify_aggregator(self, frame):
     # (Meaning that this is something like `f(X) += 5.`)
 
     return Aggregator(self.result, self.head_vars, self.body_res, self.aggregator, body)
+
+
+@getPartitions.define(Aggregator)
+def getPartitions_aggregator(self, frame):
+    for p in getPartitions(self.body, frame):
+        if p.variable in self.head_vars:
+            # filter out the iterators that are going to yield unconsolidated results
+            yield p
+
+
+def make_aggregator_loopable(R):
+    # wrap the body of an aggregator in a partition in hopes that the body will
+    # become loopable so that
+    if isinstance(R, Aggregator):
+        hs = set((*R.head_vars, R.body_res))
+        if not isinstance(R.body, Partition) or set(R.body._unioned_vars) != hs:
+            # then we want to make the body a partition so that we can loop the different expressions
+            hs = tuple(hs)  # the order probably will impact the trie
+            nb = partition(hs, [R.body])
+            frame = Frame()
+            from .memos import _flatten_keys
+            nb = simplify(nb, frame, map_function=_flatten_keys, reduce_to_single=False)
+            # it might be important that we maintain the frame? or that we unify these variables with their constant values
+
+            #import ipdb; ipdb.set_trace()
+            assert not frame
+
+            return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, nb)
+
+    return R.rewrite(make_aggregator_loopable)
+
 
 
 

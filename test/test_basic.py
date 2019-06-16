@@ -557,4 +557,10 @@ def test_mapl_neural_network():
         import ipdb; ipdb.set_trace()
 
     eo = saturate(eo, frame)
-    loop(eo, frame, cb, best_effort=True)
+    re,_ = run_optimizer(eo, (VariableId(0), ret_variable))
+
+    zz = re
+    for _ in range(4):
+        zz = interpreter.make_aggregator_loopable(zz)
+
+    loop(re, frame, cb, best_effort=True)

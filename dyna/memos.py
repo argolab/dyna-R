@@ -313,9 +313,17 @@ def _flatten_keys(save, R, frame):
         save(R, frame)
     else:
         # then we are going to loop and try and ground out more
-        def cb(R, frame):
-            #import ipdb; ipdb.set_trace()
-            save(R, frame)
+        def cb(R, frame2):
+            # if frame != frame2:
+            #     import ipdb; ipdb.set_trace()
+            # this needs to save any additional variables that are set in the frame into the R-expr
+            # the loop method can construct new copies of the frame, and that might be over variables that are not going to be saved by the partition
+
+            if frame != frame2:
+                # FML
+                R = R.rename_vars(lambda x: constant(x.getValue(frame2)) if (x.isBound(frame2) and not x.isBound(frame) and x not in save.unioned_vars) else x)
+
+            save(R, frame2)
         loop(R, frame, cb, best_effort=True)
 
 

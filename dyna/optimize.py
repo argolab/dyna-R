@@ -291,10 +291,13 @@ class OptimizeVisitor(Visitor):
 optimizer = OptimizeVisitor()
 
 @optimizer.define(Partition)
-def optimzier_partition(R, info):
+def optimzier_partition(partition, info):
+    from .terms import BuildStructure
     # we are going to want handle the fact that there are different branches of
     # disjunctive constraints. which means that we are giong to be entering a
     # lot of different contexts.
+
+    check_values = [v for v in partition._unioned_vars if not v.isBound(info.frame)]
 
     def opt_mapper(save, R, frame):
         # we are going to want to call optimzie on all of these expressions
@@ -304,6 +307,19 @@ def optimzier_partition(R, info):
 
         i2 = info.recurse(frame=frame)
         i2.partition_constraints = map_constraints_to_vars(get_intersecting_constraints(R))
+
+        frame2 = Frame(frame)  # copy frame as we do not want to modify the state with these extra operators as they might not be properly unset later
+        for var in check_values:
+            if var.isBound(frame):
+                # then we want to double check the value with all of the
+                # constraints. that are outside of the partition, as these would
+                # never work
+                for c in info.conjunctive_constraints[var]:
+                    if isinstance(c, (BuildStructure, ModedOp)):
+                        cr = simplify(c, frame2)
+                        if cr.isEmpty():
+                            # then this branch does not do anything, so we are going to keep it around
+                            return
 
         # add in the conjunctive constraints to this expression
         for var, cons in i2.partition_constraints.items():
@@ -318,7 +334,7 @@ def optimzier_partition(R, info):
     # ???: do we want to run the simplify before we get the callback?  That
     # could delete some constraint that we might be able to use for pattern
     # matching.  But I suppose that this tracks that there are
-    res = simplify(R, info.frame, map_function=opt_mapper)
+    res = simplify(partition, info.frame, map_function=opt_mapper)
 
 
     return res

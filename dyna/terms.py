@@ -469,8 +469,9 @@ def simplify_call(self, frame):
                 r = CallTerm(self.var_map, self.dyna_system, self.term_ref)
                 r.parent_calls_blocker += c.parent_calls_blocker
                 r.parent_calls_blocker.append(tuple(c.var_map.values()))
-                self = r
-                break
+                return r
+                # self = r
+                # break
 
     # sanitity check for now
     assert len(self.parent_calls_blocker) < 10
