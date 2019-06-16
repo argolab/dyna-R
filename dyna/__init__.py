@@ -11,7 +11,7 @@ from .interpreter import (
 )
 
 from .terms import (
-    Term, BuildStructure, ReflectStructure, Evaluate
+    Term, BuildStructure, ReflectStructure, Evaluate, Evaluate_reflect
 )
 
 from .memos import MemoContainer, RMemo, naive_converge_memos, rewrite_to_memoize

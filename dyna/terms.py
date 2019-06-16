@@ -291,7 +291,9 @@ def optimzier_reflectstructure(self, info):
     return self
 
 
-class Evaluate(RBaseType):
+
+# XXX: should just delete and use the other Evaluate
+class Evaluate_reflect(RBaseType):
     """
     This should completement the reflect structure operator in that if we know the name and number of arguments then we can resolve the call
     without haivng to know the all of the arguments as ground.  To construct an `*X` operator then we can combine this with reflect structure
@@ -313,13 +315,13 @@ class Evaluate(RBaseType):
         return self.ret, self.name, self.nargs, self.args_list
 
     def rename_vars(self, remap):
-        return Evaluate(self.dyna_system, remap(self.ret_var), remap(self.name_var), remap(self.nargs_var), remap(self.args_list))
+        return Evaluate_reflect(self.dyna_system, remap(self.ret_var), remap(self.name_var), remap(self.nargs_var), remap(self.args_list))
 
     def _tuple_rep(self):
         return self.__class__.__name__, self.ret, self.name, self.nargs, self.args_list
 
-@simplify.define(Evaluate)
-def simplify_evaluate(self, frame):
+@simplify.define(Evaluate_reflect)
+def simplify_evaluate_reflect(self, frame):
     if self.args_list.isBound(frame) and not self.nargs.isBound(frame):
         # then we are going to compute the length
         args = self.args_list.getValue(frame)
@@ -349,6 +351,59 @@ def simplify_evaluate(self, frame):
         return simplify(R, frame)
 
     return self
+
+
+class Evaluate(RBaseType):
+    """Do the combine arguments and the evaluate in the same operator.  Will just
+    make the opetimizer aware of this operation the same way it is aware of ReflectStructure
+
+    """
+
+    def __init__(self, dyna_system, ret: Variable, term_var: Variable, extra_args: Tuple[Variable]=()):
+        super().__init__()
+        self.dyna_system = dyna_system
+        self.ret = ret
+        self.term_var = term_var
+        self.extra_args = extra_args
+
+    @property
+    def vars(self):
+        return (self.ret, self.term_var, *self.extra_args)
+
+    def rename_vars(self, remap):
+        return Evaluate(self.dyna_system, remap(self.ret), remap(self.term_var), tuple(remap(v) for v in self.extra_args))
+
+    def _tuple_rep(self):
+        return self.__class__.__name__, self.ret, self.term_var, self.extra_args
+
+
+@simplify.define(Evaluate)
+def simplify_evaluate(self, frame):
+    if self.term_var.isBound(frame):
+        # then we are going to replace this operation with the CallTerm operator
+        t = self.term_var.getValue(frame)
+        if not isinstance(t, Term):
+            return Terminal(0)
+        r = self.dyna_system.call_term(t.name, len(t.arguments)+len(self.extra_args))(*(constant(a) for a in t.arguments), *self.extra_args, ret=self.ret)
+        return simplify(r, frame)
+
+    return self
+
+@optimizer.define(Evaluate)
+def optimizer_evaluate(self, info):
+    cc = info.conjunctive_constraints[self.term_var]
+    for c in cc:
+        if isinstance(c, BuildStructure) and c.result == self.term_var:
+            # then we can determine the name and number of arguments from this
+            name = c.name
+            arity = len(c.arguments)
+            vs = [VariableId(('evaluate_t', object())) for _ in range(arity)]
+            c = self.dyna_system.call_term(name, arity+len(self.extra_args))(*vs, *self.extra_args, ret=self.ret)
+            return Intersect((BuildStructure(name, self.term_var, vs), c))
+
+    return self
+
+
 
 
 class CallTerm(RBaseType):

@@ -428,3 +428,17 @@ append = intersect(Unify(constant(True), ret_variable),
                                          dyna_system.call_term('append', 3)(VariableId('Y'), VariableId(1), VariableId('B')))
                               )))
 dyna_system.define_term('append', 3, append)
+
+
+from .terms import Evaluate, ReflectStructure
+
+# $reflect(Out, Name :str, arity :int, [arg1, arg2, arg3...])
+# arity allows for this to be rewritten eariler, but is optional as it can be infered if the list is fully ground
+dyna_system.define_term('$reflect', 4, Intersect((Unify(constant(True), ret_variable), ReflectStructure(VariableId(0), VariableId(1), VariableId(2), VariableId(3)))))
+# $reflect(Out, Name :str, [arg1, arg2, arg3...])
+dyna_system.define_term('$reflect', 3, Intersect((Unify(constant(True), ret_variable), ReflectStructure(VariableId(0), VariableId(1), VariableId('not_used'), VariableId(2)))))
+
+# $call(&foo(1,2,3), X) => foo(1,2,3,X)
+# the parser should just use Evaluate directly from terms, as this is only going up to 8 (which matches the prolog docs...)
+for i in range(8):
+    dyna_system.define_term('$call', i+1, Evaluate(dyna_system, ret_variable, VariableId(0), tuple(VariableId(j+1) for j in range(i))))

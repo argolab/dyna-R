@@ -350,10 +350,10 @@ def test_reflect():
     assert nargs.getValue(frame2) == 3
 
 
-def test_evaluate():
+def test_evaluate_reflect():
     ret, name, nargs, alist = variables_named(*'abcd')
 
-    e = Evaluate(dyna_system, ret, name, nargs, alist)
+    e = Evaluate_reflect(dyna_system, ret, name, nargs, alist)
 
     dyna_system.define_term('test_foo', 3, Unify(VariableId(0), VariableId(1)))
 
@@ -373,6 +373,16 @@ def test_evaluate():
     rr = simplify(e, frame)
 
     assert rr == Terminal(0)
+
+def test_evaluate_call():
+    call = dyna_system.call_term('$call', 2)
+
+    frame = Frame()
+    frame[0] = Term('add', (1,))
+
+    rr = simplify(call, frame)
+
+    assert rr.name == 'add'
 
 
 def test_merge_rules():
@@ -415,7 +425,7 @@ def test_optimizer2():
     res, sv, a1, a2, sname, snargs, alist = variables_named(*'abcdefg')
 
     # res = *&opt_call(A1, A2)
-    rx = Intersect(BuildStructure('opt_call', sv, (a1, a2)), ReflectStructure(sv, sname, snargs, alist), Evaluate(dyna_system, res, sname, snargs, alist))
+    rx = Intersect(BuildStructure('opt_call', sv, (a1, a2)), ReflectStructure(sv, sname, snargs, alist), Evaluate_reflect(dyna_system, res, sname, snargs, alist))
 
     rr = run_optimizer(rx, (a1, a2, res))
 
@@ -429,7 +439,7 @@ def test_optimizer3():
     res, sv, a1, a2, sname, snargs, alist = variables_named(*'abcdefg')
 
     # res = *&opt_call(A1, 7).
-    rx = Intersect(BuildStructure('opt_call2', sv, (a1, constant(7))), ReflectStructure(sv, sname, snargs, alist), Evaluate(dyna_system, res, sname, snargs, alist))
+    rx = Intersect(BuildStructure('opt_call2', sv, (a1, constant(7))), ReflectStructure(sv, sname, snargs, alist), Evaluate_reflect(dyna_system, res, sname, snargs, alist))
 
     rr = run_optimizer(rx, (a1, a2, res))
 
@@ -487,11 +497,17 @@ def test_even_odd():
     combined = Intersect(even(0), odd(0))  # combine the two rules, if we can identify that the states are the same then this should just be empty
 
     frame = Frame()
-
     rr = saturate(combined, frame)
-
     assert not rr.isEmpty()
 
-    rx = run_optimizer(combined, variables_named(0))
+    rx, assumptions = run_optimizer(combined, variables_named(0))
 
-    assert rx == Terminal(0)
+    # at this point, the optimizer would have pushed more tasks to the agenda to
+    # try the recursive parts.  Those will eventually identify that this can not
+    # hit a base case, and thus will mark it as terminal(0)
+    dyna_system.run_agenda()
+
+    frame = Frame()
+    rr2 = saturate(rx, frame)
+
+    assert rr2 == Terminal(0)

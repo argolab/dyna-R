@@ -79,16 +79,16 @@ class RBaseType:
             return r
         return self.rename_vars(rmap)
 
-    def weak_equiv(self):
+    def weak_equiv(self, ignored=()):
         # try and make the expressions the same by renaming variables in a
         # consistent way.  ideally, we can pattern match against these
         # expressions more easily later?
-        vs = set()
+        vs = set(ignored)  # start with variables that we do not want to normalize the names
         vl = []
         for var in self.all_vars():
             if not isinstance(var, ConstantVariable) and var not in vs:
                 vl.append(var)
-        rm = dict(zip(vl, variables_named(*range(len(vl)))))
+        rm = dict(zip(vl, (VariableId(f'$W{i}') for i in range(len(vl)))))
         return self.rename_vars(lambda x: rm.get(x,x)), dict((v,k) for k,v in rm.items())
 
 

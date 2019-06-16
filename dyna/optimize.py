@@ -148,24 +148,44 @@ def refine_splits(splits):
 
     raise NotImplementedError()  # if there are multiple places where we want to split
 
+def remove_parent_call_trackers(R):
+    from .terms import CallTerm
+    if isinstance(R, CallTerm):
+        # the parent_calls_blocker will be reset on this object, so that it can be inlined again
+        return CallTerm(R.var_map, R.dyna_system, R.term_ref)
+    return R.rewrite(remove_parent_call_trackers)
 
 def make_split(R, splits):
+    from .terms import CallTerm
     # the chunking operator.  Will break out an expression and determine which
     # variables are shared between the two sides.  From that point it will
 
     all_Rs = dict((b,b) for a in splits for b in a)
 
     def rewriter(r):
-        if all_Rs.get(r) is r:
+        if all_Rs.get(r) is r: # and not is_known_semidet(r):  # I suppose that keeping these semidet operations can only help?  we are going to allow earlier filtering of expressions, but we are going to have more variables shared..
             return Terminal(1)  # this is getting removed
         return r.rewrite(rewriter)
     R = rewriter(R)
 
     Rvs = set(R.all_vars())
 
+    splits = [sort_intersections(remove_parent_call_trackers(Intersect(tuple(s)))).weak_equiv() for s in splits]
 
+    additions = []
+    for spr, spv in splits:
+        ds = None
+        for c in spr.all_children():
+            if isinstance(c, CallTerm):
+                ds = c.dyna_system
+                break
+        cv = dict((k,v) for k,v in spv.items() if v in Rvs)  # get the variables that are shared between the two expressions
+        exposed_vars = set(cv.keys())
 
+        mt = ds.create_merged_expression(spr, exposed_vars)
+        additions.append(CallTerm(cv, ds, mt))
 
+    return intersect(R, *additions)
 
 
 class RStrctureInfo:
@@ -389,9 +409,12 @@ def run_optimizer_local(R, exposed_variables):
 
     ex = set(R.all_vars()) & set(exposed_variables)
 
+    assumptions = set()
+
     exposed_constants = []
     frame = Frame()
     frame.memo_reads = False  # prevent memo tables from being read at this step so optimizations are not dependant
+    frame.assumption_tracker = assumptions.add
     while True:
         last_R = R
 
@@ -456,24 +479,24 @@ def run_optimizer_local(R, exposed_variables):
 
     assert ex.issubset(set(R.all_vars())) or R.isEmpty()
 
-    return R
+    return R, assumptions
 
 
 def run_optimizer(R, exposed_variables):
     """this will potentially construct new method names that are the same for
     different operations.  These operations will be saved in the dyna_system."""
 
-    rr = run_optimizer_local(R, exposed_variables)
+    rr, assumptions = run_optimizer_local(R, exposed_variables)
 
     splits = split_heuristic(construct_intersecting(rr))
 
-    for sp in splits:
-        # then we are going to want to identify which operations are
+    if not splits:
+        return rr, assumptions
 
+    rsplits = refine_splits(splits)
 
-        import ipdb; ipdb.set_trace()
-        pass
+    # this now is a new program with some common states combined out into
+    # external calls.
+    mk = make_split(rr, rsplits)
 
-
-
-    return rr
+    return mk, assumptions
