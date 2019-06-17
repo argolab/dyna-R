@@ -207,14 +207,9 @@ class MemoContainer:
             if val is not None:
                 var.setValue(frame, val)
 
-        # if msg.key == (2,1):
-        #     frame['ddd'] = True
-        #     import ipdb; ipdb.set_trace()
-
         nRes = simplify(res, frame, map_function=_flatten_keys, reduce_to_single=False)
 
         if nRes.isEmpty():
-            #import ipdb; ipdb.set_trace()
             return
 
         refresh_keys = set(nRes._children.keys())
@@ -234,6 +229,7 @@ class RMemo(RBaseType):
     """
 
     def __init__(self, variables :Tuple[Variable], memos: MemoContainer):
+        super().__init__()
         assert len(variables) == len(memos.variables)
         self.variables = variables
         self.memos = memos
@@ -260,6 +256,8 @@ def simplify_memo(self, frame):
     if not frame.memo_reads:
         # then we are not allowed to perform any reads of a memo table
         return self
+
+    frame.assumption_tracker(self.memos.assumption)
 
     mode = tuple(v.isBound(frame) for v in self.variables)
     can_run = True
@@ -315,9 +313,20 @@ def _flatten_keys(save, R, frame):
         save(R, frame)
     else:
         # then we are going to loop and try and ground out more
-        def cb(R, frame):
-            #import ipdb; ipdb.set_trace()
-            save(R, frame)
+        def cb(R, frame2):
+            # if frame != frame2:
+            #     import ipdb; ipdb.set_trace()
+            # this needs to save any additional variables that are set in the frame into the R-expr
+            # the loop method can construct new copies of the frame, and that might be over variables that are not going to be saved by the partition
+
+            # if frame != frame2:
+            #     # FML
+            #     R = R.rename_vars(lambda x: constant(x.getValue(frame2)) if (x.isBound(frame2) and not x.isBound(frame) and x not in save.unioned_vars) else x)
+
+            # double FML
+            r2 = R.rename_vars_unique(lambda x: constant(x.getValue(frame2)) if x.isBound(frame2) else (x if x in save.unioned_vars else None))
+
+            save(r2, frame2)
         loop(R, frame, cb, best_effort=True)
 
 
@@ -385,7 +394,7 @@ class AgendaMessage(NamedTuple):
 
     # used in the case that this is an update, and we are able to just add these changes
     addition : RBaseType = None  # an Rexpr that we are adding to the table or None to indicate nothing here
-    deletition : RBaseType = None# an Rexpr that we are removing form the table or None
+    deletion : RBaseType = None# an Rexpr that we are removing form the table or None
 
     # if this is going through an unmemoized aggregator, then we might not be able to just directly modify the value in the table
     # so we are going to have to invalidate something and the perform a recomputation
@@ -408,10 +417,10 @@ def process_agenda_message(msg: AgendaMessage):
 
 
     # first we update the memo table with this new entry
-    assert msg.deletition is None  # TODO handle this case
+    assert msg.deletion is None  # TODO handle this case
 
     # TODO: handle these cases
-    assert msg.addition is None and msg.deletition is None
+    assert msg.addition is None and msg.deletion  is None
 
 
     t = msg.table
@@ -452,6 +461,7 @@ def process_agenda_message(msg: AgendaMessage):
         # then we are just going to delete the memos as they are unk
         # we are also going to send messages to downstream entries
         t.memos._children.filter(msg.key).delete_all()
+        t.memos._hashcache = None
 
         # send notifications to everything downstream
 
@@ -556,7 +566,7 @@ def rewrite_to_propagate(R, table, replace_with):
             return R.rewrite(rewriter)
     while True:
         z = R.rewrite(rewriter)
-        if counter == 0:  # there is nothing that matched the memo table, so we are
+        if counter == 0:  # there is nothing that matched the memo table, so we are done
             return
         yield z, variables
         if max_counter < counter:

@@ -11,12 +11,14 @@ from .interpreter import (
 )
 
 from .terms import (
-    Term, BuildStructure, ReflectStructure, Evaluate
+    Term, BuildStructure, ReflectStructure, Evaluate, Evaluate_reflect
 )
 
 from .memos import MemoContainer, RMemo, naive_converge_memos, rewrite_to_memoize
 
 from .optimize import run_optimizer
+
+from . import compiler
 
 # This is a shortcut for writing code quickly where we are going to lookup a method
 # so we can write something like `M.add(1,2,3)`

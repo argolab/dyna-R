@@ -39,6 +39,9 @@ class Assumption:
     def __repr__(self):
         return str(self)
 
+    def isValid(self):
+        return not self._invalid
+
 class AssumptionListener:
     # something that can be invalidated, and then will turn of getting further
     # signals, though, we are going to want to clean these out or something....
@@ -57,11 +60,28 @@ class AssumptionListener:
         if not self._invalid:
             self.wrapped.signal(msg)
 
-
     def notify_invalidated(self):
         # TODO: is this a significant difference in this case?  Is there
         # something else that should be done here
         self.invalidate()
+
+class AssumptionResponse:
+
+    def __init__(self, method):
+        self.method = method
+
+    def signal(self, msg):
+        raise NotImplementedError()
+
+    def invalidate(self):
+        if self.method is not None:
+            r = self.method
+            self.method = None
+            r()
+
+    def notify_invalidated(self):
+        self.invalidate()
+
 
 
 class AssumptionWrapper(RBaseType):
@@ -77,9 +97,12 @@ class AssumptionWrapper(RBaseType):
     def rewrite(self, rewriter):
         return AssumptionWrapper(self.assumption, rewriter(self.body))
 
+
 @simplify.define(AssumptionWrapper)
 def simplify_assumption(self, frame):
     # this doesn't do anything, as something else is going to have to get all of the assumptions
+    assert self.assumption.isValid()
+    frame.assumption_tracker(self.assumption)
     return simplify(self.body, frame)
 
 get_all_assumptions = Visitor(track_source=False)
@@ -98,24 +121,24 @@ def get_assumptions_wrapper(self):
 
 
 
-class Guard(RBaseType):
+# class Guard(RBaseType):
 
-    def __init__(self, precondtions, body):
-        assert False # TODO
-        self._precondition = precondtions
-        self._body = body
+#     def __init__(self, precondtions, body):
+#         assert False # TODO
+#         self._precondition = precondtions
+#         self._body = body
 
-    @property
-    def children(self):
-        return self._precondition, self._body
+#     @property
+#     def children(self):
+#         return self._precondition, self._body
 
 
-class GuardDispatch(RBaseType):
+# class GuardDispatch(RBaseType):
 
-    def __init__(self, children :List[RBaseType]):
-        assert False  # TODO
-        self._children = children
+#     def __init__(self, children :List[RBaseType]):
+#         assert False  # TODO
+#         self._children = children
 
-@simplify.define(GuardDispatch)
-def simplify_guard(self, frame):
-    pass
+# @simplify.define(GuardDispatch)
+# def simplify_guard(self, frame):
+#     pass
