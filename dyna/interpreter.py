@@ -313,6 +313,7 @@ class Frame(dict):
         return pprint.pformat(nice, indent=1)
 
 
+
 ####################################################################################################
 # Iterators and other things
 
@@ -1049,7 +1050,7 @@ def make_aggregator_loopable(R):
         if not isinstance(R.body, Partition) or set(R.body._unioned_vars) != hs:
             # then we want to make the body a partition so that we can loop the different expressions
             hs = tuple(hs)  # the order probably will impact the trie
-            nb = partition(hs, [R.body])
+            nb = partition(hs, [R.body.rewrite(make_aggregator_loopable)])
             frame = Frame()
             from .memos import _flatten_keys
             nb = simplify(nb, frame, map_function=_flatten_keys, reduce_to_single=False)
@@ -1059,6 +1060,7 @@ def make_aggregator_loopable(R):
             assert not frame
 
             return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, nb)
+
 
     return R.rewrite(make_aggregator_loopable)
 

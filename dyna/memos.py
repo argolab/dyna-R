@@ -319,11 +319,14 @@ def _flatten_keys(save, R, frame):
             # this needs to save any additional variables that are set in the frame into the R-expr
             # the loop method can construct new copies of the frame, and that might be over variables that are not going to be saved by the partition
 
-            if frame != frame2:
-                # FML
-                R = R.rename_vars(lambda x: constant(x.getValue(frame2)) if (x.isBound(frame2) and not x.isBound(frame) and x not in save.unioned_vars) else x)
+            # if frame != frame2:
+            #     # FML
+            #     R = R.rename_vars(lambda x: constant(x.getValue(frame2)) if (x.isBound(frame2) and not x.isBound(frame) and x not in save.unioned_vars) else x)
 
-            save(R, frame2)
+            # double FML
+            r2 = R.rename_vars_unique(lambda x: constant(x.getValue(frame2)) if x.isBound(frame2) else (x if x in save.unioned_vars else None))
+
+            save(r2, frame2)
         loop(R, frame, cb, best_effort=True)
 
 

@@ -7,7 +7,7 @@ from .interpreter import *
 
 def get_intersecting_constraints(R):
     yield R
-    if not isinstance(R, Partition):
+    if not isinstance(R, (Partition, Aggregator)):  # partition has different branches and aggregators can internally use loop which means their state might become split between different operators
         for z in R.children:
             yield from get_intersecting_constraints(z)
 
@@ -329,6 +329,7 @@ def optimzier_partition(partition, info):
         # this should construct aliased variables so that we can handle cases where there are expressions which
 
         rr = optimizer_aliased_vars(R, i2)
+
         save(rr, frame)
 
     # ???: do we want to run the simplify before we get the callback?  That
@@ -368,7 +369,7 @@ def delete_useless_unions(R, info):
 
     deletes = {}
 
-    st = str(R)
+    #st = str(R)
 
     if partitions:
         for p in partitions:
@@ -391,7 +392,7 @@ def delete_useless_unions(R, info):
                         # then we have found something that we can delete, so mark that
                         deletes.setdefault(p, set()).add((kk, v))
 
-    assert st == str(R)
+    #assert st == str(R)
 
     if deletes:
         def rewriter(r):

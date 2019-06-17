@@ -520,47 +520,54 @@ def test_mapl_neural_network():
     eq_agg = AggregatorOpImpl(lambda a,b: 1/0)  # error if there are more than one key
 
 
-    ws = [(0,0),
-         (-1,-1),
-         (1,1)]
+    ws = [(0,2),
+         (-1,3),
+         (1,5)]
     weights = Partition((VariableId(0), ret_variable),
                         [Intersect(Unify(VariableId(0), constant(w[0])),
                                    Unify(ret_variable, constant(w[1]))) for w in ws])
     dyna_system.define_term('weights', 1, weights)
 
-    neural_input = Aggregator(ret_variable, (VariableId(0),), VariableId('RR'), eq_agg, Intersect(BuildStructure('inp', VariableId(0), (VariableId('X'),)),
-                                                                                                  dyna_system.call_term('weights', 1)(VariableId('X'), ret=VariableId('RR'))))
+    # neural_input(&inp(X)) = weights(X).
+    neural_input = Aggregator(ret_variable, (VariableId(0),), VariableId('RR_inp'), eq_agg,
+                              Intersect(BuildStructure('inp', VariableId(0), (VariableId('X'),)),
+                                        dyna_system.call_term('weights', 1)(VariableId('X'), ret=VariableId('RR_inp'))))
 
     dyna_system.define_term('neural_input', 1, neural_input)
 
-    neural_output = Aggregator(ret_variable, (VariableId(0),), VariableId('RR'), add_agg, Intersect(dyna_system.call_term('neural_input', 1)(VariableId('Y'), ret=VariableId('Yr')),
-                                                                                                    dyna_system.call_term('neural_edge', 2)(VariableId(0), VariableId('Y'), ret=VariableId('Er')),
-                                                                                                    dyna_system.call_term('*', 2)(VariableId('Er'), VariableId('Yr'), ret=VariableId('RR'))))
+    # neural_output(X) += neural_edge(X, Y) * neural_input(Y).
+    neural_output = Aggregator(ret_variable, (VariableId(0),), VariableId('RR_out'), add_agg,
+                               Intersect(dyna_system.call_term('neural_input', 1)(VariableId('Y'), ret=VariableId('Yr')),
+                                         dyna_system.call_term('neural_edge', 2)(VariableId(0), VariableId('Y'), ret=VariableId('Er')),
+                                         dyna_system.call_term('*', 2)(VariableId('Er'), VariableId('Yr'), ret=VariableId('RR_out'))))
 
     dyna_system.define_term('neural_output', 1, neural_output)
 
-    edge = Aggregator(ret_variable, (VariableId(0), VariableId(1),), VariableId('RR'), eq_agg,
+    # edge(&out(Y), &inp(X)) = X+Z=Y, weights(Z).
+    edge = Aggregator(ret_variable, (VariableId(0), VariableId(1),), VariableId('RR_edge'), eq_agg,
                       Intersect(BuildStructure('inp', VariableId(1), (VariableId('X'),)),
                                 BuildStructure('out', VariableId(0), (VariableId('Y'),)),
-                                dyna_system.call_term('+', 2)(VariableId('X'), VariableId('Z'), ret=VariableId('Y')),
-                                dyna_system.call_term('weights', 1)(VariableId('Z'), ret=VariableId('RR'))))
+                                dyna_system.call_term('+', 2)(VariableId('X'), VariableId('Zweight'), ret=VariableId('Y')),
+                                dyna_system.call_term('weights', 1)(VariableId('Zweight'), ret=VariableId('RR_edge'))
+                      ))
 
     dyna_system.define_term('neural_edge', 2, edge)
 
 
-    eo = dyna_system.call_term('neural_output', 1)
+    eo = neural_output #dyna_system.call_term('neural_edge', 2)
 
     frame = Frame()
+    vs = {}
     def cb(R, frame):
         assert isinstance(R, Terminal)
-        print(frame[0], ret_variable.getValue(frame))
-        import ipdb; ipdb.set_trace()
+        vs[frame[0].arguments[0]] = ret_variable.getValue(frame)
+        #import ipdb; ipdb.set_trace()
 
     eo = saturate(eo, frame)
     re,_ = run_optimizer(eo, (VariableId(0), ret_variable))
 
-    zz = re
-    for _ in range(4):
-        zz = interpreter.make_aggregator_loopable(zz)
+    zz = interpreter.make_aggregator_loopable(re)
 
-    loop(re, frame, cb, best_effort=True)
+    loop(zz, frame, cb, best_effort=True)
+
+    assert vs == {0:19, -1:6, 1:10, -2:9, 2:25}

@@ -98,6 +98,11 @@ def simplify_buildStructure(self, frame):
         res = self.result.getValue(frame)
         if not isinstance(res, Term) or res.name != self.name or len(res.arguments) != len(self.arguments):
             return Terminal(0)  # then this has failed
+        # import inspect
+        # #and str(self.arguments[0]) != '$V3':#
+        # if self.name == 'inp' and not any(('(c, frame2)' in f.code_context[0] if f.code_context else False) for f in inspect.stack()):
+        #     import ipdb; ipdb.set_trace()
+
         for var, val in zip(self.arguments, res.arguments):
             var.setValue(frame, val)
         return Terminal(1)
