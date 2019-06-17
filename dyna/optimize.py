@@ -415,6 +415,21 @@ def delete_useless_unions(R, info):
     return R
 
 
+def infered_constraints(R, dyna_system, info):
+    # infer constraints that can be added to the expression based of existing
+    # conjunctions of constraints.
+    #
+    # this uses dyna_system.infered_constraints{,_index} to determine which
+    # expressions we might be able to add to a program
+    pass
+
+
+def lift_up_equivalent_constraints(R):
+    # if there are some conjunctive constraints that are in an expression which
+    # is not conjunctive (Aggregators and partition), then we should attempt to
+    # lift these expressions up such that we can
+    pass
+
 
 def run_optimizer_local(R, exposed_variables):
     """This is the entry point for the optimizer that is _only_ going to operate on
