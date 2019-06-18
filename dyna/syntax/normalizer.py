@@ -246,7 +246,7 @@ def test_fib():
 
     user_query('fib(5)')
     user_query('fib(N) for range(N,0,11)')
-#    user_query('fib(N)')
+    user_query('fib(N)')
 
     # TODO: create use answer type and printing from dyna-pi
 
