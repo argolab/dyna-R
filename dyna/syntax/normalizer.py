@@ -197,7 +197,11 @@ def user_query(x):
 
     frame = Frame()
 
-    loop(saturate(r, frame),
+    #print(r)
+    rr = saturate(r, frame)
+
+    #print(rr)
+    loop(rr,
          frame, callback, best_effort=True)
 
     print()
@@ -248,7 +252,7 @@ def test_fib():
     user_query('fib(N) for range(N,0,11)')
 #    user_query('fib(N)')
 
-    # TODO: create use answer type and printing from dyna-pi
+    # TODO: use `Result` classes from dyna-pi for displaying results.
 
     # TODO: this doesn't work for some reason...
 #    print('------')
@@ -258,9 +262,8 @@ def test_fib():
 
 def test_mapl_neural_network():
     ret_variable = interpreter.ret_variable
-    add_agg = AggregatorOpImpl(lambda a,b: a+b)
-    eq_agg = AggregatorOpImpl(lambda a,b: 1/0)  # error if there are more than one key
-
+#    add_agg = AggregatorOpImpl(lambda a,b: a+b)
+#    eq_agg = AggregatorOpImpl(lambda a,b: 1/0)  # error if there are more than one key
 
 #    ws = [(0,2),
 #         (-1,3),
