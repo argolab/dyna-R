@@ -1,84 +1,5 @@
 from .interpreter import *
 
-class ModedOp(RBaseType):
-    def __init__(self, name, det, nondet, vars):
-        self.det = det
-        self.nondet = nondet
-        self.name = name
-        self.vars_ = vars
-    @property
-    def vars(self):
-        return self.vars_
-    def rename_vars(self, remap):
-        return ModedOp(self.name, self.det, self.nondet, tuple(map(remap, self.vars)))
-    def possibly_equal(self, other):
-        return type(self) is type(other) and self.op is other.op
-    def _tuple_rep(self):
-        return (self.__class__.__name__, self.name, self.vars)
-
-class IteratorFromIterable(Iterator):
-    def __init__(self, variable, iterable):
-        self.variable = variable
-        self.iterable = iterable
-    def bind_iterator(self, frame, variable, value):
-        assert variable == self.variable
-        if value in self.iterable:
-            pass
-        else:
-            pass
-    def run(self, frame):
-        for v in self.iterable:
-            yield {self.variable: v}
-    @property
-    def variables(self):
-        return (self.variable,)
-
-
-@simplify.define(ModedOp)
-def modedop_simplify(self, frame):
-    mode = tuple(v.isBound(frame) for v in self.vars)
-    if mode in self.det:
-        vals = tuple(v.getValue(frame) for v in self.vars)
-        r = self.det[mode](*vals)
-        if isinstance(r, FinalState):
-            return r
-        if r == ():
-            return self  # made no progress
-        for var, val in zip(self.vars, r):
-            var.setValue(frame, val)
-        return terminal(1)
-    return self
-
-@getPartitions.define(ModedOp)
-def modedop_getPartitions(self, frame):
-    mode = tuple(v.isBound(frame) for v in self.vars)
-    if mode in self.nondet:
-        # then this needs to get the iterator from the object and yield that
-        # as a partition that can handle binding the particular variable
-
-        vals = tuple(v.getValue(frame) for v in self.vars)
-        r = self.nondet[mode](*vals)
-
-        # these are cases which failed unification or something?  We need to
-        # handle reporting errors in these cases as empty intersections
-        assert r != () and not isinstance(r, FinalState)
-
-        # TODO: this needs to handle all of the grounded variables first which
-        # would have cases where we are checking if the value of a variable
-        # unifies correctly
-
-        for var, val in zip(self.vars, r):
-            if hasattr(val, '__iter__'):
-                # then this is a variable that we can iterate, so we want to do
-                # that.  This should yield some iterator wrapper that is going
-                # return the map to a variable.  This might also want to be able
-                # to check contains, in which case, this should support the
-                # overlapping behavior required for aggregation?
-
-                yield IteratorFromIterable(var, val)
-            elif not var.isBound(frame):
-                yield SingleIterator(var, val)
-
 
 def infer_modes(d):
     # determine other modes that we can support
@@ -301,32 +222,34 @@ matrix_v = check_op('matrix', 1, lambda x: isinstance(x, np.ndarray))
 # would like to allow numpy style arrays as some primitive type.  Then we can figure out how to identify these cases
 # and perform automatic rewrites? There should be some access operation, and then some einsum
 
-class ArrayElement(RBaseType):
-    # the keys are going to be desugared by the program.  So if the key was an
-    # array which was positional.  Then we are only going to be taking the variables that should be ints that indicate
-    # what value is contained in some slot.  Once the array is bound, we should be able to provide iterators over the domains
-    # of the variables.
-    def __init__(self, matrix, result, *keys):
-        pass
+# class ArrayElement(RBaseType):
+#     # the keys are going to be desugared by the program.  So if the key was an
+#     # array which was positional.  Then we are only going to be taking the variables that should be ints that indicate
+#     # what value is contained in some slot.  Once the array is bound, we should be able to provide iterators over the domains
+#     # of the variables.
+#     def __init__(self, matrix, result, *keys):
+#         super().__init__()
+#         pass
 
 
 
-class ArrayEinsum(RBaseType):
-    # operator can be a constant or some variable that will evaluate to a string.
-    # The first variable will be the result, and then there are multiple arrays that are passed into numpy.einsum
-    #
-    # reverse mode not supported?  As that would require parsing the einsum and figuring out what
-    #
-    # This is created by identifying a rewrite such as a(I, J) += b(J) * C(I,J).
-    # then this entire expression can be replaced with
-    # intersect(Einsum('ij->j,ij', result_new_name, bref, cref), arrayElement(result_new_name, I, J))
-    # this requires that b(J) and C(I,J) are already some array element accessors.  Which would require that was identified
-    # based off how those elements were stored.  Or we might have that those are specified somehow already?
+# class ArrayEinsum(RBaseType):
+#     # operator can be a constant or some variable that will evaluate to a string.
+#     # The first variable will be the result, and then there are multiple arrays that are passed into numpy.einsum
+#     #
+#     # reverse mode not supported?  As that would require parsing the einsum and figuring out what
+#     #
+#     # This is created by identifying a rewrite such as a(I, J) += b(J) * C(I,J).
+#     # then this entire expression can be replaced with
+#     # intersect(Einsum('ij->j,ij', result_new_name, bref, cref), arrayElement(result_new_name, I, J))
+#     # this requires that b(J) and C(I,J) are already some array element accessors.  Which would require that was identified
+#     # based off how those elements were stored.  Or we might have that those are specified somehow already?
 
 
-    def __init__(self, operator, result, *arrays):
-        self.operator = operator
-        self.result = result
+#     def __init__(self, operator, result, *arrays):
+#         super().__init__()
+#         self.operator = operator
+#         self.result = result
 
 
 
@@ -382,11 +305,11 @@ dyna_system.define_infered(
 
 dtypes = [int_v, float_v, term_type, str_v, bool_v]
 
-for a in dtypes:
-    for b in dtypes:
+for i, a in enumerate(dtypes):
+    for b in dtypes[i+1:]:
         # for types that do not overlap, we are going to mark these as terminal
         # up front, so we can just delete these branches
-        if a != b and (a not in (int_v, float_v) and b not in (int_v, float_v)):
+        if not (a in (int_v, float_v) and b in (int_v, float_v)):
             dyna_system.define_infered(
                 intersect(a('a'), b('a')),
                 Terminal(0)
@@ -426,3 +349,17 @@ append = intersect(Unify(constant(True), ret_variable),
                                          dyna_system.call_term('append', 3)(VariableId('Y'), VariableId(1), VariableId('B')))
                               )))
 dyna_system.define_term('append', 3, append)
+
+
+from .terms import Evaluate, ReflectStructure
+
+# $reflect(Out, Name :str, arity :int, [arg1, arg2, arg3...])
+# arity allows for this to be rewritten eariler, but is optional as it can be infered if the list is fully ground
+dyna_system.define_term('$reflect', 4, Intersect((Unify(constant(True), ret_variable), ReflectStructure(VariableId(0), VariableId(1), VariableId(2), VariableId(3)))))
+# $reflect(Out, Name :str, [arg1, arg2, arg3...])
+dyna_system.define_term('$reflect', 3, Intersect((Unify(constant(True), ret_variable), ReflectStructure(VariableId(0), VariableId(1), VariableId('not_used'), VariableId(2)))))
+
+# $call(&foo(1,2,3), X) => foo(1,2,3,X)
+# the parser should just use Evaluate directly from terms, as this is only going up to 8 (which matches the prolog docs...)
+for i in range(8):
+    dyna_system.define_term('$call', i+1, Evaluate(dyna_system, ret_variable, VariableId(0), tuple(VariableId(j+1) for j in range(i))))

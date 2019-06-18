@@ -79,17 +79,17 @@ class RBaseType:
             return r
         return self.rename_vars(rmap)
 
-    def weak_equiv(self):
+    def weak_equiv(self, ignored=()):
         # try and make the expressions the same by renaming variables in a
         # consistent way.  ideally, we can pattern match against these
         # expressions more easily later?
-        vs = set()
+        vs = set(ignored)  # start with variables that we do not want to normalize the names
         vl = []
         for var in self.all_vars():
             if not isinstance(var, ConstantVariable) and var not in vs:
                 vl.append(var)
-        rm = dict(zip(vl, variables_named(*range(len(vl)))))
-        return self.rename_vars(lambda x: rm.get(x,x))
+        rm = dict(zip(vl, (VariableId(f'$W{i}') for i in range(len(vl)))))
+        return self.rename_vars(lambda x: rm.get(x,x)), dict((v,k) for k,v in rm.items())
 
 
     def __call__(self, *args, ret=None):
@@ -107,6 +107,11 @@ class RBaseType:
 
     def __bool__(self):
         raise RuntimeError('Should not check Rexpr with bool test, use None test')
+
+    def __lt__(self, other):
+        if not isinstance(other, type(self)):
+            return self.__class__.__name__ < other.__class__.__name__
+        return self._tuple_rep() < other._tuple_rep()
 
     # def build_graph(self, graph):
     #     for v in self.vars:
@@ -294,20 +299,24 @@ def constant(v):
     return ConstantVariable(None, v)
 
 class Frame(dict):
-    __slots__ = ('call_stack', 'memo_reads')
+    __slots__ = ('call_stack', 'memo_reads', 'assumption_tracker')
 
     def __init__(self, f=None):
         if f is not None:
             super().__init__(f)
             self.call_stack = f.call_stack.copy()
+            self.memo_reads = f.memo_reads
+            self.assumption_tracker = f.assumption_tracker
         else:
             super().__init__()
             self.call_stack = []
-        self.memo_reads = True
+            self.memo_reads = True  # if the memo tables are allowed to perform reads (making the results dependent on the values saved, otherwise just don't run)
+            self.assumption_tracker = lambda x: None  # when we encounter an assumption during simplification, log that here
 
     def __repr__(self):
         nice = {str(k).split('\n')[0]: v for k,v in self.items()}
         return pprint.pformat(nice, indent=1)
+
 
 
 ####################################################################################################
@@ -443,7 +452,7 @@ class RefinedVisitor(Visitor):
         # patterns.  So we attempt to normalize the varible names and then use
         # that as an equality matching on these expressions
         assert isinstance(refined, RBaseType)
-        rf = refined.weak_equiv()
+        rf, _ = refined.weak_equiv()
 
         def f(method):
             self._refined_methods.setdefault(type(rf), {})[rf] = method
@@ -455,7 +464,7 @@ class RefinedVisitor(Visitor):
         if self._refined_methods:
             z = self._refined_methods.get(typ)
             if z is not None:
-                rf = z.get(R.weak_equiv())
+                rf = z.get(R.weak_equiv()[0])
                 if rf is not None:
                     return rf
         return self._methods.get(typ, self._default)
@@ -697,6 +706,8 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
         if not res.isEmpty():
             #nc[nkey].append(res)
             nc.setdefault(nkey,[]).append(res)
+
+    saveL.unioned_vars = self._unioned_vars
 
     # a hook so that we can handle perform some remapping and control what gets save back into the partition
     if map_function is None:
@@ -1030,3 +1041,123 @@ def simplify_aggregator(self, frame):
     # (Meaning that this is something like `f(X) += 5.`)
 
     return Aggregator(self.result, self.head_vars, self.body_res, self.aggregator, body)
+
+
+@getPartitions.define(Aggregator)
+def getPartitions_aggregator(self, frame):
+    for p in getPartitions(self.body, frame):
+        if p.variable in self.head_vars:
+            # filter out the iterators that are going to yield unconsolidated results
+            yield p
+
+
+def make_aggregator_loopable(R):
+    # wrap the body of an aggregator in a partition in hopes that the body will
+    # become loopable so that
+    if isinstance(R, Aggregator):
+        hs = set((*R.head_vars, R.body_res))
+        if not isinstance(R.body, Partition) or set(R.body._unioned_vars) != hs:
+            # then we want to make the body a partition so that we can loop the different expressions
+            hs = tuple(hs)  # the order probably will impact the trie
+            nb = partition(hs, [R.body.rewrite(make_aggregator_loopable)])
+            frame = Frame()
+            from .memos import _flatten_keys
+            nb = simplify(nb, frame, map_function=_flatten_keys, reduce_to_single=False)
+            # it might be important that we maintain the frame? or that we unify these variables with their constant values
+
+            #import ipdb; ipdb.set_trace()
+            assert not frame
+
+            return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, nb)
+
+
+    return R.rewrite(make_aggregator_loopable)
+
+
+
+
+
+class ModedOp(RBaseType):
+    def __init__(self, name, det, nondet, vars):
+        super().__init__()
+        self.det = det
+        self.nondet = nondet
+        self.name = name
+        self.vars_ = vars
+    @property
+    def vars(self):
+        return self.vars_
+    def rename_vars(self, remap):
+        return ModedOp(self.name, self.det, self.nondet, tuple(map(remap, self.vars)))
+    def possibly_equal(self, other):
+        return type(self) is type(other) and self.det is other.det and self.nondet is other.nondet
+    def _tuple_rep(self):
+        return (self.__class__.__name__, self.name, self.vars)
+    def __eq__(self, other):
+        return super().__eq__(other) and self.det is other.det and self.nondet is other.nondet
+    def __hash__(self):
+        return super().__hash__() ^ object.__hash__(self.det) ^ object.__hash__(self.nondet)
+
+class IteratorFromIterable(Iterator):
+    def __init__(self, variable, iterable):
+        self.variable = variable
+        self.iterable = iterable
+    def bind_iterator(self, frame, variable, value):
+        assert variable == self.variable
+        if value in self.iterable:
+            pass
+        else:
+            pass
+    def run(self, frame):
+        for v in self.iterable:
+            yield {self.variable: v}
+    @property
+    def variables(self):
+        return (self.variable,)
+
+
+@simplify.define(ModedOp)
+def modedop_simplify(self, frame):
+    mode = tuple(v.isBound(frame) for v in self.vars)
+    if mode in self.det:
+        vals = tuple(v.getValue(frame) for v in self.vars)
+        r = self.det[mode](*vals)
+        if isinstance(r, FinalState):
+            assert not isinstance(r, Terminal) or r.multiplicity <= 1  # force to be semi-det
+            return r
+        if r == ():
+            return self  # made no progress
+        for var, val in zip(self.vars, r):
+            var.setValue(frame, val)
+        return terminal(1)
+    return self
+
+@getPartitions.define(ModedOp)
+def modedop_getPartitions(self, frame):
+    mode = tuple(v.isBound(frame) for v in self.vars)
+    if mode in self.nondet:
+        # then this needs to get the iterator from the object and yield that
+        # as a partition that can handle binding the particular variable
+
+        vals = tuple(v.getValue(frame) for v in self.vars)
+        r = self.nondet[mode](*vals)
+
+        # these are cases which failed unification or something?  We need to
+        # handle reporting errors in these cases as empty intersections
+        assert r != () and not isinstance(r, FinalState)
+
+        # TODO: this needs to handle all of the grounded variables first which
+        # would have cases where we are checking if the value of a variable
+        # unifies correctly
+
+        for var, val in zip(self.vars, r):
+            if hasattr(val, '__iter__'):
+                # then this is a variable that we can iterate, so we want to do
+                # that.  This should yield some iterator wrapper that is going
+                # return the map to a variable.  This might also want to be able
+                # to check contains, in which case, this should support the
+                # overlapping behavior required for aggregation?
+
+                yield IteratorFromIterable(var, val)
+            elif not var.isBound(frame):
+                yield SingleIterator(var, val)

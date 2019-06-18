@@ -350,10 +350,10 @@ def test_reflect():
     assert nargs.getValue(frame2) == 3
 
 
-def test_evaluate():
+def test_evaluate_reflect():
     ret, name, nargs, alist = variables_named(*'abcd')
 
-    e = Evaluate(dyna_system, ret, name, nargs, alist)
+    e = Evaluate_reflect(dyna_system, ret, name, nargs, alist)
 
     dyna_system.define_term('test_foo', 3, Unify(VariableId(0), VariableId(1)))
 
@@ -373,6 +373,16 @@ def test_evaluate():
     rr = simplify(e, frame)
 
     assert rr == Terminal(0)
+
+def test_evaluate_call():
+    call = dyna_system.call_term('$call', 2)
+
+    frame = Frame()
+    frame[0] = Term('add', (1,))
+
+    rr = simplify(call, frame)
+
+    assert rr.name == 'add'
 
 
 def test_merge_rules():
@@ -415,9 +425,9 @@ def test_optimizer2():
     res, sv, a1, a2, sname, snargs, alist = variables_named(*'abcdefg')
 
     # res = *&opt_call(A1, A2)
-    rx = Intersect(BuildStructure('opt_call', sv, (a1, a2)), ReflectStructure(sv, sname, snargs, alist), Evaluate(dyna_system, res, sname, snargs, alist))
+    rx = Intersect(BuildStructure('opt_call', sv, (a1, a2)), ReflectStructure(sv, sname, snargs, alist), Evaluate_reflect(dyna_system, res, sname, snargs, alist))
 
-    rr = run_optimizer(rx, (a1, a2, res))
+    rr, assumptions = run_optimizer(rx, (a1, a2, res))
 
     assert set(rr._children) == set((Unify(constant(True), res), Unify(a1,a2)))
 
@@ -429,9 +439,9 @@ def test_optimizer3():
     res, sv, a1, a2, sname, snargs, alist = variables_named(*'abcdefg')
 
     # res = *&opt_call(A1, 7).
-    rx = Intersect(BuildStructure('opt_call2', sv, (a1, constant(7))), ReflectStructure(sv, sname, snargs, alist), Evaluate(dyna_system, res, sname, snargs, alist))
+    rx = Intersect(BuildStructure('opt_call2', sv, (a1, constant(7))), ReflectStructure(sv, sname, snargs, alist), Evaluate_reflect(dyna_system, res, sname, snargs, alist))
 
-    rr = run_optimizer(rx, (a1, a2, res))
+    rr, assumptions = run_optimizer(rx, (a1, a2, res))
 
     # there should just be two unify expressions with constants
     assert set(rr._children) == set((Unify(constant(True), res), Unify(a1,constant(7))))
@@ -445,6 +455,119 @@ def test_optimizer4():
     # X = s(s(X))
     rx = Intersect(BuildStructure('s', a, (b,)), BuildStructure('s', b, (a,)))
 
-    rr = run_optimizer(rx, (a,b))
+    rr, assumptions = run_optimizer(rx, (a,b))
 
     assert rr == Terminal(0)
+
+
+def test_even_odd():
+    even = Intersect(Unify(interpreter.ret_variable, constant(True)),
+                           Partition(variables_named(0),
+                                     (BuildStructure('nil', VariableId(0), ()),  # even([]).
+                                      Intersect(BuildStructure('.', VariableId(0), (VariableId('J1'), VariableId('L'))),  # even([X,Y|Xs]) :- even(Xs).
+                                                BuildStructure('.', VariableId('L'), (VariableId('J2'), VariableId('Ls'))),
+                                                dyna_system.call_term('even_list', 1)(VariableId('Ls')))
+                                      )))
+
+    dyna_system.define_term('even_list', 1, even)
+
+    odd = Intersect(Unify(interpreter.ret_variable, constant(True)),
+                    BuildStructure('.', VariableId(0), (VariableId('X'), VariableId('Xs'))),
+                    dyna_system.call_term('even_list', 1)(VariableId('Xs')))
+
+    dyna_system.define_term('odd_list', 1, odd)
+
+
+    el = Term.fromlist([1,2,3,4,5,6,7,8,9,10])
+    ol = Term.fromlist([1,2,3])
+
+
+    frame = Frame()
+    frame[0] = el
+    assert saturate(even, frame) == Terminal(1)
+
+    frame = Frame()
+    frame[0] = ol
+    assert saturate(even, frame) == Terminal(0)
+
+    frame = Frame()
+    frame[0] = ol
+    assert saturate(odd, frame) == Terminal(1)
+
+    combined = Intersect(even(0), odd(0))  # combine the two rules, if we can identify that the states are the same then this should just be empty
+
+    frame = Frame()
+    rr = saturate(combined, frame)
+    assert not rr.isEmpty()
+
+    rx, assumptions = run_optimizer(combined, variables_named(0))
+
+    # at this point, the optimizer would have pushed more tasks to the agenda to
+    # try the recursive parts.  Those will eventually identify that this can not
+    # hit a base case, and thus will mark it as terminal(0)
+    dyna_system.run_agenda()
+
+    frame = Frame()
+    rr2 = saturate(rx, frame)
+
+    assert rr2 == Terminal(0)
+
+
+def test_mapl_neural_network():
+    ret_variable = interpreter.ret_variable
+
+    add_agg = AggregatorOpImpl(lambda a,b: a+b)
+    eq_agg = AggregatorOpImpl(lambda a,b: 1/0)  # error if there are more than one key
+
+
+    ws = [(0,2),
+         (-1,3),
+         (1,5)]
+    weights = Partition((VariableId(0), ret_variable),
+                        [Intersect(Unify(VariableId(0), constant(w[0])),
+                                   Unify(ret_variable, constant(w[1]))) for w in ws])
+    dyna_system.define_term('weights', 1, weights)
+
+    # neural_input(&inp(X)) = weights(X).
+    neural_input = Aggregator(ret_variable, (VariableId(0),), VariableId('RR_inp'), eq_agg,
+                              Intersect(BuildStructure('inp', VariableId(0), (VariableId('X'),)),
+                                        dyna_system.call_term('weights', 1)(VariableId('X'), ret=VariableId('RR_inp'))))
+
+    dyna_system.define_term('neural_input', 1, neural_input)
+
+    # neural_output(X) += neural_edge(X, Y) * neural_input(Y).
+    neural_output = Aggregator(ret_variable, (VariableId(0),), VariableId('RR_out'), add_agg,
+                               Intersect(dyna_system.call_term('neural_input', 1)(VariableId('Y'), ret=VariableId('Yr')),
+                                         dyna_system.call_term('neural_edge', 2)(VariableId(0), VariableId('Y'), ret=VariableId('Er')),
+                                         dyna_system.call_term('*', 2)(VariableId('Er'), VariableId('Yr'), ret=VariableId('RR_out'))))
+
+    dyna_system.define_term('neural_output', 1, neural_output)
+
+    # edge(&out(Y), &inp(X)) = X+Z=Y, weights(Z).
+    edge = Aggregator(ret_variable, (VariableId(0), VariableId(1),), VariableId('RR_edge'), eq_agg,
+                      Intersect(BuildStructure('inp', VariableId(1), (VariableId('X'),)),
+                                BuildStructure('out', VariableId(0), (VariableId('Y'),)),
+                                dyna_system.call_term('+', 2)(VariableId('X'), VariableId('Zweight'), ret=VariableId('Y')),
+                                dyna_system.call_term('weights', 1)(VariableId('Zweight'), ret=VariableId('RR_edge'))
+                      ))
+
+    dyna_system.define_term('neural_edge', 2, edge)
+
+
+    eo = neural_output #dyna_system.call_term('neural_edge', 2)
+
+    frame = Frame()
+    vs = {}
+    def cb(R, frame):
+        assert isinstance(R, Terminal)
+        vs[frame[0].arguments[0]] = ret_variable.getValue(frame)
+        #import ipdb; ipdb.set_trace()
+
+    eo = saturate(eo, frame)
+    #re,_ = run_optimizer(eo, (VariableId(0), ret_variable))
+
+    zz = interpreter.make_aggregator_loopable(eo)
+
+    loop(zz, frame, cb, best_effort=True)
+
+    assert vs == {0:19, -1:6, 1:10, -2:9, 2:25}

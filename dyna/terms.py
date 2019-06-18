@@ -69,6 +69,7 @@ class BuildStructure(RBaseType):
     """
 
     def __init__(self, name :str, result :Variable, arguments :List[Variable]):
+        super().__init__()
         self.name = name
         self.result = result
         self.arguments = tuple(arguments)
@@ -95,6 +96,11 @@ def simplify_buildStructure(self, frame):
         res = self.result.getValue(frame)
         if not isinstance(res, Term) or res.name != self.name or len(res.arguments) != len(self.arguments):
             return Terminal(0)  # then this has failed
+        # import inspect
+        # #and str(self.arguments[0]) != '$V3':#
+        # if self.name == 'inp' and not any(('(c, frame2)' in f.code_context[0] if f.code_context else False) for f in inspect.stack()):
+        #     import ipdb; ipdb.set_trace()
+
         for var, val in zip(self.arguments, res.arguments):
             var.setValue(frame, val)
         return Terminal(1)
@@ -112,7 +118,7 @@ def optimizer_buildStructure(self, info):
 
     ac = info.all_constraints[self.result]
 
-    if len(ac) == 1 and not self.result.isBound(info.frame):
+    if len(ac) == 1 and not self.result.isBound(info.frame) and self.result not in info.exposed_variables:
         #assert not self.result.isBound(info.frame)
         assert ac[0] is self
         assert info.conjunctive_constraints[self.result] == ac
@@ -126,13 +132,29 @@ def optimizer_buildStructure(self, info):
     for c in cc:
         if c is self:
             break
+
+        # we can only do this if we are not in a partition
+        # as otherwise the partition has to be made aware of the fact that we are reading and setting these additional variables.
         if isinstance(c, BuildStructure) and c.result == self.result:  # only unified if the same result variable
             # this should unify the variables that are arguments, and just delete itself
             if c.name != self.name or len(c.arguments) != len(self.arguments):
                 return Terminal(0)  # unification fails in this case
-            const = [Unify(c.result, self.result)]
+
+    for c in info.partition_constraints[self.result]:
+        if c is self:
+            break
+        if isinstance(c, BuildStructure) and c.result == self.result:
+            # if we are in a partition, then we would require that all of the
+            # arguments of one side are present, otherwise this isn't giong to
+            # work?
+            #
+            # This requires that both of the constraints are in the same
+            # partition, otherwise this is not correct.  So we are giong to need
+            # to map the partition's constraints?
+            #import ipdb; ipdb.set_trace()
+            const = [unify(c.result, self.result)]
             for a,b in zip(c.arguments, self.arguments):
-                const.append(Unify(a,b))
+                const.append(unify(a,b))
             return intersect(*const)
 
     # the occurs check
@@ -174,6 +196,7 @@ class ReflectStructure(RBaseType):
     """
 
     def __init__(self, result: Variable, name :Variable, num_args :Variable, args_list :Variable):
+        super().__init__()
         self.result = result  # the resulting variable that we are trying to reflect
         self.name = name  # the variable that is going to take on the string value for the name
         self.num_args = num_args  # the number of arguments (length of the list), will let us rewrite in the case that not fully ground
@@ -271,7 +294,9 @@ def optimzier_reflectstructure(self, info):
     return self
 
 
-class Evaluate(RBaseType):
+
+# XXX: should just delete and use the other Evaluate
+class Evaluate_reflect(RBaseType):
     """
     This should completement the reflect structure operator in that if we know the name and number of arguments then we can resolve the call
     without haivng to know the all of the arguments as ground.  To construct an `*X` operator then we can combine this with reflect structure
@@ -281,6 +306,7 @@ class Evaluate(RBaseType):
     """
 
     def __init__(self, dyna_system, ret :Variable, name :Variable, nargs :Variable, args_list :Variable):
+        super().__init__()
         self.ret = ret
         self.name = name
         self.nargs = nargs
@@ -292,13 +318,13 @@ class Evaluate(RBaseType):
         return self.ret, self.name, self.nargs, self.args_list
 
     def rename_vars(self, remap):
-        return Evaluate(self.dyna_system, remap(self.ret_var), remap(self.name_var), remap(self.nargs_var), remap(self.args_list))
+        return Evaluate_reflect(self.dyna_system, remap(self.ret_var), remap(self.name_var), remap(self.nargs_var), remap(self.args_list))
 
     def _tuple_rep(self):
         return self.__class__.__name__, self.ret, self.name, self.nargs, self.args_list
 
-@simplify.define(Evaluate)
-def simplify_evaluate(self, frame):
+@simplify.define(Evaluate_reflect)
+def simplify_evaluate_reflect(self, frame):
     if self.args_list.isBound(frame) and not self.nargs.isBound(frame):
         # then we are going to compute the length
         args = self.args_list.getValue(frame)
@@ -330,6 +356,59 @@ def simplify_evaluate(self, frame):
     return self
 
 
+class Evaluate(RBaseType):
+    """Do the combine arguments and the evaluate in the same operator.  Will just
+    make the opetimizer aware of this operation the same way it is aware of ReflectStructure
+
+    """
+
+    def __init__(self, dyna_system, ret: Variable, term_var: Variable, extra_args: Tuple[Variable]=()):
+        super().__init__()
+        self.dyna_system = dyna_system
+        self.ret = ret
+        self.term_var = term_var
+        self.extra_args = extra_args
+
+    @property
+    def vars(self):
+        return (self.ret, self.term_var, *self.extra_args)
+
+    def rename_vars(self, remap):
+        return Evaluate(self.dyna_system, remap(self.ret), remap(self.term_var), tuple(remap(v) for v in self.extra_args))
+
+    def _tuple_rep(self):
+        return self.__class__.__name__, self.ret, self.term_var, self.extra_args
+
+
+@simplify.define(Evaluate)
+def simplify_evaluate(self, frame):
+    if self.term_var.isBound(frame):
+        # then we are going to replace this operation with the CallTerm operator
+        t = self.term_var.getValue(frame)
+        if not isinstance(t, Term):
+            return Terminal(0)
+        r = self.dyna_system.call_term(t.name, len(t.arguments)+len(self.extra_args))(*(constant(a) for a in t.arguments), *self.extra_args, ret=self.ret)
+        return simplify(r, frame)
+
+    return self
+
+@optimizer.define(Evaluate)
+def optimizer_evaluate(self, info):
+    cc = info.conjunctive_constraints[self.term_var]
+    for c in cc:
+        if isinstance(c, BuildStructure) and c.result == self.term_var:
+            # then we can determine the name and number of arguments from this
+            name = c.name
+            arity = len(c.arguments)
+            vs = [VariableId(('evaluate_t', object())) for _ in range(arity)]
+            c = self.dyna_system.call_term(name, arity+len(self.extra_args))(*vs, *self.extra_args, ret=self.ret)
+            return Intersect((BuildStructure(name, self.term_var, vs), c))
+
+    return self
+
+
+
+
 class CallTerm(RBaseType):
     """
     This is a call to an external expression that has not yet been included.  If the modes match, then we could attempt
@@ -337,6 +416,7 @@ class CallTerm(RBaseType):
     """
 
     def __init__(self, var_map: Dict[Variable,Variable], dyna_system, term_ref):
+        super().__init__()
         # this needs to have some positional arguments or something so that we
         # can use a tuple in tracking?
 
@@ -370,6 +450,17 @@ class CallTerm(RBaseType):
     def __hash__(self):
         return super().__hash__()
 
+    def __lt__(self, other):
+        if isinstance(other, CallTerm):
+            if self.term_ref != other.term_ref:
+                return self.term_ref < other.term_ref
+            # then the term maps should be the same, so we are going to loop over the keys
+            for k in sorted(self.var_map):
+                if self.var_map[k] != other.var_map[k]:
+                    return self.var_map[k] < other.var_map[k]
+            return False
+        return super().__lt__(other)
+
 
 @simplify.define(CallTerm)
 def simplify_call(self, frame):
@@ -381,8 +472,9 @@ def simplify_call(self, frame):
                 r = CallTerm(self.var_map, self.dyna_system, self.term_ref)
                 r.parent_calls_blocker += c.parent_calls_blocker
                 r.parent_calls_blocker.append(tuple(c.var_map.values()))
-                self = r
-                break
+                return r
+                # self = r
+                # break
 
     # sanitity check for now
     assert len(self.parent_calls_blocker) < 10
