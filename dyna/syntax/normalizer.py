@@ -199,7 +199,6 @@ def user_query(x):
 
     #print(r)
     rr = saturate(r, frame)
-
     #print(rr)
     loop(rr,
          frame, callback, best_effort=True)
@@ -273,15 +272,6 @@ def test_mapl_neural_network():
 #                                   Unify(ret_variable, constant(w[1]))) for w in ws])
 #    dyna_system.define_term('weights', 1, weights)
 
-
-#    for x in run_parser("""
-#    weights(0)  = 2.
-#    weights(-1) = 3.
-#    weights(+1) = 5.
-#    """):
-#        add_rule(x)
-
-
     # neural_input(&inp(X)) = weights(X).
 #    neural_input = Aggregator(ret_variable, (VariableId(0),), VariableId('RR_inp'), eq_agg,
 #                              intersect(BuildStructure('inp', VariableId(0), (VariableId('X'),)),
@@ -308,8 +298,8 @@ def test_mapl_neural_network():
     #user_query('weights(I)')
 
     # TODO: why does the explicit call_term version work but not this?
-    user_query('neural_output(0)')
-    user_query('neural_output(-1)')
+    user_query('neural_output(&out(0))')
+#    user_query('neural_output(&out(-1))')
 
     #user_query('neural_edge(U,V)')
     #user_query('neural_output(I)')
