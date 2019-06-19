@@ -1,7 +1,7 @@
 from typing import *
 
 from .interpreter import *
-from .terms import BuildStructure, Evaluate, ReflectStructure
+from .terms import CallTerm, BuildStructure, Evaluate, ReflectStructure
 
 
 # we are going to want to know which mode will come back from a given
@@ -31,24 +31,22 @@ def get_mode_aggregator(R):
 
 
 
+# class CompiledRexpr:
+#     """
+#     A representation of a compiled operation, or something that we are interested
+#     """
+
+#     rexpr :RBaseType  # the Rexpr that we are wrapping
+#     exposed_variables : Tuple[Variable]  # variables that are exposed.  The set of argument + return variables.  Anything not in this set is assumed not directly accessed
+#     compiled_modes :Dict[Tuple[bool], 'CompiledModedRexpr']  # compiled sequences mapped off the mode of the incoming
+
+#     def __init__(self, rexpr :RBaseType, exposed_variables: Tuple[Variable]):
+#         self.rexpr = rexpr
+#         self.exposed_variables = exposed_variables
+#         self.compiled_modes = {}
 
 
-class CompiledRexpr:
-    """
-    A representation of a compiled operation, or something that we are interested
-    """
-
-    rexpr :RBaseType  # the Rexpr that we are wrapping
-    exposed_variables : Tuple[Variable]  # variables that are exposed.  The set of argument + return variables.  Anything not in this set is assumed not directly accessed
-    compiled_modes :Dict[Tuple[bool], 'CompiledModedRexpr']  # compiled sequences mapped off the mode of the incoming
-
-    def __init__(self, rexpr :RBaseType, exposed_variables: Tuple[Variable]):
-        self.rexpr = rexpr
-        self.exposed_variables = exposed_variables
-        self.compiled_modes = {}
-
-
-class CompiledModedRexpr:
+class CompiledModedExpression:
 
     def __init__(self):
         pass
@@ -64,24 +62,98 @@ class CompiledFrame:
         self._vmap = dict((v, i) for i,v in enumerate(variables))
 
 
-class CompiledCallTerm(RBaseType):
+
+class CompiledVariable(Variable):
+    """This should know which slot it is contained in.  this means that there
+    should be some frame descriptor like object that it could use to track that
+    the version is correct.  the frame itself then just becoems an array
+
+    """
+    pass
+
+
+
+
+class CompiledCallTerm(CallTerm):
     """The compiler uses a different operator for calling terms, as we want to be a
     bit more "static" about what return types we might get back.  We can
     additionally be more static about which expressions we are giong to use
 
     """
 
-    def __init__(self, dyna_system, term_ref, call_mode):
-        assert False
+    def __init__(self, var_map, dyna_syste, term_ref, compiled_ref):
+        super().__init__(var_map, dyna_system, term_ref)
+        self.parent_calls_blocker = []  # we are not using tihs
+
+        self.compiled_ref = compiled_ref
+
+    def rename_vars(self, remap):
+        return CompiledCallTerm(dict((k, remap(v)) for k,v in self.var_map.items()), self.dyna_system, self.term_ref, self.compiled_ref)
+
+
+
+class CompiledModedCall(RBaseType):
+
+    def __init__(self, dyna_system, term_ref, call_mode :Tuple[bool], arguments :Tuple[Variable]):
+        self.dyna_system = dyna_system
+        self.term_ref = term_ref
+        self.call_mode = call_mode
+        self.result_mode = None  # TODO: need to know what is bound after this call is performed, and we are going to need to still plan which expressions in the return bit are still to get handled.
+        self.arguments = arguments
+
+        #
+        self.returned_rexpr = None  # TODO: need to know what could possibly come back in this case
+
+    @property
+    def vars(self):
+        return self.arguments
+
+
+
+def replace_calls(R):
+    if isinstance(R, CallTerm):
+        return CompiledCallTerm(R.var_map, R.dyna_system, R.term_ref,
+                                R.dyna_system.create_compiled_expression(R.term_ref, R.var_map.values()))
+    if isinstance(R, (Evaluate, Evaluate_reflect, ReflectStructure)):
+        raise RuntimeError('unable to compile this expression, it uses reflection, try the optimizer first')  # TODO: should be some typed error that we can throw
+    return R.rewrite(replace_calls)
+
+
+class CompileManager:
+    """
+    Wrap a compile task so that everything has access to the right operators
+    """
+
+    def __init__(self):
+        self.operations = []  # List[Tuple[RBaseType,EvalFunction (if any)]]
+
+
+
+# def plan_modes(R, bound_variables):
+
+#     evaluated_operations = []  # as an operation is evaluated (meaning that its mode matches the current set of arguments, we are going to put it here and remove it from the R-expr)
+
+#     def mode_rewriter(R):
+#         nonlocal evaluated_operations
+#         if isinstance(R, ModedOp):
+#             assert False  # ....
+#         elif isinstance(R, Aggregator):
+#             # if the head arguments are known, then this can determine the
+#             # resulting variable, but we are going to have to handle
+#             pass
+
+#         assert False
+
+#     last_R = None
+#     while last_R != R:
+#         last_R = R
+
+#         R = mode_rewriter(R)
 
 
 
 
-
-
-
-
-def compile(R, argument_variables, incoming_mode):
+def run_compiler(dyna_system, ce, R, incoming_mode):
     # take an R-expr, and wrap it such that we compile it.  For now this should
     # just be the moded operations and determining which results are going to be
     # ground.  We then want to determine which order we are going to processes
@@ -96,4 +168,11 @@ def compile(R, argument_variables, incoming_mode):
     # cases where there is something that it needs to guess the mode that will
     # be supported (or something?)
 
-    pass
+    R = replace_calls(R)  # all of the calls in the method will now be replace with referneces to other compiled object
+    # I suppose that we would like to plan as much stuff as
+
+
+
+
+    return None  # indicating that there was some failure or that we are unable
+                 # to do this at this time.
