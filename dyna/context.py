@@ -4,12 +4,15 @@
 
 
 
-# maybe these should be imported later or not at all, so this will instead
+# maybe these should be imported later or not at all?
 from .interpreter import *
 from .terms import CallTerm, Evaluate, Evaluate_reflect
 from .guards import Assumption, AssumptionWrapper, AssumptionResponse
 from .agenda import Agenda
 from .optimize import run_optimizer
+from .compiler import run_compiler
+
+from functools import reduce
 
 class SystemContext:
     """
@@ -28,6 +31,10 @@ class SystemContext:
         # the memo tables that are wrapped around the terms.
         self.terms_as_memoized = {}
 
+        # Dict[RExpr, CompiledRexprs]
+        # when we compile a term this will be the resulting reference for that object
+        self.terms_as_compiled = {}
+
         self.merged_expressions = {}
 
         self.term_assumptions = {}
@@ -37,7 +44,7 @@ class SystemContext:
         self.infered_constraints = []  # going to want some matching expression against having multiple
         self.infered_constraints_index = {}
 
-        # where we fallback for pther defined
+        # where we fallback for other defined expressions
         self.parent = None
 
     def term_assumption(self, name):
@@ -125,15 +132,17 @@ class SystemContext:
         m[ret_variable] = ret_variable
         return CallTerm(m, self, (name, arity))
 
-    def lookup_term(self, name):
+    def lookup_term(self, name, ignore=()):
         # if a term isn't defined, we are going to return Terminal(0) as there
         # is nothing that could have unified with the given expression.  we do
         # included tracking with the assumption, so if it later defined, we are
         # able to change the expression.
 
-        if name in self.terms_as_memoized:
+        if name in self.terms_as_memoized and 'memo' not in ignore:
             r = self.terms_as_memoized[name]  # should contain an RMemo type which will perform reads from a memo table
-        if name in self.terms_as_optimized:
+        elif name in self.terms_as_compiled and 'compile' not in ignore:
+            r = self.terms_as_compiled[name]
+        elif name in self.terms_as_optimized and 'optimized' not in ignore:
             r = self.terms_as_optimized[name]  # this is the term rewritten after having been passed through the optimizer
         elif name in self.terms_as_defined:
             r = self.terms_as_defined[name]  # something that was defined directly by the user
@@ -142,7 +151,7 @@ class SystemContext:
         elif self.parent:
             r = self.parent.lookup_term(name)
         else:
-            assert not isinstance(name, MergedExpression)  # this should get handled at some point along the chain. So it should not get to this undefiend point
+            assert not isinstance(name, (MergedExpression,CompiledExpression))  # this should get handled at some point along the chain. So it should not get to this undefiend point
             r = Terminal(0)  # this should probably be an error or something so that we can identify that this method doesn't exit
 
         # wrapped the returned result in an assumption so we can track if the
@@ -181,6 +190,16 @@ class SystemContext:
         else:
             self.merged_expressions[r] = r
             self.agenda.push(lambda: self._optimize_term(r))  # need to processes this new thing and try the optimizer at it
+        return r
+
+    def create_compiled_expression(self, term_ref, exposed_vars: Set[Variable]):
+        r = CompiledExpression(term_ref, exposed_vars)
+
+        if r in self.compiled_expressions:
+            r = self.compiled_expressions[r]
+        else:
+            self.compiled_expressions[r] = r
+
         return r
 
     def _optimize_term(self, term):
@@ -222,6 +241,22 @@ class SystemContext:
             a.track(assumption_response)
 
 
+    def _compile_term(self, term, ground_vars :Set[Variable]):
+        R = self.lookup_term(term, ('compile', 'memo'))
+        if isinstance(R, MergedExpression):
+            exposed = term.exposed_vars
+        else:
+            name, arity = term
+            exposed = (ret_variable, *variables_named(range(arity)))
+
+        ce = self.create_compiled_expression(term, exposed)
+        incoming_mode = tuple(v in ground_vars for v in ce.variable_order)  # the mode about which variables are ground at the start
+
+
+
+
+
+
 # where we will define the builtins etc the base dyna base, for now there will
 # just be a single one of these that is global however we should not use the
 # global reference whenever possible, as will want to turn this into the
@@ -255,6 +290,23 @@ class MergedExpression:
 
     def __repr__(self):
         return f'MergedExpression({self.expression})'
+
+
+class CompiledExpression:
+
+    def __init__(self, term_ref, exposed_vars :Set[Variable]):
+        self.term_ref = term_ref
+        self.exposed_vars = exposed_vars
+        self.variable_order = tuple(exposed_vars)
+        self.compiled_expressions = {}
+
+    def __eq__(self, other):
+        return type(self) is type(other) and self.term_ref == other.term_ref and self.exposed_vars == other.exposed_vars
+
+    def __hash__(self):
+        return hash(type(self)) ^ hash(self.term_ref) ^ reduce(operator.xor, map(hash, self.exposed_vars), 0)
+
+
 
 def check_basecases(R, stack=()):
     # check that this expression can hit some basecase, otherwise this
