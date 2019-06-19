@@ -231,6 +231,11 @@ class VariableId(Variable):
     def __str__(self):
         return str(self.__name)
 
+    def __lt__(self, other):
+        if isinstance(other, ConstantVariable):
+            return False
+        return super().__lt__(other)
+
 class ConstantVariable(Variable):
     __slots__ = ('__value',)
     def __init__(self, var, value):

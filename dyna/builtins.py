@@ -1,4 +1,3 @@
-
 from .interpreter import *
 
 
@@ -81,6 +80,13 @@ dyna_system.define_term('*', 2, mul)
 div = mul(ret_variable,1,ret=0)
 dyna_system.define_term('div', 2, div)
 dyna_system.define_term('/', 2, div)
+
+
+dyna_system.define_term(
+    ',', 2,
+    intersect(Unify(VariableId(0), constant(True)),
+              Unify(VariableId(1), ret_variable))
+)
 
 
 
@@ -204,7 +210,7 @@ pow_v = moded_op('pow', {
     (True,False,True): lambda a,b,c: (a,a**(1/c),c)
 })
 dyna_system.define_term('pow', 2, pow_v)
-dyna_system.define_term('**', 2, pow_v)
+dyna_system.define_term('^', 2, pow_v)
 
 # a = b // c
 int_div = moded_op('int_div', {
