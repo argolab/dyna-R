@@ -538,6 +538,9 @@ def loop_partition(R, frame, callback, partition):
 
 
 def loop(R, frame, callback, till_terminal=False, best_effort=False, partition=None):
+    # there should really be some parameter like "effort" which can range between best, quick, till_terminal etc.  and these can error out in different ways
+
+
     if isinstance(R, FinalState):
         # then this is done, so just callback
         callback(R, frame)
@@ -546,6 +549,13 @@ def loop(R, frame, callback, till_terminal=False, best_effort=False, partition=N
     if partition is None:
         # then we need to select some partition to use, which will mean choosing
         # which one of theses is "best"?
+        parts = getPartitions(R, frame)
+        for p in parts:  # just choose something, and ensure that we can iterate this whole list without a problem
+            partition = p
+
+    if partition is None:
+        # try 2
+        R = make_aggregator_loopable(R, frame=frame)
         parts = getPartitions(R, frame)
         for p in parts:  # just choose something, and ensure that we can iterate this whole list without a problem
             partition = p
@@ -657,7 +667,7 @@ class Partition(RBaseType):
 
     def _tuple_rep(self):
         # though might want to have the representation of what the values are on each branch of the partition
-        return (self.__class__.__name__, self._unioned_vars, *(c._tuple_rep() for c in self.children))
+        return (self.__class__.__name__, self._unioned_vars, *((k, [v._tuple_rep() for v in vv]) for k,vv in self._children.items()))
 
     def __eq__(self, other):
         # the equal bit needs to include the arguments on the heads of the children expressions
@@ -682,9 +692,6 @@ def partition(unioned_vars, children):
     if all(isinstance(c, Terminal) for c in children):
         return Terminal(sum(c.multiplicity for c in children))
 
-    # c = {
-    #     (None,)*len(unioned_vars): list(children)
-    # }
     c = PrefixTrie(len(unioned_vars))
     c[(None,)*len(unioned_vars)] = list(children)
 
@@ -692,7 +699,19 @@ def partition(unioned_vars, children):
 
 
 @simplify.define(Partition)
-def simplify_partition(self :Partition, frame: Frame, *, map_function=None, reduce_to_single=True, simplify_rexprs=True):  # TODO: better name than map_function???
+def simplify_partition(self :Partition, frame: Frame, *, map_function=None, reduce_to_single=True, simplify_rexprs=True, flatten_keys=False):  # TODO: better name than map_function???
+    """This is the simplify method for partition, but there is so many special
+    arguments which lets its behavior be modified, that it deserves some special
+    attention
+
+
+    map_function is called before anything is saved back into the partition.  This lets there be some special handling and modification of the values before saving
+    reduce_to_single controls if the partition will delete itself in the case that it is not needed.  Some operations like memos require that they are contained in a partition even if there is one expression
+    simplify_rexpr is if we should call simplify ourselves before trying to save it back
+    flatten_keys will use loop to try and make this as close as possible to a fully ground table.  There might still be some non-ground R-exprs that are remaining in the partition.  This is essentially a temp memo used during computation and then thrown away
+
+    """
+
     incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
     incoming_values = [v.getValue(frame) for v in self._unioned_vars]
 
@@ -707,10 +726,22 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
             #nc[nkey].append(res)
             nc.setdefault(nkey,[]).append(res)
 
-    saveL.unioned_vars = self._unioned_vars
+    #saveL.unioned_vars = self._unioned_vars
 
     # a hook so that we can handle perform some remapping and control what gets save back into the partition
-    if map_function is None:
+    if flatten_keys:
+        assert map_function is None  # currently don't allow double here
+        def save(res2, frame2):
+            if isinstance(res2, FinalState):
+                saveL(res2, frame2)
+            else:
+                # then we have to try and loop this to ground out the values
+                def cb(res3, frame3):
+                    res4  = res3.rename_vars_unique(lambda x: constant(x.getValue(frame3)) if x.isBound(frame3) else (x if x in self._unioned_vars else None))
+                    saveL(res4, frame3)
+                loop(res2, frame2, cb, best_effort=True)
+
+    elif map_function is None:
         save = saveL
     else:
         save = lambda a,b: map_function(saveL, a,b)
@@ -1051,28 +1082,28 @@ def getPartitions_aggregator(self, frame):
             yield p
 
 
-def make_aggregator_loopable(R):
-    # wrap the body of an aggregator in a partition in hopes that the body will
-    # become loopable so that
-    if isinstance(R, Aggregator):
-        hs = set((*R.head_vars, R.body_res))
-        if not isinstance(R.body, Partition) or set(R.body._unioned_vars) != hs:
-            # then we want to make the body a partition so that we can loop the different expressions
-            hs = tuple(hs)  # the order probably will impact the trie
-            nb = partition(hs, [R.body.rewrite(make_aggregator_loopable)])
-            frame = Frame()
-            from .memos import _flatten_keys
-            nb = simplify(nb, frame, map_function=_flatten_keys, reduce_to_single=False)
-            # it might be important that we maintain the frame? or that we unify these variables with their constant values
+make_aggregator_loopable = Visitor()
 
-            #import ipdb; ipdb.set_trace()
-            assert not frame
+@make_aggregator_loopable.define(Aggregator)
+def make_aggregator_loopable_agg(R, frame):
+    hs = set((*R.head_vars, R.body_res))
+    if not isinstance(R.body, Partition) or set(R.body._unioned_vars) != hs:
+        # then we want to make the body a partition so that we can loop the different expressions
+        hs = tuple(hs)  # the order probably will impact the trie
+        nb = partition(hs, [R.body.rewrite(lambda x: make_aggregator_loopable(x, frame))])
+        nb = simplify(nb, frame, flatten_keys=True)
+        # it might be important that we maintain the frame? or that we unify
+        # these variables with their constant values
 
-            return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, nb)
+        return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, nb)
+    return R.rewrite(lambda x: make_aggregator_loopable(x, frame))
 
-
-    return R.rewrite(make_aggregator_loopable)
-
+@make_aggregator_loopable.define(Partition)
+def make_aggregator_loopable_partition(R, frame=None):
+    R = R.rewrite(lambda x: make_aggregator_loopable(x, frame))
+    if isinstance(R, Partition):  # if the partition got deleted somehow then we don't want to fail on the next line
+        R = simplify(R, frame, flatten_keys=True)
+    return R
 
 
 

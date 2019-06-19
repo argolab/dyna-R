@@ -523,9 +523,11 @@ def test_mapl_neural_network():
     ws = [(0,2),
          (-1,3),
          (1,5)]
-    weights = Partition((VariableId(0), ret_variable),
-                        [Intersect(Unify(VariableId(0), constant(w[0])),
-                                   Unify(ret_variable, constant(w[1]))) for w in ws])
+    weights = Aggregator(ret_variable, (VariableId(0),), VariableId('RR_inp2'), eq_agg,
+                         Partition((VariableId(0), VariableId('RR_inp2')),
+                                   [Intersect(Unify(VariableId(0), constant(w[0])),
+                                              Unify(VariableId('RR_inp2'), constant(w[1]))) for w in ws]))
+
     dyna_system.define_term('weights', 1, weights)
 
     # neural_input(&inp(X)) = weights(X).
@@ -566,8 +568,17 @@ def test_mapl_neural_network():
     eo = saturate(eo, frame)
     #re,_ = run_optimizer(eo, (VariableId(0), ret_variable))
 
-    zz = interpreter.make_aggregator_loopable(eo)
+    #zz = interpreter.make_aggregator_loopable(eo, frame)
+    zz = eo
 
     loop(zz, frame, cb, best_effort=True)
 
     assert vs == {0:19, -1:6, 1:10, -2:9, 2:25}
+
+
+    frame = Frame()
+    frame[0] = Term('out', (0,))
+
+    rr = saturate(eo, frame)
+
+    assert rr == Terminal(1)

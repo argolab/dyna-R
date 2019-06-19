@@ -207,7 +207,7 @@ class MemoContainer:
             if val is not None:
                 var.setValue(frame, val)
 
-        nRes = simplify(res, frame, map_function=_flatten_keys, reduce_to_single=False)
+        nRes = simplify(res, frame, flatten_keys=True, reduce_to_single=False)
 
         if nRes.isEmpty():
             return
@@ -303,31 +303,35 @@ def get_assumptions_memos(self):
     yield self.memos.assumption
 
 
-def _flatten_keys(save, R, frame):
-    # this needs to loop until all of the keys are ground, if we are
-    # unable to ground everything, then we are going to have delayed
-    # R-expr, but that needs to still avoid overlapping?
-    # if 'ddd' in frame:
-    #     import ipdb; ipdb.set_trace()
-    if isinstance(R, FinalState):
-        save(R, frame)
-    else:
-        # then we are going to loop and try and ground out more
-        def cb(R, frame2):
-            # if frame != frame2:
-            #     import ipdb; ipdb.set_trace()
-            # this needs to save any additional variables that are set in the frame into the R-expr
-            # the loop method can construct new copies of the frame, and that might be over variables that are not going to be saved by the partition
+# def _flatten_keys(save, R, frame):
+#     """
+#     THIS IS THE WORSE, MOST BUGGY METHOD IN THE ENTIRE PROGRAM.  IT SUCK SOOOOOO BAD.  ITS SHORT LENGTH IS VERY DECEPTIVE
+#     """
 
-            # if frame != frame2:
-            #     # FML
-            #     R = R.rename_vars(lambda x: constant(x.getValue(frame2)) if (x.isBound(frame2) and not x.isBound(frame) and x not in save.unioned_vars) else x)
+#     # this needs to loop until all of the keys are ground, if we are
+#     # unable to ground everything, then we are going to have delayed
+#     # R-expr, but that needs to still avoid overlapping?
+#     # if 'ddd' in frame:
+#     #     import ipdb; ipdb.set_trace()
+#     if isinstance(R, FinalState):
+#         save(R, frame)
+#     else:
+#         # then we are going to loop and try and ground out more
+#         def cb(R, frame2):
+#             # if frame != frame2:
+#             #     import ipdb; ipdb.set_trace()
+#             # this needs to save any additional variables that are set in the frame into the R-expr
+#             # the loop method can construct new copies of the frame, and that might be over variables that are not going to be saved by the partition
 
-            # double FML
-            r2 = R.rename_vars_unique(lambda x: constant(x.getValue(frame2)) if x.isBound(frame2) else (x if x in save.unioned_vars else None))
+#             # if frame != frame2:
+#             #     # FML
+#             #     R = R.rename_vars(lambda x: constant(x.getValue(frame2)) if (x.isBound(frame2) and not x.isBound(frame) and x not in save.unioned_vars) else x)
 
-            save(r2, frame2)
-        loop(R, frame, cb, best_effort=True)
+#             # double FML
+#             r2 = R.rename_vars_unique(lambda x: constant(x.getValue(frame2)) if x.isBound(frame2) else (x if x in save.unioned_vars else None))
+
+#             save(r2, frame2)
+#         loop(R, frame, cb, best_effort=True)
 
 
 def naive_converge_memos(*tables):
@@ -344,7 +348,7 @@ def naive_converge_memos(*tables):
             # this maybe should be done once at the start instead of every time that we go around this loop?
             R = inline_all_calls(t.body, set())
 
-            nR = simplify(R, Frame(), map_function=_flatten_keys)
+            nR = simplify(R, Frame(), flatten_keys=True)
 
             if t.memos != nR:
                 # then we need to update the expression in the table with this
@@ -360,7 +364,7 @@ def refresh_whole_table(table):
     # Eg, in the case of fib, this is going to identify that fib(0) = 0 and
     # fib(1) = 1 are inconsistent with the guess that the whole table is null
 
-    nR = simplify(table._full_body, Frame(), map_function=_flatten_keys, reduce_to_single=False)
+    nR = simplify(table._full_body, Frame(), flatten_keys=True, reduce_to_single=False)
 
     if table.memos != nR:
         # then we are going to have to signal these entries, which means
@@ -430,7 +434,7 @@ def process_agenda_message(msg: AgendaMessage):
         for var, val in zip(t.variables, msg.key):
             if val is not None:
                 var.setValue(frame, val)
-        nR = simplify(t._full_body, frame, map_function=_flatten_keys, reduce_to_single=False)
+        nR = simplify(t._full_body, frame, flatten_keys=True, reduce_to_single=False)
         if nR.isEmpty():
             return
 

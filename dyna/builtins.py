@@ -38,7 +38,13 @@ def check_op(name, arity, op):
     d = {
         (False,)+((True,)*arity): f
     }
-    return moded_op(name, d)
+    r = moded_op(name, d)
+
+    # if arity == 1:  # if there is only one argument, then we want to force the result to be true to match the behavior of :-
+    #     r = intersect(Unify(constant(True), ret_variable), r(0))
+
+    return r
+
 
 
 ##################################################
@@ -158,6 +164,7 @@ str_v = check_op('str', 1, lambda x: isinstance(x, str))
 bool_v = moded_op('bool', {
     (False, True): lambda a,b: (isinstance(b, bool), b),
 }, nondet={
+    # this isn't quite right, as what if someone wrote `False is bool(X)`, then we should not iterate the domain of a boolean variable
     (True, False): lambda a,b:  (True, [True, False]),
 })
 

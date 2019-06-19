@@ -33,7 +33,7 @@ def sort_intersections(R):
     return R.rewrite(sort_intersections)
 
 
-def make_graph(R):
+def make_graph(R):  # not used atm
     G = nx.Graph()
     for cons in R.all_children():
         if not isinstance(cons, Intersect):
@@ -44,13 +44,11 @@ def make_graph(R):
                     G.add_node(v)
                     G.add_edge(cons, v, eid=i)
             assert cons.vars
-
     return G
 
 
 def is_known_semidet(R):
     from .terms import BuildStructure
-    from .builtins import ModedOp  # sigh
 
     if isinstance(R, ModedOp):
         return not R.nondet  # if there is no non-det opereators, then it is semi-det, and we can duplicate it
@@ -70,7 +68,6 @@ def is_known_semidet(R):
 
 def split_heuristic(R, info=None):
     from .terms import CallTerm, BuildStructure  # sigh
-    from .builtins import ModedOp
 
     # determine which expressions we want to split out (if any) for the purposes
     # of making a more specalized compiled version.
