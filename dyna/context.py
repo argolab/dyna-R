@@ -1,4 +1,3 @@
-
 # this file should probably be renamed to something like dynabase or something,
 # it is holding the references to the different terms that are defined.
 
@@ -154,6 +153,7 @@ class SystemContext:
         else:
             assert not isinstance(name, (MergedExpression,CompiledExpression))  # this should get handled at some point along the chain. So it should not get to this undefiend point
             r = Terminal(0)  # this should probably be an error or something so that we can identify that this method doesn't exit
+            print('[warn] failed lookup', name)
 
         # wrapped the returned result in an assumption so we can track if the
         # code changes.
