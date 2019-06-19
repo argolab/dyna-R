@@ -108,14 +108,18 @@ def test_overlap_union():
     r = {ret1: constant(True), ret2: constant(True)}
     rexpr = rexpr.rename_vars(lambda x: r.get(x,x))
 
+    x = 5
+
     frame = Frame()
-    a1.setValue(frame, 5)
+    a1.setValue(frame, x)
 
     rr = simplify(rexpr, frame)
 
     assert rr == Terminal(1)
 
-    assert r1.getValue(frame) == 225
+    rv = sum(range(1, 2*x)) + sum(range(x, 20))
+
+    assert r1.getValue(frame) == rv
 
 
 def test_basic_term():

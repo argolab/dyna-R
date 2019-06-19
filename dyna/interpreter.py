@@ -501,7 +501,6 @@ def saturate(R, frame, *, log=False):
         R = simplify(R, frame)
         if R == last_R:
             break
-        #import ipdb; ipdb.set_trace()
     return R
 
 
@@ -786,9 +785,6 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
     if not nc:
         # then nothing matched, so just return that the partition is empty
         return Terminal(0)
-
-    # if 'ddd' in frame:
-    #     import ipdb; ipdb.set_trace()
 
     set_values = list(next(iter(nc.keys())))
 
@@ -1137,10 +1133,7 @@ class IteratorFromIterable(Iterator):
         self.iterable = iterable
     def bind_iterator(self, frame, variable, value):
         assert variable == self.variable
-        if value in self.iterable:
-            pass
-        else:
-            pass
+        return  value in self.iterable
     def run(self, frame):
         for v in self.iterable:
             yield {self.variable: v}
