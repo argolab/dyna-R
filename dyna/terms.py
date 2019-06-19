@@ -103,6 +103,9 @@ def simplify_buildStructure(self, frame):
         # if self.name == 'inp' and not any(('(c, frame2)' in f.code_context[0] if f.code_context else False) for f in inspect.stack()):
         #     import ipdb; ipdb.set_trace()
 
+        # if self.name == 'out':
+        #     import ipdb; ipdb.set_trace()
+
         for var, val in zip(self.arguments, res.arguments):
             var.setValue(frame, val)
         return Terminal(1)
