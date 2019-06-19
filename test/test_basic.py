@@ -558,27 +558,40 @@ def test_mapl_neural_network():
 
     eo = neural_output #dyna_system.call_term('neural_edge', 2)
 
-    frame = Frame()
-    vs = {}
-    def cb(R, frame):
-        assert isinstance(R, Terminal)
-        vs[frame[0].arguments[0]] = ret_variable.getValue(frame)
-        #import ipdb; ipdb.set_trace()
+    true_values = {0: 34, -1: 12, 1: 20, -2: 9, 2: 25}
 
-    eo = saturate(eo, frame)
-    #re,_ = run_optimizer(eo, (VariableId(0), ret_variable))
+    if 1:
+        frame = Frame()
+        vs = {}
+        def cb(R, frame):
+            assert isinstance(R, Terminal)
+            vs[frame[0].arguments[0]] = ret_variable.getValue(frame)
+            #import ipdb; ipdb.set_trace()
 
-    #zz = interpreter.make_aggregator_loopable(eo, frame)
-    zz = eo
+        eo = saturate(eo, frame)
+        #re,_ = run_optimizer(eo, (VariableId(0), ret_variable))
 
-    loop(zz, frame, cb, best_effort=True)
+        #zz = interpreter.make_aggregator_loopable(eo, frame)
+        zz = eo
 
-    assert vs == {0:19, -1:6, 1:10, -2:9, 2:25}
+        loop(zz, frame, cb, best_effort=True)
+
+        assert vs == true_values
+
+    for k in true_values.keys():
+        frame = Frame()
+        frame[0] = Term('out', (k,))
+
+        rr = saturate(eo, frame)
+
+        assert rr == Terminal(1)
+        assert ret_variable.getValue(frame) == true_values[k]
 
 
-    frame = Frame()
-    frame[0] = Term('out', (0,))
+def test_compiler1():
+    add3 = Intersect(add('x', 2, ret=interpreter.ret_variable), add(0,1,ret='x'))
 
-    rr = saturate(eo, frame)
+    dyna_system.define_term('add3', 3, add3)
 
-    assert rr == Terminal(1)
+    # the argument variables are all ground
+    dyna_system._compile_term(('add3', 3), set(variables_named(0,1,2)))

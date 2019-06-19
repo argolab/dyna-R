@@ -13,6 +13,7 @@ from .optimize import run_optimizer
 from .compiler import run_compiler
 
 from functools import reduce
+import operator
 
 class SystemContext:
     """
@@ -195,10 +196,10 @@ class SystemContext:
     def create_compiled_expression(self, term_ref, exposed_vars: Set[Variable]):
         r = CompiledExpression(term_ref, exposed_vars)
 
-        if r in self.compiled_expressions:
-            r = self.compiled_expressions[r]
+        if r in self.terms_as_compiled:
+            r = self.terms_as_compiled[r]
         else:
-            self.compiled_expressions[r] = r
+            self.terms_as_compiled[r] = r
 
         return r
 
@@ -242,15 +243,19 @@ class SystemContext:
 
 
     def _compile_term(self, term, ground_vars :Set[Variable]):
+        # always use the lookup as this can get optimized versions
         R = self.lookup_term(term, ('compile', 'memo'))
         if isinstance(R, MergedExpression):
             exposed = term.exposed_vars
         else:
+            # for dyna expressions the exposed public variables always have the same names
             name, arity = term
             exposed = (ret_variable, *variables_named(range(arity)))
 
         ce = self.create_compiled_expression(term, exposed)
         incoming_mode = tuple(v in ground_vars for v in ce.variable_order)  # the mode about which variables are ground at the start
+
+        run_compiler(self, ce, R, incoming_mode)
 
 
 
@@ -294,9 +299,17 @@ class MergedExpression:
 
 class CompiledExpression:
 
+    term_ref : object  # references the term that we are compiling
+    exposed_vars : Set[Variable]  # the variables that the public API
+    variable_order : Tuple[Variable]  # some order such that we can easily lookup compiled moded expressions
+    compiled_expressions : Dict[Tuple[bool], object]  # map from compiled modes in the variable_order to resuling compiled expressions
+
     def __init__(self, term_ref, exposed_vars :Set[Variable]):
         self.term_ref = term_ref
         self.exposed_vars = exposed_vars
+        # there should not be any constant variables in the exposed set as we
+        # won't be able to change this as parameters
+        assert all(not isinstance(v, ConstantVariable) for v in exposed_vars)
         self.variable_order = tuple(exposed_vars)
         self.compiled_expressions = {}
 
@@ -322,7 +335,7 @@ def check_basecases(R, stack=()):
     # return:
     #   0 then it does not hit a basecase for sure, and we should report an error or just mark this as terminal(0) as it would never be able to terminate
     #   1 unsure as it uses evaluate on all branches so it could go anywhere
-    #   2 this is definitly has base cases, but it might be recursive
+    #   2 this is definitly uses idirectly or directly recursion but that thing has base cases
     #   3 there is no detected recursion
 
     if isinstance(R, (Evaluate, Evaluate_reflect)):
@@ -332,8 +345,8 @@ def check_basecases(R, stack=()):
         x = 0; z = 3
         for r in R.children:
             y = check_basecases(r, stack=stack)
-            if y > x: x = y
-            if y < z: z = y
+            if y > x: x = y  # x is the max
+            if y < z: z = y  # z is the min
         if z == 3:
             return 3  # no recursion detected on any branch
         return min(x, 2)  # some recursion

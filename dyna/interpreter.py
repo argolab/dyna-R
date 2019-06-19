@@ -488,11 +488,15 @@ def simplify_terminal(self, frame):
     return self
 
 
-def saturate(R, frame):
+def saturate(R, frame, *, log=False):
     while True:
         # the frame is getting modified and the R is returning potentially new
         # things.  by saturating this, we are going to run until there is
         # nothing that we are able to do.
+        if log:
+            print(R)
+            print(frame)
+            print('-'*50)
         last_R = R
         R = simplify(R, frame)
         if R == last_R:
@@ -1046,17 +1050,24 @@ def simplify_aggregator(self, frame):
             # need to perform more loops?
             assert isinstance(R, FinalState)
 
-            if agg_result is not None:
-                agg_result = self.aggregator.combine(agg_result, self.body_res.getValue(frame))
-            else:
-                agg_result = self.body_res.getValue(frame)
+            if not R.isEmpty():  # ignore the empty states
+                v = self.body_res.getValue(frame)
+                assert v is not InvalidValue  # if this happens some invalid R-expr was generated?
+                for _ in range(R.multiplicity):
+                    if agg_result is not None:
+                        agg_result = self.aggregator.combine(agg_result, v)
+                    else:
+                        agg_result = v
 
         body = saturate(body, frame)
 
         loop(body, frame, loop_cb)
 
-        self.result.setValue(frame, agg_result)
-        return terminal(1)  # return that we are done and the result of aggregation has been computed
+        if agg_result is None:
+            return terminal(0)  # nothing from the aggregator
+        else:
+            self.result.setValue(frame, agg_result)
+            return terminal(1)  # return that we are done and the result of aggregation has been computed
 
     # There also needs to be some handling in the case that the result variable
     # from the body is fully grounded, but the head variables are not grounded.
