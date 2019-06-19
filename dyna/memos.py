@@ -300,7 +300,9 @@ def getPartition_memos(self, frame):
 
 @get_all_assumptions.define(RMemo)
 def get_assumptions_memos(self):
-    yield self.memos.assumption
+    a = self.memos.assumption
+    assert a.isValid()
+    yield a
 
 
 # def _flatten_keys(save, R, frame):
@@ -482,8 +484,12 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
 
         variables = R.head_vars + (R.body_res,)
         assert mem_variables is None  # TODO: handle selecting which variables that we want to memoize
+        if mem_variables is None:
+            mode = (True,)*len(R.head_vars)+(False,)
+        else:
+            mode = tuple(v in mem_variables for v in (*R.head_vars, R.body_res))
 
-        memos = MemoContainer((True,)*len(R.head_vars)+(False,), variables, R.body, is_null_memo=is_null_memo)
+        memos = MemoContainer(mode, variables, R.body, is_null_memo=is_null_memo)
         return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, RMemo(variables, memos))
 
     elif isinstance(R, Partition):
@@ -495,6 +501,9 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
         memos = MemoContainer(mode, variables, R, is_null_memo=is_null_memo)
         return RMemo(variables, memos)
     else:
+        if len(R.children) == 1:
+            return R.rewrite(lambda x: rewrite_to_memoize(x, mem_variables=mem_variables, is_null_memo=is_null_memo))
+
         raise NotImplementedError()  # TODO:??? maybe just walk through the structure, or just wrap this in a partition, but then need to figure out what variables are going to be shared
 
 

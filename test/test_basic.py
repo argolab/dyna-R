@@ -324,6 +324,20 @@ def test_fib_null_memos():
     assert mt._children[(40, 102334155)] == [Terminal(1)]
 
 
+def test_fib_null_memos2():
+    dyna_system.delete_term('fib', 1)
+    dyna_system.define_term('fib', 1, fib)
+
+    dyna_system.memoize_term(('fib', 1))
+
+    fibm = [x for x in dyna_system.lookup_term(('fib', 1)).all_children() if isinstance(x, RMemo)][0]
+
+    dyna_system.run_agenda()
+
+    # going to lookup directly into the memo table to determien what the values are
+    mt = fibm.memos.memos
+    assert len(mt._children) == 41
+    assert mt._children[(40, 102334155)] == [Terminal(1)]
 
 
 def test_reflect():

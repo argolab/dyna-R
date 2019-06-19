@@ -525,7 +525,8 @@ def inline_all_calls_default(self, inlined_calls, stack=()):
 def inline_all_calls_callterm(self, inlined_calls, stack=()):
     if self.term_ref in stack:
         # then we are going around a cycle, and this is not handled
-        raise RecursionError(self.term_ref)
+        return self
+    #raise RecursionError(self.term_ref)
     inlined_calls.add(self.term_ref)  # track that this was inlined at some point so that we can track the assumption
     R = self.dyna_system.lookup_term(self.term_ref)
     R2 = R.rename_vars_unique(self.var_map.get)

@@ -1109,8 +1109,6 @@ def make_aggregator_loopable_partition(R, frame=None):
     return R
 
 
-
-
 class ModedOp(RBaseType):
     def __init__(self, name, det, nondet, vars):
         super().__init__()

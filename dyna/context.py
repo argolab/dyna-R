@@ -10,6 +10,7 @@ from .guards import Assumption, AssumptionWrapper, AssumptionResponse
 from .agenda import Agenda
 from .optimize import run_optimizer
 from .compiler import run_compiler
+from .memos import rewrite_to_memoize
 
 from functools import reduce
 import operator
@@ -53,6 +54,13 @@ class SystemContext:
         return self.term_assumptions[name]
 
     def invalidate_term_assumption(self, name):
+        # there needs to be a more refined assumption tracking for these terms
+        # getting defined, eg, if the term is invalidated because a user
+        # redefined the term and thus the semantics of the term have changed.
+        # there is also if the optimizer or compiler has constructed a more
+        # efficient expression, then we might want to incoperate that meaning
+        # there should be an invalidation (notification) as a memo table
+        # implementation would want to use the more efficient expression
         a = self.term_assumption(name)
         n = Assumption(name)
         self.term_assumptions[name] = n
@@ -67,6 +75,10 @@ class SystemContext:
             del self.terms_as_optimized[a]
         if a in self.terms_as_memoized:
             del self.terms_as_memoized[a]
+        if a in self.terms_as_compiled:
+            del self.terms_as_compiled[a]
+        if a in self.merged_expressions:
+            del self.merged_expressions[a]  # TODO: is this what we want?
 
         # do invalidation last as we want anything that rechecks to get the new values
         self.invalidate_term_assumption(a)
@@ -114,6 +126,24 @@ class SystemContext:
         # track that this expression has changed, which can cause things to get recomputed/propagated to the agenda etc
         self.invalidate_term_assumption(a)
 
+    def memoize_term(self, name, kind='null', mem_variables=None):
+        assert kind in ('unk', 'null')
+
+
+
+        if mem_variables is not None:
+            mem_variables = variables_named(*mem_variables)  # ensure these are cast to variables
+
+        R = self.lookup_term(name, ignore=('memo', 'assumption'))
+
+        # this really needs to call, but avoid hitting the memo wrapper that we
+        # are going to add.  As in the case that the assumption is blown then we
+        # are going to want to get a new version of the code.
+        Rm = rewrite_to_memoize(R, mem_variables=mem_variables, is_null_memo=(kind == 'null'))
+        self.terms_as_memoized[name] = Rm
+
+        self.invalidate_term_assumption(name)
+
     def define_infered(self, required :RBaseType, added :RBaseType):
         z = (required, added)
         self.infered_constraints.append(z)
@@ -123,7 +153,6 @@ class SystemContext:
         ri = max(required.all_children(), key=lambda x: len(x.vars))
         self.infered_constraints_index.setdefault(type(ri), {}).setdefault(ri.weak_equiv()[0], []).append(z)
 
-
     def call_term(self, name, arity) -> RBaseType:
         # this should return a method call to a given term.
         # this should be lazy.
@@ -132,7 +161,7 @@ class SystemContext:
         m[ret_variable] = ret_variable
         return CallTerm(m, self, (name, arity))
 
-    def lookup_term(self, name, ignore=()):
+    def lookup_term(self, name, *, ignore=()):
         # if a term isn't defined, we are going to return Terminal(0) as there
         # is nothing that could have unified with the given expression.  we do
         # included tracking with the assumption, so if it later defined, we are
@@ -155,9 +184,12 @@ class SystemContext:
             r = Terminal(0)  # this should probably be an error or something so that we can identify that this method doesn't exit
             print('[warn] failed lookup', name)
 
+        if 'assumption' not in ignore:
+            r = AssumptionWrapper(self.term_assumption(name), r)
+
         # wrapped the returned result in an assumption so we can track if the
         # code changes.
-        return AssumptionWrapper(self.term_assumption(name), r)
+        return r
 
     def run_agenda(self):
         return self.agenda.run()
@@ -244,7 +276,7 @@ class SystemContext:
 
     def _compile_term(self, term, ground_vars :Set[Variable]):
         # always use the lookup as this can get optimized versions
-        R = self.lookup_term(term, ('compile', 'memo'))
+        R = self.lookup_term(term, ignore=('compile', 'memo'))
         if isinstance(R, MergedExpression):
             exposed = term.exposed_vars
         else:
