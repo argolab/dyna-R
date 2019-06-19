@@ -1,7 +1,7 @@
 from typing import *
 
 from .interpreter import *
-from .terms import CallTerm, BuildStructure, Evaluate, ReflectStructure
+from .terms import CallTerm, BuildStructure, Evaluate, ReflectStructure, Evaluate_reflect
 
 
 # we are going to want to know which mode will come back from a given
@@ -28,22 +28,51 @@ def get_mode_aggregator(R):
     return (*R.head_vars, R.result), ((True,)*len(R.head_vars)+(False,)), ()
 
 
+abstract_outmodes = Visitor()
 
+@abstract_outmodes.default
+def abstract_outmodes_default(R, bound):
+    raise NotImplementedError()
 
+@abstract_outmodes.define(ModedOp)
+def abstract_outmodes(R, bound):
+    mode = tuple(v.isBound(bound) for v in self.vars)
+    if mode in self.det:
+        # then we can evaluate this expression
+        f = self.det[mode]
+        def ev(frame):
+            nonlocal f
+            vals = tuple(v.getValue(frame) for v in self.vars)
+            r = f(*vals)
+            if isinstance(r, FinalState):
+                # then we need to end this expression and allow this to continue running
+                # in the case
+                assert isinstance(r, Terminal)  # TODO: handle
+                if r.multiplicity == 0:
+                    return False  # then this failed
+                elif r.multiplicity == 1:
+                    return True
+                else:
+                    assert False  # ???
 
-# class CompiledRexpr:
-#     """
-#     A representation of a compiled operation, or something that we are interested
-#     """
+            try:
+                for var, val in zip(self.vars, r):
+                    var.setValue(frame, val)
+            except UnificationFailure:
+                return False
 
-#     rexpr :RBaseType  # the Rexpr that we are wrapping
-#     exposed_variables : Tuple[Variable]  # variables that are exposed.  The set of argument + return variables.  Anything not in this set is assumed not directly accessed
-#     compiled_modes :Dict[Tuple[bool], 'CompiledModedRexpr']  # compiled sequences mapped off the mode of the incoming
+            return True  # indicate that this was successful
+        return  [
+            # what it rewrites as, what would become bound, some function that needs to be evaluated
+            (Terminal(1), self.vars, ev),
+            # there could be more expressions here, but these do not necessary
+        ]
+    if mode in self.nondet:
+        # then we want to be able to iterate these variables, meaning that we should return that
+        #
+        assert False  # TODO
 
-#     def __init__(self, rexpr :RBaseType, exposed_variables: Tuple[Variable]):
-#         self.rexpr = rexpr
-#         self.exposed_variables = exposed_variables
-#         self.compiled_modes = {}
+    return None  # indicates that there is nothing that we can do here
 
 
 class CompiledModedExpression:
@@ -124,31 +153,19 @@ class CompileManager:
     Wrap a compile task so that everything has access to the right operators
     """
 
-    def __init__(self):
+    def __init__(self, R, exposed_vars):
         self.operations = []  # List[Tuple[RBaseType,EvalFunction (if any)]]
+        self.R = R
+        self.bound_variables = dict((v, False) for v in set(R.all_vars()))
+        for v in exposed_vars:
+            self.bound_variables[v] = True
 
+    def run(self):
+        # we are going to keep performing rewrites to remove operations that we
+        # are "running."  We will be tracking which expressions are
 
-
-# def plan_modes(R, bound_variables):
-
-#     evaluated_operations = []  # as an operation is evaluated (meaning that its mode matches the current set of arguments, we are going to put it here and remove it from the R-expr)
-
-#     def mode_rewriter(R):
-#         nonlocal evaluated_operations
-#         if isinstance(R, ModedOp):
-#             assert False  # ....
-#         elif isinstance(R, Aggregator):
-#             # if the head arguments are known, then this can determine the
-#             # resulting variable, but we are going to have to handle
-#             pass
-
-#         assert False
-
-#     last_R = None
-#     while last_R != R:
-#         last_R = R
-
-#         R = mode_rewriter(R)
+        def rewriter(R):
+            pass
 
 
 
@@ -168,8 +185,16 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
     # cases where there is something that it needs to guess the mode that will
     # be supported (or something?)
 
-    R = replace_calls(R)  # all of the calls in the method will now be replace with referneces to other compiled object
-    # I suppose that we would like to plan as much stuff as
+    R = replace_calls(R)  # all of the calls in the method will now be replace
+                          # with referneces to other compiled object
+
+    # normalize the expression such that we don't have to handle
+    exposed_vars = ce.variable_order
+    vm = dict((v,VariableId(i)) for i,v in enumerate(exposed_vars))
+    R = R.rename_vars_unique(vm.get).weak_equiv(ignored=exposed_vars)
+
+
+
 
 
 

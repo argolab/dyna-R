@@ -582,3 +582,12 @@ def test_mapl_neural_network():
     rr = saturate(eo, frame)
 
     assert rr == Terminal(1)
+
+
+def test_compiler1():
+    add3 = Intersect(add('x', 2, ret=interpreter.ret_variable), add(0,1,ret='x'))
+
+    dyna_system.define_term('add3', 3, add3)
+
+    # the argument variables are all ground
+    dyna_system._compile_term(('add3', 3), set(variables_named(0,1,2)))
