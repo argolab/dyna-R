@@ -88,7 +88,16 @@ class RBaseType:
         for var in self.all_vars():
             if not isinstance(var, ConstantVariable) and var not in vs:
                 vl.append(var)
-        rm = dict(zip(vl, (VariableId(f'$W{i}') for i in range(len(vl)))))
+        inames = set(ignored)
+        #rm = dict(zip(vl, (VariableId(f'$W{i}') for i in range(len(vl)))))
+        rm = {}
+        ii = 0
+        for var in vl:
+            while True:  # the thing that calls us might have used $W variable names, so we can't generate those
+                v = VariableId(f'$W{ii}')
+                ii += 1
+                if v not in inames: break
+            rm[var] = v
         return self.rename_vars(lambda x: rm.get(x,x)), dict((v,k) for k,v in rm.items())
 
 
@@ -659,6 +668,7 @@ class Partition(RBaseType):
 
     def rename_vars(self, remap):
         r = tuple(remap(u) for u in self._unioned_vars)
+        assert not any(isinstance(v, ConstantVariable) for v in r)  # TODO: handle deleting a variable from the map..
         #c = dict((k, [c.rename_vars(remap) for c in v]) for k, v in self._children.items())
         c = self._children.map_values(lambda v: [a.rename_vars(remap) for a in v])
         return Partition(r, c)

@@ -118,6 +118,14 @@ def get_assumptions_wrapper(self):
     yield from get_all_assumptions(self.body)
 
 
+remove_all_assumptions = Visitor(track_source=False)
+
+@remove_all_assumptions.define(AssumptionWrapper)
+def remove_all_assumptions_assumption(self, track=None):
+    if track is not None:
+        track(self.assumption)
+    return remove_all_assumptions(self.body, track)
+
 
 
 

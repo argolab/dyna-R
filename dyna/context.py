@@ -245,7 +245,7 @@ class SystemContext:
         else:
             name, arity = term  # the name matching the way that we are storing dyna terms
             r = self.terms_as_defined[term]
-            exposed = (ret_variable, *variables_named(range(arity)))
+            exposed = (ret_variable, *variables_named(*range(arity)))
         rr, assumptions = run_optimizer(r, exposed)
 
         assumptions.add(assumpt)
@@ -282,7 +282,7 @@ class SystemContext:
         else:
             # for dyna expressions the exposed public variables always have the same names
             name, arity = term
-            exposed = (ret_variable, *variables_named(range(arity)))
+            exposed = (ret_variable, *variables_named(*range(arity)))
 
         ce = self.create_compiled_expression(term, exposed)
         incoming_mode = tuple(v in ground_vars for v in ce.variable_order)  # the mode about which variables are ground at the start

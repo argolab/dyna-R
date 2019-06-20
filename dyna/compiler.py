@@ -2,41 +2,43 @@ from typing import *
 
 from .interpreter import *
 from .terms import CallTerm, BuildStructure, Evaluate, ReflectStructure, Evaluate_reflect
+from .guards import remove_all_assumptions
 
 
 # we are going to want to know which mode will come back from a given
 # expression.  This means that we are looking for different expressions for
 # different possible call modes.  Also we are interested in
 
-get_mode = Visitor()
+# get_mode = Visitor()
 
-@get_mode.default
-def get_mode_default(R):
-    raise NotImplementedError()
+# @get_mode.default
+# def get_mode_default(R):
+#     raise NotImplementedError()
 
-@get_mode.define(ModedOp)
-def get_mode_modedOp(R):
-    return R.vars, R.det.keys(), R.nondet.keys()
+# @get_mode.define(ModedOp)
+# def get_mode_modedOp(R):
+#     return R.vars, R.det.keys(), R.nondet.keys()
 
-@get_mode.define(Unify)
-def get_mode_unify(R):
-    return R.vars, ((True,False), (False,True), (True,True)), ()
+# @get_mode.define(Unify)
+# def get_mode_unify(R):
+#     return R.vars, ((True,False), (False,True), (True,True)), ()
 
-@get_mode.define(Aggregator)
-def get_mode_aggregator(R):
-    assert False  # ??? need to look at the body or something
-    return (*R.head_vars, R.result), ((True,)*len(R.head_vars)+(False,)), ()
+# @get_mode.define(Aggregator)
+# def get_mode_aggregator(R):
+#     assert False  # ??? need to look at the body or something
+#     return (*R.head_vars, R.result), ((True,)*len(R.head_vars)+(False,)), ()
 
 
-abstract_outmodes = Visitor()
+abstract_outmodes = Visitor(track_source=False)
 
 @abstract_outmodes.default
 def abstract_outmodes_default(R, bound):
     raise NotImplementedError()
 
 @abstract_outmodes.define(ModedOp)
-def abstract_outmodes(R, bound):
-    mode = tuple(v.isBound(bound) for v in self.vars)
+def abstract_outmodes_modedop(self, manager: 'CompileManager'):
+    bound = manager.bound_variables
+    mode = tuple(bound[v] for v in self.vars)
     if mode in self.det:
         # then we can evaluate this expression
         f = self.det[mode]
@@ -156,16 +158,68 @@ class CompileManager:
     def __init__(self, R, exposed_vars):
         self.operations = []  # List[Tuple[RBaseType,EvalFunction (if any)]]
         self.R = R
+        self.origional_R = R
         self.bound_variables = dict((v, False) for v in set(R.all_vars()))
         for v in exposed_vars:
             self.bound_variables[v] = True
 
-    def run(self):
-        # we are going to keep performing rewrites to remove operations that we
-        # are "running."  We will be tracking which expressions are
+    def compile_simplfiy(self, R):
+        # this is going to compile a single round of simplify, looking for
+        # expressions that are able to run.  To emulate the entire saturate
+        # call, this should be called in a loop until there is nothing left for
+        # it to be able to compile.
 
         def rewriter(R):
-            pass
+            if isinstance(R, FinalState):
+                return R  # there is nothing for us to rewrite
+            if isinstance(R, Intersect):
+                return R.rewrite(rewriter)
+            elif isinstance(R, Partition):
+                raise NotImplementedError()  # TODO: handle partition, I suppose
+                                             # that this should just simplify
+                                             # the children.  Which means that
+                                             # this needs to call of the
+                                             # children branches and evaluate
+                                             # the different expressions.
+            else:
+                out_mode = abstract_outmodes(R, self)
+                if out_mode:
+                    # then there is something that we can run here, so we should
+                    # just mark it as running and then return the result
+
+                    out_r, bound_variables, evaluate = out_mode[0]
+
+                    for v in bound_variables:
+                        assert v in self.bound_variables  # ensure that we don't add to this
+                        self.bound_variables[v] = True
+
+                    self.operations.append(evaluate)
+                    return out_r
+
+                # then we can not run this expression this should maybe try
+                # and perform a rewrite on its children?  That would be
+                # similar to what simplify would do in these case,
+                return R.rewrite(rewriter)
+
+        return rewriter(R)
+
+
+    def run(self):
+        # this should try and emulate the simplify and then loop strategy to try
+        # and ground out expressions? Or should loop only be used inside of an
+        # aggregator, and thus there would be a well defined constract for what
+        # the shape of the returned valeus would look like
+
+        R = self.R
+
+        while True:
+            last_R = R
+            R = self.compile_simplfiy(R)
+            if last_R == R:
+                break
+
+        # I suppose that we should save this back
+        self.R = R
 
 
 
@@ -191,12 +245,15 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
     # normalize the expression such that we don't have to handle
     exposed_vars = ce.variable_order
     vm = dict((v,VariableId(i)) for i,v in enumerate(exposed_vars))
-    R = R.rename_vars_unique(vm.get).weak_equiv(ignored=exposed_vars)
+    R, vrenames = R.rename_vars_unique(vm.get).weak_equiv(ignored=exposed_vars)
 
+    assumptions = set()
+    R = remove_all_assumptions(R, assumptions.add)
 
+    manager = CompileManager(R, exposed_vars)
+    manager.run()
 
-
-
+    import ipdb; ipdb.set_trace()
 
 
     return None  # indicating that there was some failure or that we are unable
