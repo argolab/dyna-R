@@ -68,7 +68,7 @@ class RBaseType:
         nvars = {}
         def rmap(x):
             nonlocal nvars
-            if isinstance(x, UnitaryVariable) or isinstance(x, ConstantVariable):
+            if isinstance(x, ConstantVariable):
                 return x
             if x in nvars:
                 return nvars[x]
@@ -212,8 +212,14 @@ class VariableId(Variable):
             annon_variable_name += 1
         self.__name = name
 
+    @property
+    def _compiler_name(self):
+        # used by the compiler in a number of places, should hopefully not leak that much otherwise....sigh
+        return self.__name
+
     def isBound(self, frame):
-        return self.__name in frame
+        return frame._frame_isbound(self.__name)
+        #return self.__name in frame
 
     def getValue(self, frame):
         # want to ensure that we have some distinctive junk value so we are sure we do not use this
@@ -276,25 +282,25 @@ class ConstantVariable(Variable):
         else:
             return True
 
-class UnitaryVariable(Variable):
-    # a variable that is not referenced in more than 1 place, so we are going to
-    # ignore the value, it isn't even a constant
+# class UnitaryVariable(Variable):
+#     # a variable that is not referenced in more than 1 place, so we are going to
+#     # ignore the value, it isn't even a constant
 
-    # note, this is different from `_` in the source language, as that has to be
-    # "referenced" in two places so that it is looped over
-    __slots__ = ()
-    def __init__(self):
-        assert False  # Dont use this
-    def __str__(self):
-        return 'UNITARY'
-    # __eq__ and __hash__ can just be the object version as we are not going to be equal to any other variable
-    def isBound(self, frame):
-        return False
-    def getValue(self, frame):
-        return InvalidValue
-    def setValue(self, frame, value):
-        assert value is not InvalidValue  # ignore setting a value as no one will read it.....
-        return True
+#     # note, this is different from `_` in the source language, as that has to be
+#     # "referenced" in two places so that it is looped over
+#     __slots__ = ()
+#     def __init__(self):
+#         assert False  # Dont use this
+#     def __str__(self):
+#         return 'UNITARY'
+#     # __eq__ and __hash__ can just be the object version as we are not going to be equal to any other variable
+#     def isBound(self, frame):
+#         return False
+#     def getValue(self, frame):
+#         return InvalidValue
+#     def setValue(self, frame, value):
+#         assert value is not InvalidValue  # ignore setting a value as no one will read it.....
+#         return True
 
 def variables_named(*vars):
     return tuple((VariableId(v) if not isinstance(v, Variable) else v for v in vars))
@@ -335,6 +341,9 @@ class Frame(dict):
         else:
             self[varname] = value
         return True
+
+    def _frame_isbound(self, varname):
+        return varname in self
 
 
 ####################################################################################################

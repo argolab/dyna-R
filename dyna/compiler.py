@@ -37,8 +37,7 @@ def abstract_outmodes_default(R, bound):
 
 @abstract_outmodes.define(ModedOp)
 def abstract_outmodes_modedop(self, manager: 'CompileManager'):
-    bound = manager.bound_variables
-    mode = tuple(bound[v] for v in self.vars)
+    mode = tuple(v.isBound(manager) for v in self.vars)
     if mode in self.det:
         # then we can evaluate this expression
         f = self.det[mode]
@@ -79,8 +78,7 @@ def abstract_outmodes_modedop(self, manager: 'CompileManager'):
 
 @abstract_outmodes.define(Unify)
 def abstract_outmodes_unify(self, manager):
-    bound = manager.bound_variables
-    if bound[self.v1] and bound[self.v2]:
+    if self.v1.isBound(manager) and self.v2.isBound(manager):
         # then we are just going to check equlaity
         def check_equals(frame):
             return self.v1.getValue(frame) == self.v2.getValue(frame)
@@ -90,9 +88,9 @@ def abstract_outmodes_unify(self, manager):
         ]
     else:
         a, b = self.v1, self.v2
-        if bound[b]:
+        if b.isBound(manager):
             a,b = b,a
-        if bound[a]:
+        if a.isBound(manager):
             def copy_var(frame):
                 b.setValue(frame, a.getValue(frame))
                 return True  # this doesn't check anything as it isn't bound
@@ -100,15 +98,7 @@ def abstract_outmodes_unify(self, manager):
                 (Terminal(1), (b,), copy_var)
             ]
 
-
-
-
-# class CompiledModedExpression:
-
-#     def __init__(self):
-#         pass
-
-
+####################################################################################################
 
 
 class CompiledFrame:
@@ -151,6 +141,8 @@ class CompiledVariable(Variable):
 
     pass
 
+####################################################################################################
+
 
 class EnterCompiledCode(RBaseType):
     """This is the R-expr that is returned by the Context.lookup_term when it is
@@ -183,13 +175,26 @@ def simplify_enter_compiled_code(self, frame):
         arguments = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self.variables)
         result = expr.execute_program(arguments)
 
+        # first save the result of the public variables that we can read
+
+        # zip will stop early if any of the iterators stop
         for var, val, omode in zip(self.variables, result, expr.outgoing_mode):
             if omode:
                 var.setValue(frame, val)
 
-        return expr.R  # this needs to rename the additional variables
+        nvars = len(self.variables)
+        nvm = {VariableId(i): v for i,v in enumerate(self.variables)}  # make the public variables have the same name
 
-        assert False  # TODO: load the results back into the output
+        # handle private variables that need new slots in this frame
+        for var, val, omode in zip(expr.outgoing_additional_variables, result[nvars:], expr.outgoing_mode[nvars:]):
+            v = VariableId()  # create a new variable name that is unique for this frame
+            nvm[var] = v
+            if omode:
+                v.setValue(frame, val)
+
+        return expr.R.rename_vars(lambda v: nvm[v] if not isinstance(v, ConstantVariable) else v)  # there should not be variables that we are unaware of
+
+        # return expr.R  # this needs to rename the additional variables
 
     return self
 
@@ -248,16 +253,41 @@ class CompiledInstance:
         self.operations = []  # List[Tuple[RBaseType,EvalFunction (if any)]]
         self.R = R
         self.origional_R = R
-        self.bound_variables = dict((v, False) for v in set(R.all_vars()))
-        self.frame_variables = [v._VariableId__name for v in self.bound_variables.keys()]  ####################################### BAD USING THE PRIVATE NAME, NEED TO FIX THIS AS AN API OR SOMETHING
+        self.bound_variables = dict((v._compiler_name, False) for v in set(R.all_vars()) if not isinstance(v, ConstantVariable))
+        self.frame_variables = list(self.bound_variables.keys())  ####################################### BAD USING THE PRIVATE NAME, NEED TO FIX THIS AS AN API OR SOMETHING
         #self.exposed_vars = exposed_vars
         self.incoming_mode = incoming_mode
-        self.outgoing_mode = incoming_mode
+        self.outgoing_mode = None
+        self.outgoing_additional_variables = [] # list of variables that will be added to the frame, these are appended to the list of the result
         for i, imode in enumerate(incoming_mode):
-            v = VariableId(i)  # the names of the exposed variables should be normalized to just 0,...,N
-            assert v in self.bound_variables
+            #v = VariableId(i)  # the names of the exposed variables should be normalized to just 0,...,N
+            assert i in self.bound_variables
             if imode:
-                self.bound_variables[v] = True
+                self.bound_variables[i] = True
+
+    def _frame_isbound(self, varname):
+        return self.bound_variables[varname]
+
+    def finalize_compiler(self):
+        in_vars_out = tuple(self.bound_variables[i] for i in range(len(self.incoming_mode)))
+
+        # these are additional variables that we are going to return as being in the out inst
+        additional_vars = list(set(v for v in self.R.all_vars() if not isinstance(v, ConstantVariable)) - set(VariableId(i) for i in range(len(self.incoming_mode))) - set(self.outgoing_additional_variables))
+
+        # if we finalize this more than once then we should continue to add in
+        # the variables.  So we might expose more variables then we actually
+        # want in that case?
+
+        self.outgoing_additional_variables += additional_vars
+
+        additional_mode = tuple(self.bound_variables[v._compiler_name] for v in self.outgoing_additional_variables)
+        self.outgoing_mode = in_vars_out + additional_mode
+        # I suppose that we should save this back?  This is the returned expression that we are going to have to handle.
+
+    def do_compilation(self):
+        self.compile_saturate()
+        self.finalize_compiler()
+
 
     def compile_simplfiy(self, R):
         # this is going to compile a single round of simplify, looking for
@@ -296,8 +326,9 @@ class CompiledInstance:
                     out_r, bound_variables, evaluate = out_mode[0]
 
                     for v in bound_variables:
-                        assert v in self.bound_variables  # ensure that we don't add to this
-                        self.bound_variables[v] = True
+                        n = v._compiler_name
+                        assert n in self.bound_variables  # ensure that we don't add to this
+                        self.bound_variables[n] = True
 
                     self.operations.append(('run_function', evaluate))
                     return out_r
@@ -321,23 +352,17 @@ class CompiledInstance:
 
         pass
 
-    def start_compiler(self):
+    def compile_saturate(self):
         # this should try and emulate the simplify and then loop strategy to try
         # and ground out expressions? Or should loop only be used inside of an
         # aggregator, and thus there would be a well defined constract for what
         # the shape of the returned valeus would look like
 
-        R = self.R
-
         while True:
-            last_R = R
-            R = self.compile_simplfiy(R)
-            if last_R == R:
+            last_R = self.R
+            self.R = self.compile_simplfiy(self.R)
+            if last_R == self.R:
                 break
-
-        self.outgoing_mode = tuple(self.bound_variables[VariableId(i)] for i in range(len(self.incoming_mode)))
-        # I suppose that we should save this back?  This is the returned expression that we are going to have to handle.
-        self.R = R
 
     def execute_program(self, arguments):
         # this is the "bytecode interpeter" of the compiled sequence.  This is
@@ -392,7 +417,7 @@ class CompiledInstance:
 
 
         # this is the returned values that are bound by the expression.  This should instead
-        out_values = tuple(VariableId(vid).getValue(frame) for vid in range(len(self.outgoing_mode)))
+        out_values = tuple((VariableId(vid).getValue(frame) for vid in range(len(self.incoming_mode)))) + tuple((v.getValue(frame) for v in self.outgoing_additional_variables))
         return out_values
 
 
@@ -434,11 +459,11 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
     # the that compiles would be two different classes with the later generating
     # the first.
     manager = CompiledInstance(R, incoming_mode)
-    manager.start_compiler()
+    manager.do_compilation()
 
     # there needs to be some handling in the case that we are not successful
 
-    assert isinstance(manager.R, Terminal)  # for now just check that we reach the last final state
+    #assert isinstance(manager.R, Terminal)  # for now just check that we reach the last final state
 
 
     # save this expression back, as we might want to put some marker here so

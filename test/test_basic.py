@@ -607,6 +607,7 @@ def test_mapl_neural_network():
 
 
 def test_compiler1():
+    # simplest version of the compiler that returns fully ground
     add3 = Intersect(add('x', 2, ret=interpreter.ret_variable), add(0,1,ret='x'))
 
     dyna_system.define_term('add3', 3, add3)
@@ -627,3 +628,22 @@ def test_compiler1():
 
     assert rr == Terminal(1)
     assert interpreter.ret_variable.getValue(frame) == 6
+
+
+def test_compiler2():
+    # compiler that returns an inequality constraint between some variable and some new introduced variable
+    inequ3 = Intersect(gteq(0, 'x'), add(1,2,ret='x'), Unify(constant(True), interpreter.ret_variable))  # f(A,B,C) :- A >= B + C.
+
+    dyna_system.define_term('inequ3', 3, inequ3)
+    dyna_system._compile_term(('inequ3', 3), set(variables_named(1,2)))  # compile the mode (-,+,+)
+
+    frame = Frame()
+    r = simplify(dyna_system.call_term('inequ3', 3), frame)
+
+    frame[1] = 1
+    frame[2] = 3
+
+    rr = simplify(r, frame)
+
+    assert rr._tuple_rep()[0:2] == ('ModedOp', 'lteq')
+    assert 4 in frame.values()  # that there is some new variable that contains the sum of 1+3
