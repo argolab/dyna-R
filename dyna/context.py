@@ -9,7 +9,7 @@ from .terms import CallTerm, Evaluate, Evaluate_reflect
 from .guards import Assumption, AssumptionWrapper, AssumptionResponse
 from .agenda import Agenda
 from .optimize import run_optimizer
-from .compiler import run_compiler
+from .compiler import run_compiler, EnterCompiledCode
 from .memos import rewrite_to_memoize
 
 from functools import reduce
@@ -170,7 +170,10 @@ class SystemContext:
         if name in self.terms_as_memoized and 'memo' not in ignore:
             r = self.terms_as_memoized[name]  # should contain an RMemo type which will perform reads from a memo table
         elif name in self.terms_as_compiled and 'compile' not in ignore:
-            r = self.terms_as_compiled[name]
+            # return a wrapper around the compiled expression such that it can
+            # be embedded into the R-expr by the interpreter
+            ct = self.terms_as_compiled[name]
+            r = EnterCompiledCode(ct, ct.variable_order)
         elif name in self.terms_as_optimized and 'optimized' not in ignore:
             r = self.terms_as_optimized[name]  # this is the term rewritten after having been passed through the optimizer
         elif name in self.terms_as_defined:
@@ -226,13 +229,12 @@ class SystemContext:
         return r
 
     def create_compiled_expression(self, term_ref, exposed_vars: Set[Variable]):
-        r = CompiledExpression(term_ref, exposed_vars)
-
-        if r in self.terms_as_compiled:
-            r = self.terms_as_compiled[r]
+        if term_ref in self.terms_as_compiled:
+            r = self.terms_as_compiled[term_ref]
+            assert r.exposed_vars == exposed_vars
         else:
-            self.terms_as_compiled[r] = r
-
+            r = CompiledExpression(term_ref, exposed_vars)
+            self.terms_as_compiled[term_ref] = r
         return r
 
     def _optimize_term(self, term):
@@ -287,9 +289,9 @@ class SystemContext:
         ce = self.create_compiled_expression(term, exposed)
         incoming_mode = tuple(v in ground_vars for v in ce.variable_order)  # the mode about which variables are ground at the start
 
-        run_compiler(self, ce, R, incoming_mode)
+        result = run_compiler(self, ce, R, incoming_mode)
 
-
+        # the compiler will have
 
 
 

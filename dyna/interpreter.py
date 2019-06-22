@@ -225,13 +225,14 @@ class VariableId(Variable):
             del frame[self.__name]
 
     def setValue(self, frame, value):
-        if self.__name in frame:
-            # then check that the value is equal
-            if frame[self.__name] != value:
-                raise UnificationFailure()
-        else:
-            frame[self.__name] = value
-        return True  # if not equal return values, todo handle this throughout the code
+        return frame._frame_setvalue(self.__name, value)
+        # if self.__name in frame:
+        #     # then check that the value is equal
+        #     if frame[self.__name] != value:
+        #         raise UnificationFailure()
+        # else:
+        #     frame[self.__name] = value
+        # return True  # if not equal return values, todo handle this throughout the code
 
     def __eq__(self, other):
         return (self is other) or (type(self) is type(other) and (self.__name == other.__name))
@@ -326,6 +327,14 @@ class Frame(dict):
         nice = {str(k).split('\n')[0]: v for k,v in self.items()}
         return pprint.pformat(nice, indent=1)
 
+    def _frame_setvalue(self, varname, value):
+        # this is currently a hack for making this work with the compiler, it should go away
+        if varname in self:
+            if self[varname] != value:
+                raise UnificationFailure()
+        else:
+            self[varname] = value
+        return True
 
 
 ####################################################################################################

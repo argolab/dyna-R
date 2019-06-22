@@ -1,9 +1,7 @@
 
 numpy
 pybind11
-
+lark-parser
 networkx
 
 pytest
-
-

@@ -611,5 +611,19 @@ def test_compiler1():
 
     dyna_system.define_term('add3', 3, add3)
 
-    # the argument variables are all ground
+    # compile the expression that the
     dyna_system._compile_term(('add3', 3), set(variables_named(0,1,2)))
+
+    call_add3 = dyna_system.call_term('add3', 3)
+
+    frame = Frame()
+    r = simplify(call_add3, frame)
+
+    frame[0] = 1
+    frame[1] = 2
+    frame[2] = 3
+
+    rr = simplify(r, frame)
+
+    assert rr == Terminal(1)
+    assert interpreter.ret_variable.getValue(frame) == 6

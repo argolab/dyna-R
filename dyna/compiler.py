@@ -77,10 +77,36 @@ def abstract_outmodes_modedop(self, manager: 'CompileManager'):
     return None  # indicates that there is nothing that we can do here
 
 
-class CompiledModedExpression:
+@abstract_outmodes.define(Unify)
+def abstract_outmodes_unify(self, manager):
+    bound = manager.bound_variables
+    if bound[self.v1] and bound[self.v2]:
+        # then we are just going to check equlaity
+        def check_equals(frame):
+            return self.v1.getValue(frame) == self.v2.getValue(frame)
 
-    def __init__(self):
-        pass
+        return [
+            (Terminal(1), (), check_equals)
+        ]
+    else:
+        a, b = self.v1, self.v2
+        if bound[b]:
+            a,b = b,a
+        if bound[a]:
+            def copy_var(frame):
+                b.setValue(frame, a.getValue(frame))
+                return True  # this doesn't check anything as it isn't bound
+            return [
+                (Terminal(1), (b,), copy_var)
+            ]
+
+
+
+
+# class CompiledModedExpression:
+
+#     def __init__(self):
+#         pass
 
 
 
@@ -88,10 +114,30 @@ class CompiledModedExpression:
 class CompiledFrame:
 
     def __init__(self, variables):
-        self._values = len(variables)
+        self._values = [None]*len(variables)
         # the map from variables to slots should be done before we are running or something
         self._vmap = dict((v, i) for i,v in enumerate(variables))
 
+    def __contains__(self, varname):
+        import ipdb; ipdb.set_trace()
+        raise RuntimeError('The compiled frame should not be using contained in to determine the binding state of a variable')
+
+    def __getitem__(self, varname):
+        # this should instead
+        key = self._vmap[varname]
+        return self._values[key]
+
+    def get(self, varname, default):
+        return self[varname]
+
+    def __setitem__(self, varname, value):
+        key = self._vmap[varname]
+        self._values[key] = value
+        return value
+
+    def _frame_setvalue(self, varname, value):
+        key = self._vmap[varname]
+        self._values[key] = value
 
 
 class CompiledVariable(Variable):
@@ -100,9 +146,52 @@ class CompiledVariable(Variable):
     the version is correct.  the frame itself then just becoems an array
 
     """
+    def __init__(self):
+        assert False  # TODO
+
     pass
 
 
+class EnterCompiledCode(RBaseType):
+    """This is the R-expr that is returned by the Context.lookup_term when it is
+    referring to something that is compiled.  When this successfully matches
+    against the mode, then it will call into the compiled code.  This should be
+    only run inside of the interpreter where we are checking if we are in a mode
+    that we have currently compiled code for
+
+    """
+
+    def __init__(self, handle, variables):
+        super().__init__()
+        self.handle = handle
+        self.variables = variables
+
+    @property
+    def vars(self):
+        return self.variables
+
+    def _tuple_rep(self):
+        return self.__class__.__name__, self.handle.term_ref, self.variables
+
+
+@simplify.define(EnterCompiledCode)
+def simplify_enter_compiled_code(self, frame):
+    mode = tuple(v.isBound(frame) for v in self.variables)
+    expr = self.handle.compiled_expressions.get(mode)
+    if expr is not None:
+        # then we have found something so we are going to run it and return the result
+        arguments = tuple(v.getValue(frame) if v.isBound(frame) else None for v in self.variables)
+        result = expr.execute_program(arguments)
+
+        for var, val, omode in zip(self.variables, result, expr.outgoing_mode):
+            if omode:
+                var.setValue(frame, val)
+
+        return expr.R  # this needs to rename the additional variables
+
+        assert False  # TODO: load the results back into the output
+
+    return self
 
 
 class CompiledCallTerm(CallTerm):
@@ -150,18 +239,25 @@ def replace_calls(R):
     return R.rewrite(replace_calls)
 
 
-class CompileManager:
+class CompiledInstance:
     """
     Wrap a compile task so that everything has access to the right operators
     """
 
-    def __init__(self, R, exposed_vars):
+    def __init__(self, R, incoming_mode):
         self.operations = []  # List[Tuple[RBaseType,EvalFunction (if any)]]
         self.R = R
         self.origional_R = R
         self.bound_variables = dict((v, False) for v in set(R.all_vars()))
-        for v in exposed_vars:
-            self.bound_variables[v] = True
+        self.frame_variables = [v._VariableId__name for v in self.bound_variables.keys()]  ####################################### BAD USING THE PRIVATE NAME, NEED TO FIX THIS AS AN API OR SOMETHING
+        #self.exposed_vars = exposed_vars
+        self.incoming_mode = incoming_mode
+        self.outgoing_mode = incoming_mode
+        for i, imode in enumerate(incoming_mode):
+            v = VariableId(i)  # the names of the exposed variables should be normalized to just 0,...,N
+            assert v in self.bound_variables
+            if imode:
+                self.bound_variables[v] = True
 
     def compile_simplfiy(self, R):
         # this is going to compile a single round of simplify, looking for
@@ -178,9 +274,19 @@ class CompileManager:
                 raise NotImplementedError()  # TODO: handle partition, I suppose
                                              # that this should just simplify
                                              # the children.  Which means that
-                                             # this needs to call of the
+                                             # this needs to call on the
                                              # children branches and evaluate
                                              # the different expressions.
+            elif isinstance(R, CompiledCallTerm):
+                # then we are going to require handling.  If the mode is
+                # present, then we /could/ call it, or we could delay calling
+                # this until we evaluate more of the delayed constraints
+
+                # if the expression can be called and would return the correct
+
+
+                raise NotImplementedError()
+                pass
             else:
                 out_mode = abstract_outmodes(R, self)
                 if out_mode:
@@ -193,7 +299,7 @@ class CompileManager:
                         assert v in self.bound_variables  # ensure that we don't add to this
                         self.bound_variables[v] = True
 
-                    self.operations.append(evaluate)
+                    self.operations.append(('run_function', evaluate))
                     return out_r
 
                 # then we can not run this expression this should maybe try
@@ -203,8 +309,19 @@ class CompileManager:
 
         return rewriter(R)
 
+    def compile_loop(self, R):
+        # take an aggregator and then loop over the elements.
+        pass
 
-    def run(self):
+
+    def identify_runnable_partitions(R):
+        # identify where there are iterators and we could run the expression.
+        # This should be if there are some moded operations that can bind a
+        # variable, then we would like to know about that?
+
+        pass
+
+    def start_compiler(self):
         # this should try and emulate the simplify and then loop strategy to try
         # and ground out expressions? Or should loop only be used inside of an
         # aggregator, and thus there would be a well defined constract for what
@@ -218,8 +335,67 @@ class CompileManager:
             if last_R == R:
                 break
 
-        # I suppose that we should save this back
+        self.outgoing_mode = tuple(self.bound_variables[VariableId(i)] for i in range(len(self.incoming_mode)))
+        # I suppose that we should save this back?  This is the returned expression that we are going to have to handle.
         self.R = R
+
+    def execute_program(self, arguments):
+        # this is the "bytecode interpeter" of the compiled sequence.  This is
+        # just because we are compiling a sequence of instructions instead being
+        # some compiled external thunk
+
+        # setup initial registers for this method
+        pc = 0  # the program counter
+        ninstrs = len(self.operations)
+        frame = CompiledFrame(self.frame_variables)
+
+        # load in the arguments for this expression
+        for vid, (imode, val) in enumerate(zip(self.incoming_mode, arguments)):
+            if imode:
+                assert val is not None
+                VariableId(vid).setValue(frame, val)
+
+        # run
+        while pc < ninstrs:  # if we fall off the edge, then we should be done, but maybe we should have some final instruction which tracks this instead?
+            instr, data = self.operations[pc]
+            if instr == 'run_function':
+                # this is currently run builtin and run external as we are just wrapping that up into a python function that does the work internally
+                success = data(frame)
+                assert success == True  # need to handle failure cases, or where we find ourselves branching to a different case becasue of a difference in values
+                pc += 1
+                continue
+            elif instr == 'jump':
+                pc = data
+                continue
+
+            elif instr == 'iterator_make':
+                # take something that we are going to iterate over and save it
+                # to some slot.  This will then set the
+                pass
+            elif instr == 'iterator_next':
+                iterator_slot, out_slot, end_of_loop = data
+
+                pass
+            elif instr == 'aggregator_init':
+                pass
+            elif instr == 'aggregator_add':
+                pass
+            elif instr == 'aggregator_finalize':
+                pass
+
+
+            # we are still going to need something to handle running an
+            # expression that is going to need to branch and control if some
+            # expression is active.  The current set of instructions is
+
+            raise NotImplementedError()  # as the not implements currently fall through
+
+
+        # this is the returned values that are bound by the expression.  This should instead
+        out_values = tuple(VariableId(vid).getValue(frame) for vid in range(len(self.outgoing_mode)))
+        return out_values
+
+
 
 
 
@@ -239,22 +415,44 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
     # cases where there is something that it needs to guess the mode that will
     # be supported (or something?)
 
+    Rp = R
+
     R = replace_calls(R)  # all of the calls in the method will now be replace
                           # with referneces to other compiled object
 
     # normalize the expression such that we don't have to handle
     exposed_vars = ce.variable_order
     vm = dict((v,VariableId(i)) for i,v in enumerate(exposed_vars))
-    R, vrenames = R.rename_vars_unique(vm.get).weak_equiv(ignored=exposed_vars)
+    R, vrenames = R.rename_vars_unique(vm.get).weak_equiv(ignored=tuple(vm.values()))
 
     assumptions = set()
     R = remove_all_assumptions(R, assumptions.add)
 
-    manager = CompileManager(R, exposed_vars)
-    manager.run()
 
-    import ipdb; ipdb.set_trace()
+    # this will wrap the compiled code.  Atm this stays around, though in the
+    # future I would suspect that the thing that does the generation of code and
+    # the that compiles would be two different classes with the later generating
+    # the first.
+    manager = CompiledInstance(R, incoming_mode)
+    manager.start_compiler()
+
+    # there needs to be some handling in the case that we are not successful
+
+    assert isinstance(manager.R, Terminal)  # for now just check that we reach the last final state
 
 
-    return None  # indicating that there was some failure or that we are unable
-                 # to do this at this time.
+    # save this expression back, as we might want to put some marker here so
+    # that we know that we are compiling this expression.  This would mean that
+    # we want to be able to later mark that it is done.
+    ce.compiled_expressions[incoming_mode] = manager
+
+    return manager
+
+
+    # import ipdb; ipdb.set_trace()
+
+
+
+
+    # return None  # indicating that there was some failure or that we are unable
+    #              # to do this at this time.
