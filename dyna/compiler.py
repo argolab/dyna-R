@@ -5,30 +5,18 @@ from .terms import CallTerm, BuildStructure, Evaluate, ReflectStructure, Evaluat
 from .guards import remove_all_assumptions
 
 
-# we are going to want to know which mode will come back from a given
-# expression.  This means that we are looking for different expressions for
-# different possible call modes.  Also we are interested in
-
-# get_mode = Visitor()
-
-# @get_mode.default
-# def get_mode_default(R):
-#     raise NotImplementedError()
-
-# @get_mode.define(ModedOp)
-# def get_mode_modedOp(R):
-#     return R.vars, R.det.keys(), R.nondet.keys()
-
-# @get_mode.define(Unify)
-# def get_mode_unify(R):
-#     return R.vars, ((True,False), (False,True), (True,True)), ()
-
-# @get_mode.define(Aggregator)
-# def get_mode_aggregator(R):
-#     assert False  # ??? need to look at the body or something
-#     return (*R.head_vars, R.result), ((True,)*len(R.head_vars)+(False,)), ()
+class IdentityKey:
+    __slots__ = ('key',)
+    def __init__(self, key):
+        assert not isinstance(key, IdentityKey)
+        self.key = key
+    def __eq__(self, other):
+        return type(self) is type(other) and self.key is other.key
+    def __hash__(self):
+        return object.__hash__(self.key)
 
 
+# abstract information about what modes are going to come back from an expression and how
 abstract_outmodes = Visitor(track_source=False)
 
 @abstract_outmodes.default
@@ -56,22 +44,65 @@ def abstract_outmodes_modedop(self, manager: 'CompileManager'):
                 else:
                     assert False  # ???
 
-            try:
-                for var, val in zip(self.vars, r):
-                    var.setValue(frame, val)
-            except UnificationFailure:
-                return False
+            for var, val, imode in zip(self.vars, r, mode):
+                # this does not raise a unification failure, as it is just going to directly write the value into the frame
+                if imode:
+                    if var.getValue(frame) != val:
+                        return False
+                else:
+                    var.rawSetValue(frame, val)
 
             return True  # indicate that this was successful
         return  [
             # what it rewrites as, what would become bound, some function that needs to be evaluated
-            (Terminal(1), self.vars, ev),
+            (True, Terminal(1), self.vars, ev),
             # there could be more expressions here, but these do not necessary
         ]
     if mode in self.nondet:
         # then we want to be able to iterate these variables, meaning that we should return that
-        #
-        assert False  # TODO
+        f = self.nondet[mode]
+
+        binding_vars = tuple(v for imode, v in zip(mode, self.vars) if not imode)
+
+        def run_iterator(frame):
+            # then this creates an iterator and will perform modifications to
+            # the frame in place
+            #
+            # I don't think that this needs to handle the binding case, as it
+            # could just use the normal execution of a subgoal to check the
+            # grounding of a variable
+
+            vals = tuple(v.getValue(frame) for v in self.vars)
+            r = f(*vals)
+
+            # first check any ground variables are matched with the returned expression
+            for ival, rval, imode in zip(vals, r, mode):
+                if imode:
+                    if hasattr(rval, '__iter__'):
+                        if ival not in rval:
+                            return
+                    else:
+                        if ival != rval:
+                            return
+
+            from itertools import product
+            iterator = product(*(p if hasattr(p, '__iter__') else [p] for p, m in zip(r, mode) if not m))  # get the product of all of the iterators that are getting bound, this is a bit different from the way this is normally implemented....
+
+            for binding in iterator:
+                for var, val in zip(binding_vars, binding):
+                    var.rawSetValue(frame, val)
+                yield  # let our caller get to the next state
+
+            # unset the variables.  Not strictly required, but will ensure that
+            # we don't use an unset value after the loop is done while debugging
+            for var in binding_vars:
+                var.rawSetValue(frame, None)
+
+
+        return [
+            # return that this is non-det and which variables are going to be bound as a result of this expression
+            (False, Terminal(1), binding_vars, run_iterator)
+        ]
 
     return None  # indicates that there is nothing that we can do here
 
@@ -84,7 +115,7 @@ def abstract_outmodes_unify(self, manager):
             return self.v1.getValue(frame) == self.v2.getValue(frame)
 
         return [
-            (Terminal(1), (), check_equals)
+            (True, Terminal(1), (), check_equals)
         ]
     else:
         a, b = self.v1, self.v2
@@ -92,10 +123,10 @@ def abstract_outmodes_unify(self, manager):
             a,b = b,a
         if a.isBound(manager):
             def copy_var(frame):
-                b.setValue(frame, a.getValue(frame))
+                b.rawSetValue(frame, a.getValue(frame))
                 return True  # this doesn't check anything as it isn't bound
             return [
-                (Terminal(1), (b,), copy_var)
+                (True, Terminal(1), (b,), copy_var)
             ]
 
 ####################################################################################################
@@ -126,8 +157,9 @@ class CompiledFrame:
         return value
 
     def _frame_setvalue(self, varname, value):
-        key = self._vmap[varname]
-        self._values[key] = value
+        raise Exception('Should not use setValue on the frame inside of the compiled code, instead use var.rawSetValue')
+        # key = self._vmap[varname]
+        # self._values[key] = value
 
 
 class CompiledVariable(Variable):
@@ -180,7 +212,7 @@ def simplify_enter_compiled_code(self, frame):
         # zip will stop early if any of the iterators stop
         for var, val, omode in zip(self.variables, result, expr.outgoing_mode):
             if omode:
-                var.setValue(frame, val)
+                var.rawSetValue(frame, val)
 
         nvars = len(self.variables)
         nvm = {VariableId(i): v for i,v in enumerate(self.variables)}  # make the public variables have the same name
@@ -190,7 +222,7 @@ def simplify_enter_compiled_code(self, frame):
             v = VariableId()  # create a new variable name that is unique for this frame
             nvm[var] = v
             if omode:
-                v.setValue(frame, val)
+                v.rawSetValue(frame, val)
 
         return expr.R.rename_vars(lambda v: nvm[v] if not isinstance(v, ConstantVariable) else v)  # there should not be variables that we are unaware of
 
@@ -217,21 +249,20 @@ class CompiledCallTerm(CallTerm):
 
 
 
-class CompiledModedCall(RBaseType):
+# class CompiledModedCall(RBaseType):
 
-    def __init__(self, dyna_system, term_ref, call_mode :Tuple[bool], arguments :Tuple[Variable]):
-        self.dyna_system = dyna_system
-        self.term_ref = term_ref
-        self.call_mode = call_mode
-        self.result_mode = None  # TODO: need to know what is bound after this call is performed, and we are going to need to still plan which expressions in the return bit are still to get handled.
-        self.arguments = arguments
+#     def __init__(self, dyna_system, term_ref, call_mode :Tuple[bool], arguments :Tuple[Variable]):
+#         self.dyna_system = dyna_system
+#         self.term_ref = term_ref
+#         self.call_mode = call_mode
+#         self.result_mode = None  # TODO: need to know what is bound after this call is performed, and we are going to need to still plan which expressions in the return bit are still to get handled.
+#         self.arguments = arguments
 
-        #
-        self.returned_rexpr = None  # TODO: need to know what could possibly come back in this case
+#         self.returned_rexpr = None  # TODO: need to know what could possibly come back in this case
 
-    @property
-    def vars(self):
-        return self.arguments
+#     @property
+#     def vars(self):
+#         return self.arguments
 
 
 
@@ -268,6 +299,11 @@ class CompiledInstance:
     def _frame_isbound(self, varname):
         return self.bound_variables[varname]
 
+    def _add_variable(self, variable):
+        assert variable not in self.bound_variables
+        self.bound_variables[variable._compiler_name] = False
+        self.frame_variables.append(variable._compiler_name)
+
     def finalize_compiler(self):
         in_vars_out = tuple(self.bound_variables[i] for i in range(len(self.incoming_mode)))
 
@@ -285,20 +321,28 @@ class CompiledInstance:
         # I suppose that we should save this back?  This is the returned expression that we are going to have to handle.
 
     def do_compilation(self):
-        self.compile_saturate()
+        self.R = self.compile_saturate(self.R)
         self.finalize_compiler()
 
 
-    def compile_simplfiy(self, R):
+    def compile_simplfiy(self, R, *, nondet_runners=None, replaced_expressions=None):
         # this is going to compile a single round of simplify, looking for
         # expressions that are able to run.  To emulate the entire saturate
         # call, this should be called in a loop until there is nothing left for
         # it to be able to compile.
 
+        if nondet_runners is None:
+            nondet_runners = {}
+        if replaced_expressions is None:
+            replaced_expressions = {}
+
         def rewriter(R):
-            if isinstance(R, FinalState):
+            nonlocal nondet_runners, replaced_expressions
+            if IdentityKey(R) in replaced_expressions:
+                return replaced_expressions.pop(IdentityKey(R))
+            elif isinstance(R, FinalState):
                 return R  # there is nothing for us to rewrite
-            if isinstance(R, Intersect):
+            elif isinstance(R, Intersect):
                 return R.rewrite(rewriter)
             elif isinstance(R, Partition):
                 raise NotImplementedError()  # TODO: handle partition, I suppose
@@ -316,22 +360,81 @@ class CompiledInstance:
 
 
                 raise NotImplementedError()
-                pass
+
+            elif isinstance(R, Aggregator):
+                # the aggregator might create a loop if the body is finished
+
+                parent_nondets = nondet_runners
+                local_nondets = {}
+                nondet_runners = local_nondets
+                try:
+                    body = rewriter(R.body)
+                finally:
+                    nondet_runners = parent_nondets
+
+                # this needs to check if one of the iterators could bind
+                # something that is in a higher frame.  that might mean tracking
+                # if there is some functional dependency between one of the
+                # operators?
+
+                if all(v.isBound(self) for v in R.head_vars):
+                    # then we can run this aggregator for a specific variable, so we are going to do that now
+
+                    # this is going to need to select something that can be used to run properly.  For now, we are just choosing the first thing
+                    assert len(local_nondets) == 1
+
+                    aggregator_slot = VariableId()
+                    self._add_variable(aggregator_slot)
+                    #self.bound_variables[aggregator_slot._compiler_name] = True
+
+                    self.operations.append(('aggregator_init', aggregator_slot))
+
+                    loop_driver, loop_op = list(local_nondets.items())[0]  # just get the first value for now
+
+                    replaced_expressions[loop_driver] = loop_op[1]
+
+                    def aggregator_callback():
+                        # this needs to generate the approperate code inside of the loop for handling the R-expr that remains.
+
+                        # this needs to become a saturate to get it all the way to the end of running
+                        rbody = rewriter(body)  # run the body and get the result
+
+                        assert isinstance(rbody, Terminal)  # that we reached the final state
+
+                        self.operations.append(('aggregator_add', (aggregator_slot, R.body_res, R.aggregator)))  # perform the addition into the aggregator for this operation
+
+
+                    self.compile_run_loop(body, loop_op, aggregator_callback)
+
+                    self.operations.append(('aggregator_finalize', (aggregator_slot, R.result)))
+                    self.bound_variables[R.result._compiler_name] = True  # mark that the result variable is now set to something
+
+                    return Terminal(1)
+
+                return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, body)
             else:
                 out_mode = abstract_outmodes(R, self)
                 if out_mode:
                     # then there is something that we can run here, so we should
                     # just mark it as running and then return the result
 
-                    out_r, bound_variables, evaluate = out_mode[0]
+                    is_semidet, out_r, bound_variables, evaluate = out_mode[0]
 
-                    for v in bound_variables:
-                        n = v._compiler_name
-                        assert n in self.bound_variables  # ensure that we don't add to this
-                        self.bound_variables[n] = True
+                    if is_semidet:
+                        for v in bound_variables:
+                            n = v._compiler_name
+                            assert n in self.bound_variables  # ensure that we don't add to this
+                            self.bound_variables[n] = True
 
-                    self.operations.append(('run_function', evaluate))
-                    return out_r
+                        self.operations.append(('run_function', evaluate))
+                        return out_r
+                    else:
+                        nondet_runners[IdentityKey(R)] = out_mode[0]  # track this for something else could use this to drive a loop
+                        # assert False  # then we need to mark that this oepration
+                        #               # could be run in a non-det mode
+                        #               # (iterating) the domain of some variable
+
+
 
                 # then we can not run this expression this should maybe try
                 # and perform a rewrite on its children?  That would be
@@ -340,29 +443,62 @@ class CompiledInstance:
 
         return rewriter(R)
 
-    def compile_loop(self, R):
+    def compile_run_loop(self, R, iterator, callback):
         # take an aggregator and then loop over the elements.
-        pass
 
 
-    def identify_runnable_partitions(R):
-        # identify where there are iterators and we could run the expression.
-        # This should be if there are some moded operations that can bind a
-        # variable, then we would like to know about that?
+        _, result_r, bound_variables, run_iterator = iterator
 
-        pass
+        iter_slot = VariableId()
+        self._add_variable(iter_slot)
+        #self.bound_variables[iter_slot._compiler_name] = True  # this will make the compiler allocate some slot for this variable
 
-    def compile_saturate(self):
+        entry_binding_state = self.bound_variables.copy()  # we want to unset any bound variables when we return
+
+        self.operations.append(('iterator_make', (run_iterator, iter_slot)))
+        loop_pc = len(self.operations)
+        self.operations.append(('iterator_next', (iter_slot, -1)))  # we have to fill in the jump location for when this loop is done
+
+        try:
+            callback()
+        finally:
+            self.operations.append(('jump', loop_pc))
+            self.operations[loop_pc] = ('iterator_next', (iter_slot, len(self.operations)))
+
+            for var, state in entry_binding_state.items():
+                self.bound_variables[var] = state
+
+            #self.bound_variables[iter_slot._compiler_name] = False  # this is now unbound
+
+    def compile_loop(self, R, callback):
+        # compile having multiple loops at the same time until some criteria has been meet.
+
+
+
+        raise NotImplementedError()
+
+
+
+    # def identify_runnable_partitions(R):
+    #     # identify where there are iterators and we could run the expression.
+    #     # This should be if there are some moded operations that can bind a
+    #     # variable, then we would like to know about that?
+
+    #     pass
+
+    def compile_saturate(self, R):
         # this should try and emulate the simplify and then loop strategy to try
         # and ground out expressions? Or should loop only be used inside of an
         # aggregator, and thus there would be a well defined constract for what
         # the shape of the returned valeus would look like
 
         while True:
-            last_R = self.R
-            self.R = self.compile_simplfiy(self.R)
-            if last_R == self.R:
+            last_R = R
+            R = self.compile_simplfiy(R)
+            if last_R == R:
                 break
+
+        return R
 
     def execute_program(self, arguments):
         # this is the "bytecode interpeter" of the compiled sequence.  This is
@@ -378,42 +514,54 @@ class CompiledInstance:
         for vid, (imode, val) in enumerate(zip(self.incoming_mode, arguments)):
             if imode:
                 assert val is not None
-                VariableId(vid).setValue(frame, val)
+                VariableId(vid).rawSetValue(frame, val)
 
         # run
         while pc < ninstrs:  # if we fall off the edge, then we should be done, but maybe we should have some final instruction which tracks this instead?
+            assert pc >= 0
             instr, data = self.operations[pc]
+            print(f'>>> {pc} {instr} {data}')
             if instr == 'run_function':
                 # this is currently run builtin and run external as we are just wrapping that up into a python function that does the work internally
                 success = data(frame)
                 assert success == True  # need to handle failure cases, or where we find ourselves branching to a different case becasue of a difference in values
                 pc += 1
-                continue
             elif instr == 'jump':
                 pc = data
-                continue
-
             elif instr == 'iterator_make':
                 # take something that we are going to iterate over and save it
                 # to some slot.  This will then set the
-                pass
+                run_iterator, iter_slot = data
+                iter_slot.rawSetValue(frame, run_iterator(frame))  # start the iterator
+                pc += 1
             elif instr == 'iterator_next':
-                iterator_slot, out_slot, end_of_loop = data
-
-                pass
+                iterator_slot, end_iterator_location = data
+                iterator = iterator_slot.getValue(frame)
+                try:
+                    next(iterator)  # get the next value from the iterator
+                    pc += 1  # go to the next slot
+                except StopIteration:
+                    pc = end_iterator_location
+                    iterator_slot.rawSetValue(frame, None)  # delete the iterator from the frame slot
+                iterator = None
             elif instr == 'aggregator_init':
-                pass
+                data.rawSetValue(frame, None)  # init the value to nothing
+                pc += 1
             elif instr == 'aggregator_add':
-                pass
+                slot, body_res, aggregator = data
+                old_value = slot.getValue(frame)
+                new_value = body_res.getValue(frame)
+                if old_value is not None:
+                    new_value = aggregator.combine(old_value, new_value)
+                slot.rawSetValue(frame, new_value)
+                pc += 1
             elif instr == 'aggregator_finalize':
-                pass
-
-
-            # we are still going to need something to handle running an
-            # expression that is going to need to branch and control if some
-            # expression is active.  The current set of instructions is
-
-            raise NotImplementedError()  # as the not implements currently fall through
+                slot, out_var = data
+                value = slot.getValue(frame)
+                if value is None:
+                    assert False  # TODO: handle.  In this case there was nothing that got aggregated together and we need to error out this statement and go to whatever the failure handler is in this case
+                out_var.rawSetValue(frame, value)
+                pc += 1
 
 
         # this is the returned values that are bound by the expression.  This should instead
@@ -472,12 +620,3 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
     ce.compiled_expressions[incoming_mode] = manager
 
     return manager
-
-
-    # import ipdb; ipdb.set_trace()
-
-
-
-
-    # return None  # indicating that there was some failure or that we are unable
-    #              # to do this at this time.

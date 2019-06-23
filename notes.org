@@ -249,3 +249,11 @@ then add in additional inferred constraints or replace part of the computation.
 ** data structures
 https://github.com/efficient/libcuckoo
 https://github.com/martinus/robin-hood-hashing
+
+* packaging
+There should be some support for loading in packages which already written in dyna.
+
++ ~pkg_resources.iter_entry_points~ lets a python package get a list of other
+  packages that are annotated (during their install) with special parameters.
+  - can also ~distutils.setup_keywords~ to define a custom keyword for setup.py
+    which would invoke some custom handler code when a dyna package is installed.

@@ -647,3 +647,27 @@ def test_compiler2():
 
     assert rr._tuple_rep()[0:2] == ('ModedOp', 'lteq')
     assert 4 in frame.values()  # that there is some new variable that contains the sum of 1+3
+
+
+def test_compiler3():
+    # generation of a loop, using the range expression and an aggregator
+
+    # f(X, Y) += Z for Z:X..Y.
+    srange = Aggregator(interpreter.ret_variable, variables_named(0,1), VariableId('RR'), AggregatorOpImpl(lambda a,b:a+b),
+                        dyna_system.call_term('range', 3)(VariableId('RR'), 0, 1))
+
+    dyna_system.define_term('comp_range', 2, srange)
+    dyna_system._optimize_term(('comp_range', 2))  # make this optimize so that the range call is embedded
+
+    dyna_system._compile_term(('comp_range', 2), set(variables_named(0,1)))  # compiling for the fully ground mode
+
+    frame = Frame()
+    r = simplify(dyna_system.call_term('comp_range', 2), frame)
+
+    frame[0] = 3
+    frame[1] = 7
+
+    rr = simplify(r, frame)
+
+    assert rr == Terminal(1)
+    assert interpreter.ret_variable.getValue(frame) == sum(range(3,7))

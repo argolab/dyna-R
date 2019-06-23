@@ -240,6 +240,9 @@ class VariableId(Variable):
         #     frame[self.__name] = value
         # return True  # if not equal return values, todo handle this throughout the code
 
+    def rawSetValue(self, frame, value):
+        frame[self.__name] = value
+
     def __eq__(self, other):
         return (self is other) or (type(self) is type(other) and (self.__name == other.__name))
     def __hash__(self):
