@@ -671,3 +671,28 @@ def test_compiler3():
 
     assert rr == Terminal(1)
     assert interpreter.ret_variable.getValue(frame) == sum(range(3,7))
+
+
+def test_compiler4():
+    # testing of unification failure inside of the compiler
+
+    # f(X, Y) += Z for Z:X..Y, Z < 8.
+    srange2 = Aggregator(interpreter.ret_variable, variables_named(0,1), VariableId('RR'), AggregatorOpImpl(lambda a,b:a+b),
+                         Intersect(dyna_system.call_term('range', 3)(VariableId('RR'), 0, 1),
+                                   dyna_system.call_term('<', 2)(VariableId('RR'), constant(8))))
+
+    dyna_system.define_term('comp_range2', 2, srange2)
+    dyna_system._optimize_term(('comp_range2', 2))  # make this optimize so that the range call is embedded
+
+    dyna_system._compile_term(('comp_range2', 2), set(variables_named(0,1)))  # compiling for the fully ground mode
+
+    frame = Frame()
+    r = simplify(dyna_system.call_term('comp_range2', 2), frame)
+
+    frame[0] = 3
+    frame[1] = 15
+
+    rr = simplify(r, frame)
+
+    assert rr == Terminal(1)
+    assert interpreter.ret_variable.getValue(frame) == sum(range(3,7))

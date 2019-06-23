@@ -129,6 +129,22 @@ def abstract_outmodes_unify(self, manager):
                 (True, Terminal(1), (b,), copy_var)
             ]
 
+@abstract_outmodes.define(BuildStructure)
+def abstract_outmodes_buildstructure(self, manager):
+    amode = tuple(v.isBound(manager) for v in self.arguments)
+    if self.result.isBound(manager):
+        if all(amode):
+            # then just generate some equality check between the two
+            pass
+        else:
+            pass
+        assert False  # TODO
+    elif all(amode):
+        # then build this structure and set it to the result
+        assert False  # TODO
+
+
+
 ####################################################################################################
 
 
@@ -295,6 +311,7 @@ class CompiledInstance:
             assert i in self.bound_variables
             if imode:
                 self.bound_variables[i] = True
+        self.failure_handler_instruction = -1
 
     def _frame_isbound(self, varname):
         return self.bound_variables[varname]
@@ -303,6 +320,9 @@ class CompiledInstance:
         assert variable not in self.bound_variables
         self.bound_variables[variable._compiler_name] = False
         self.frame_variables.append(variable._compiler_name)
+
+    def _operation_add(self, operation):
+        self.operations.append(operation)
 
     def finalize_compiler(self):
         in_vars_out = tuple(self.bound_variables[i] for i in range(len(self.incoming_mode)))
@@ -323,6 +343,18 @@ class CompiledInstance:
     def do_compilation(self):
         self.R = self.compile_saturate(self.R)
         self.finalize_compiler()
+
+    def do_compilation_nondet(self):
+        # generated a version of the code where this yields all of the values
+        # one at a time rather than returning a single R-expr that represents
+        # what would be the partition that is returned.
+        #
+        # the reason for this method is wihtout it, we might not be able to make
+        # that much progress.  Expanding the partition into all of its ground
+        # values might be what we are actually interested in.  In which case we
+        # might have different possible returned expressions that need to be handled.
+
+        pass
 
 
     def compile_simplfiy(self, R, *, nondet_runners=None, replaced_expressions=None):
@@ -422,9 +454,10 @@ class CompiledInstance:
 
                     if is_semidet:
                         for v in bound_variables:
-                            n = v._compiler_name
-                            assert n in self.bound_variables  # ensure that we don't add to this
-                            self.bound_variables[n] = True
+                            if not isinstance(v, ConstantVariable):
+                                n = v._compiler_name
+                                assert n in self.bound_variables  # ensure that we don't add to this
+                                self.bound_variables[n] = True
 
                         self.operations.append(('run_function', evaluate))
                         return out_r
@@ -459,32 +492,56 @@ class CompiledInstance:
         loop_pc = len(self.operations)
         self.operations.append(('iterator_next', (iter_slot, -1)))  # we have to fill in the jump location for when this loop is done
 
+        parent_failure = self.failure_handler_instruction
+        self.failure_handler_instruction = loop_pc
+
         try:
+            for var in bound_variables:
+                self.bound_variables[var._compiler_name] = True  # these are bound by the iterator
+
             callback()
         finally:
             self.operations.append(('jump', loop_pc))
+            self.operations.append(('failure_handler_jump', parent_failure))  # reset the failure handling to our caller's failure handler in the generated code
             self.operations[loop_pc] = ('iterator_next', (iter_slot, len(self.operations)))
 
             for var, state in entry_binding_state.items():
                 self.bound_variables[var] = state
+            self.failure_handler_instruction = parent_failure
 
             #self.bound_variables[iter_slot._compiler_name] = False  # this is now unbound
 
     def compile_loop(self, R, callback):
         # compile having multiple loops at the same time until some criteria has been meet.
 
+        runnable = list(self.identify_runnable_partitions(R))
+
+        # this should choose something that it can run, and then use that.  Otherwise, we are going to have to handle the cases where
 
 
         raise NotImplementedError()
 
 
+    def identify_runnable_partitions(R):
+        # identify where there are iterators and we could run the expression.
+        # This should be if there are some moded operations that can bind a
+        # variable, then we would like to know about that?
 
-    # def identify_runnable_partitions(R):
-    #     # identify where there are iterators and we could run the expression.
-    #     # This should be if there are some moded operations that can bind a
-    #     # variable, then we would like to know about that?
+        def walker(R):
+            if isinstance(R, Partition):
+                raise NotImplementedError()
+            elif isinstance(R, Aggregator):
+                raise NotImplementedError()
+            else:
+                out_mode = abstract_outmodes(R, self)
+                if out_mode:
+                    is_semidet, out, bound_variables, evaluate = out_mode[0]
+                    if not is_semidet:
+                        yield out_mode[0]
+                for c in R.children:
+                    yield from walker(c)
 
-    #     pass
+        yield from walker(R)
 
     def compile_saturate(self, R):
         # this should try and emulate the simplify and then loop strategy to try
@@ -500,6 +557,9 @@ class CompiledInstance:
 
         return R
 
+
+    ##################################################
+
     def execute_program(self, arguments):
         # this is the "bytecode interpeter" of the compiled sequence.  This is
         # just because we are compiling a sequence of instructions instead being
@@ -509,6 +569,14 @@ class CompiledInstance:
         pc = 0  # the program counter
         ninstrs = len(self.operations)
         frame = CompiledFrame(self.frame_variables)
+        failure_handler = -1
+        failure_handler_stack = [0]  # this should just become static variables in C++
+        failure_handler_condition = 0
+
+        def fail():
+            nonlocal pc, frame, failure_handler, failure_handler_stack, failure_handler_condition
+            pc = failure_handler
+            failure_handler_stack[-1] |= failure_handler_condition
 
         # load in the arguments for this expression
         for vid, (imode, val) in enumerate(zip(self.incoming_mode, arguments)):
@@ -524,8 +592,11 @@ class CompiledInstance:
             if instr == 'run_function':
                 # this is currently run builtin and run external as we are just wrapping that up into a python function that does the work internally
                 success = data(frame)
-                assert success == True  # need to handle failure cases, or where we find ourselves branching to a different case becasue of a difference in values
-                pc += 1
+                if not success:
+                    fail()
+                else:
+                    #assert success == True  # need to handle failure cases, or where we find ourselves branching to a different case becasue of a difference in values
+                    pc += 1
             elif instr == 'jump':
                 pc = data
             elif instr == 'iterator_make':
@@ -537,6 +608,7 @@ class CompiledInstance:
             elif instr == 'iterator_next':
                 iterator_slot, end_iterator_location = data
                 iterator = iterator_slot.getValue(frame)
+                failure_handler = pc
                 try:
                     next(iterator)  # get the next value from the iterator
                     pc += 1  # go to the next slot
@@ -559,9 +631,32 @@ class CompiledInstance:
                 slot, out_var = data
                 value = slot.getValue(frame)
                 if value is None:
-                    assert False  # TODO: handle.  In this case there was nothing that got aggregated together and we need to error out this statement and go to whatever the failure handler is in this case
-                out_var.rawSetValue(frame, value)
+                    fail()
+                    #assert False  # TODO: handle.  In this case there was nothing that got aggregated together and we need to error out this statement and go to whatever the failure handler is in this case
+                else:
+                    out_var.rawSetValue(frame, value)
+                    pc += 1
+            elif instr == 'failure_handler_jump':  # this shouldn't really be here?  I suppose that we currently need to be able to reset this instruction
+                failure_handler = data
                 pc += 1
+            elif instr == 'failure_handler_push':
+                failure_handler_stack.append(failure_handler_stack[-1])
+                pc += 1
+            elif instr == 'failure_handler_pop':
+                del failure_handler_stack[-1]
+                pc += 1
+            elif instr == 'failure_handler_conditional_run':  # run the next block if it hasn't already been marked as failed, otherwise set
+                next_pc, condition = data
+                if failure_handler_stack[-1] & (1 << condition):
+                    # then this branch is currently disabled
+                    pc = next_pc
+                    failure_handler = -1
+                else:
+                    # then this branch is not disabled, so we are going to run the code
+                    failure_handler = next_pc
+                    failure_handler_condition = 1 << condition  # use a bit mask for this stuff
+                    pc += 1
+
 
 
         # this is the returned values that are bound by the expression.  This should instead
