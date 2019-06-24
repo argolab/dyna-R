@@ -358,6 +358,12 @@ append = intersect(Unify(constant(True), ret_variable),
 dyna_system.define_term('append', 3, append)
 
 
+# additional methods required to make tim's parser list processing work
+dyna_system.define_term('$cons', 2, BuildStructure('.', ret_variable, (VariableId(0), VariableId(1))))
+dyna_system.define_term('$nil', 0, BuildStructure('nil', ret_variable, ()))
+
+
+
 from .terms import Evaluate, ReflectStructure
 
 # $reflect(Out, Name :str, arity :int, [arg1, arg2, arg3...])

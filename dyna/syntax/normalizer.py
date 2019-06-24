@@ -100,6 +100,7 @@ AGGR = {
     '+=': AggregatorOpImpl(lambda a,b: a+b),
     'max=': AggregatorOpImpl(max),
     'min=': AggregatorOpImpl(min),
+    ':-': AggregatorOpImpl(lambda a,b: 1/0)  # TODO:...
 }
 
 

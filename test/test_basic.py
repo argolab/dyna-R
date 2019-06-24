@@ -703,4 +703,27 @@ def test_compiler4():
 
 def test_safety_planning1():
 
-    pass
+    from dyna.syntax.normalizer import add_rules
+
+    add_rules("""
+    poly(X, [], 0).
+    poly(X, [A|As], F) :- poly(X, As, Q), F is X*Q + A.
+
+    factorial(0, 1).
+    factorial(N, F) :- F is N*Q, factorial(N-1, Q).
+    """)
+
+    # check what mode we could
+
+
+    sp = dyna_system.safety_planner
+
+    if 1:
+        call_poly = dyna_system.call_term('poly', 3)
+        out_mode = sp(call_poly, variables_named(0,1,2,interpreter.ret_variable), (False,True,True,False))
+        assert out_mode == (False,True,True,True)  # the variable X should still be unbound
+
+    call_fact = dyna_system.call_term('factorial', 2)
+    out_fact = sp(call_fact, variables_named(0,1,interpreter.ret_variable), (True,False,False))
+
+    assert out_fact == (True,True,True)

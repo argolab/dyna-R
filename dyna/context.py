@@ -51,7 +51,7 @@ class SystemContext:
 
     @property
     def safety_planner(self):
-        return SafetyPlanner(lambda term: self.lookup(term, ignore=('memos', 'compile')))
+        return SafetyPlanner(lambda term: self.lookup_term(term, ignore=('memos', 'compile')))
 
     def term_assumption(self, name):
         if name not in self.term_assumptions:

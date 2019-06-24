@@ -1,6 +1,6 @@
 
 from .interpreter import *
-from .terms import BuildStructure
+from .terms import BuildStructure, CallTerm
 
 # mode_cache = {
 #     term: {
@@ -16,7 +16,7 @@ class SafetyPlanner:
         self._agenda = []
         self.get_rexpr = get_rexpr
 
-    def _lookup(self, term, mode):
+    def _lookup(self, term, mode, push_computes):
         cache = self.mode_cache.get(term)
 
         term_name, arg_names = term  # the name is packed in with the exposed variables
@@ -41,12 +41,14 @@ class SafetyPlanner:
             if all(m or not k for m,k in zip(mode, kk)) and all(v[0]):
                 return v
 
-        # if we are unable to find this, we are going to guess that there is no
-        # progress and then push something to the agenda for this mode:
-        r = (mode, set())
-        cache[mode] = r
-        self._push_agenda((term, mode))
-        return r
+        if push_computes:
+            # if we are unable to find it, then we guess that it could fully
+            # ground the arguments meaning that it returns without any delayed
+            # constraints.  This will get checked via the agenda
+            r = ((True,)*len(mode), set())
+            cache[mode] = r
+            self._push_agenda((term, mode))
+            return r
 
     def _compute(self, term, mode):
         cache = self.mode_cache[term][mode]
@@ -68,64 +70,74 @@ class SafetyPlanner:
         # lookup and collecting the expressions that we are dependant on.
 
         bound_vars = Frame()  # just set the value of true in the case that something is bound
+        push_computes = False
+
+        def track_set(var):
+            try:
+                var.setValue(bound_vars, True)
+            except UnificationFailure:  # if a constant, then it could throw
+                pass
 
         for var, im in zip(exposed_vars, in_mode):
             if im:
-                var.setValue(frame, True)
+                track_set(var)
 
         def walker(R):
             if isinstance(R, Partition):
                 # the partition requires that a variable is grounded out on all branches
                 imode = tuple(v.isBound(bound_vars) for v in R._unioned_vars)
                 unioned_modes = [True] * len(R._unioned_vars)
-                for kk, c in R._children.items():
-                    for var, k, im in zip(R._unioned_vars, kk, imode):
-                        if k is not None or im:
-                            var.setValue(bound_vars, True)
-                        else:
-                            var._unset(bound_vars)
-                    walker(c)
-                    for i, var in enumerate(R._unioned_vars):
-                        if not var.isBound(bound_vars):
-                            unioned_modes[i] = False
+                for kk, cc in R._children.items():
+                    for c in cc:
+                        for var, k, im in zip(R._unioned_vars, kk, imode):
+                            if k is not None or im:
+                                track_set(var)
+                            else:
+                                var._unset(bound_vars)
+                        walker(c)
+                        for i, var in enumerate(R._unioned_vars):
+                            if not var.isBound(bound_vars):
+                                unioned_modes[i] = False
                 for var, im, um in zip(R._unioned_vars, imode, unioned_modes):
                     if im or um:
-                        var.setValue(bound_vars, True)
+                        track_set(var)
                     else:
                         var._unset(bound_vars)
             elif isinstance(R, ModedOp):
                 # then we can just lookup the modes and determine if we are in
                 # one of them.  In which case, then we
-                mode = tuple(v.isBound(frame) for v in R.vars)
+                mode = tuple(v.isBound(bound_vars) for v in R.vars)
                 if mode in R.det or mode in R.nondet:
                     for v in R.vars:
-                        v.setValue(frame, True)
+                        track_set(v)
             elif isinstance(R, BuildStructure):
-                if R.result.isBound(frame):
+                if R.result.isBound(bound_vars):
                     for v in R.arguments:
-                        v.setValue(frame, True)
-                elif all(v.isBound(frame) for v in R.arguments):
-                    R.result.setValue(frame, True)
+                        track_set(v)
+                elif all(v.isBound(bound_vars) for v in R.arguments):
+                    track_set(R.result)
             elif isinstance(R, CallTerm):
                 # then we need to look this expression up, but that is also
                 # going to have to determine which variables are coming back or
                 # what the mode is for those expressions.  In this case, we are
-                arg_vars = sorted(R.var_map.keys())  # these are the public variables that are exposed from an expression?
+                arg_vars = tuple(sorted(R.var_map.keys()))  # these are the public variables that are exposed from an expression?
                 mode = tuple(R.var_map[a].isBound(bound_vars) for a in arg_vars)
 
-                out_mode, tracking = self._lookup((R.term_ref, arg_vars), mode)
-                if name:
-                    tracking.add(name)  # track that we performed a read on this expression
+                l = self._lookup((R.term_ref, arg_vars), mode, push_computes)
+                if l:
+                    out_mode, tracking = l
+                    if name:
+                        tracking.add(name)  # track that we performed a read on this expression
 
-                # track that this variable is now set
-                for av, rm in zip(arg_vars, out_mode):
-                    if rm:
-                        R.var_map[av].setValue(frame, True)
+                    # track that this variable is now set
+                    for av, rm in zip(arg_vars, out_mode):
+                        if rm:
+                            track_set(R.var_map[av])
             elif isinstance(R, Unify):
                 if R.v1.isBound(bound_vars):
-                    R.v2.setValue(bound_vars, True)
+                    track_set(R.v2)
                 elif R.v2.isBound(bound_vars):
-                    R.v1.setValue(bound_vars, True)
+                    track_set(R.v1)
             elif isinstance(R, Aggregator):
                 walker(R.body)
                 # we need to figure out if the arguments are bound sufficient
@@ -135,7 +147,7 @@ class SafetyPlanner:
                 # head is bound is when we start trying to run the loop.
 
                 if R.body_res.isBound(bound_vars):
-                    R.result.setValue(bound_vars, True)
+                    track_set(R.result)
             else:
                 for c in R.children:
                     walker(c)
@@ -147,6 +159,9 @@ class SafetyPlanner:
                 # then this has reached a fixed point for what can be bound, so
                 # we stop at this point
                 break
+
+        push_computes = True  # push that we would like the modes of the methods we are calling to be determiend if they could be better
+        walker(R)
 
         # now this needs to save the result to the cache and if there are
         # differences, then we also will need to push everything to the
