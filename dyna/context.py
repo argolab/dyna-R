@@ -11,6 +11,7 @@ from .agenda import Agenda
 from .optimize import run_optimizer
 from .compiler import run_compiler, EnterCompiledCode
 from .memos import rewrite_to_memoize
+from .safety_planner import SafetyPlanner
 
 from functools import reduce
 import operator
@@ -47,6 +48,10 @@ class SystemContext:
 
         # where we fallback for other defined expressions
         self.parent = None
+
+    @property
+    def safety_planner(self):
+        return SafetyPlanner(lambda term: self.lookup(term, ignore=('memos', 'compile')))
 
     def term_assumption(self, name):
         if name not in self.term_assumptions:

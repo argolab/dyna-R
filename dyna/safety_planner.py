@@ -52,7 +52,9 @@ class SafetyPlanner:
         cache = self.mode_cache[term][mode]
         name = (term, mode)
         term_name, exposed_vars = term
-        R = self.get_rexpr(term_name)
+        R = self.get_rexpr(term_name)  # this needs to not use the memoized or
+                                       # compiled versions, but it can use the
+                                       # optimized versions of a program
         out_mode = self._compute_R(R, exposed_vars, mode, name)
 
         if cache[0] != out_mode:
@@ -73,9 +75,24 @@ class SafetyPlanner:
 
         def walker(R):
             if isinstance(R, Partition):
-                assert False  # going to have to walk all of the branches and
-                              # the merge the variables that are between them to
-                              # take the lower bound of what would be bound
+                # the partition requires that a variable is grounded out on all branches
+                imode = tuple(v.isBound(bound_vars) for v in R._unioned_vars)
+                unioned_modes = [True] * len(R._unioned_vars)
+                for kk, c in R._children.items():
+                    for var, k, im in zip(R._unioned_vars, kk, imode):
+                        if k is not None or im:
+                            var.setValue(bound_vars, True)
+                        else:
+                            var._unset(bound_vars)
+                    walker(c)
+                    for i, var in enumerate(R._unioned_vars):
+                        if not var.isBound(bound_vars):
+                            unioned_modes[i] = False
+                for var, im, um in zip(R._unioned_vars, imode, unioned_modes):
+                    if im or um:
+                        var.setValue(bound_vars, True)
+                    else:
+                        var._unset(bound_vars)
             elif isinstance(R, ModedOp):
                 # then we can just lookup the modes and determine if we are in
                 # one of them.  In which case, then we
@@ -96,7 +113,7 @@ class SafetyPlanner:
                 arg_vars = sorted(R.var_map.keys())  # these are the public variables that are exposed from an expression?
                 mode = tuple(R.var_map[a].isBound(bound_vars) for a in arg_vars)
 
-                out_mode, tracking = self._lookup((R.term_ref, arg _vars), mode)
+                out_mode, tracking = self._lookup((R.term_ref, arg_vars), mode)
                 if name:
                     tracking.add(name)  # track that we performed a read on this expression
 
@@ -104,12 +121,27 @@ class SafetyPlanner:
                 for av, rm in zip(arg_vars, out_mode):
                     if rm:
                         R.var_map[av].setValue(frame, True)
+            elif isinstance(R, Unify):
+                if R.v1.isBound(bound_vars):
+                    R.v2.setValue(bound_vars, True)
+                elif R.v2.isBound(bound_vars):
+                    R.v1.setValue(bound_vars, True)
+            elif isinstance(R, Aggregator):
+                walker(R.body)
+                # we need to figure out if the arguments are bound sufficient
+                # that we could run this expression.  I think that this is once
+                # the resulting aggregated value is bound on all branches, then
+                # it would have a value, so we can just use that?  But once the
+                # head is bound is when we start trying to run the loop.
+
+                if R.body_res.isBound(bound_vars):
+                    R.result.setValue(bound_vars, True)
             else:
                 for c in R.children:
                     walker(c)
 
         while True:
-            last_binding = Frame(bound_vars)
+            last_binding = Frame(bound_vars)  # copy
             walker(R)
             if last_binding == bound_vars:
                 # then this has reached a fixed point for what can be bound, so
