@@ -354,6 +354,11 @@ class CompiledInstance:
         # values might be what we are actually interested in.  In which case we
         # might have different possible returned expressions that need to be handled.
 
+        # we might only want to iterate binding a single variable and then have
+        # a different bit of generated code which could handle the result of
+        # that.  That way we could deal with information being passed both ways
+        # like in the interpeter
+
         pass
 
 
