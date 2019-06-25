@@ -51,6 +51,11 @@ class SystemContext:
 
     @property
     def safety_planner(self):
+        # TODO: we should build a single instance and then update it.  In the
+        # case of optimization, we might idnetify that we are willing to work
+        # with a more free mode and still perform grounding.  In the case that
+        # new rules are added, we are going to have to invalidate those terms
+        # and then redo any compuation that they were involved in.
         return SafetyPlanner(lambda term: self.lookup_term(term, ignore=('memos', 'compile')))
 
     def term_assumption(self, name):

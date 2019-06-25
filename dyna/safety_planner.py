@@ -4,7 +4,7 @@ from .terms import BuildStructure, CallTerm
 
 # mode_cache = {
 #     term: {
-#         in_mode (as a tuple of the arguments) : (out_mode (as a tuple of the arguments), dependants_set)
+#         in_mode (as a tuple of the arguments) : (out_mode (as a tuple of the arguments), has_delayed_constraints, dependants_set)
 #     }
 # }
 
@@ -27,14 +27,14 @@ class SafetyPlanner:
             # that all expressions are going to come back as ground.  But then
             # we are going to mark that we have to reprocess the agenda for this
             # expression
-            cache = {(False,)*len(mode): ((True,)*len(mode), set())}
+            cache = {(False,)*len(mode): ((True,)*len(mode), False, set())}
             self.mode_cache[term] = cache
             self._push_agenda((term, (False,)*len(mode)))
 
         if mode in cache:
             return cache[mode]
 
-        # first we check if there is a more restricted mode that matches the
+        # first we check if there is a more free mode that matches the
         # requirements for this mode but returns that all of its arguments will
         # be ground
         for kk, v in cache.items():
@@ -45,7 +45,7 @@ class SafetyPlanner:
             # if we are unable to find it, then we guess that it could fully
             # ground the arguments meaning that it returns without any delayed
             # constraints.  This will get checked via the agenda
-            r = ((True,)*len(mode), set())
+            r = ((True,)*len(mode), False, set())
             cache[mode] = r
             self._push_agenda((term, mode))
             return r
@@ -59,9 +59,9 @@ class SafetyPlanner:
                                        # optimized versions of a program
         out_mode = self._compute_R(R, exposed_vars, mode, name)
 
-        if cache[0] != out_mode:
-            self.mode_cache[term][mode] = (out_mode, set())
-            for d in cache[1]:
+        if cache[0:2] != out_mode:
+            self.mode_cache[term][mode] = (out_mode[0], out_mode[1], set())
+            for d in cache[2]:
                 self._push_agenda(d)  # these need to get reprocessed
 
 
@@ -71,6 +71,8 @@ class SafetyPlanner:
 
         bound_vars = Frame()  # just set the value of true in the case that something is bound
         push_computes = False
+        has_remaining_delayed_constraints = False  # if there are constraints that we were unable to evaluate
+
 
         def track_set(var):
             try:
@@ -83,6 +85,7 @@ class SafetyPlanner:
                 track_set(var)
 
         def walker(R):
+            nonlocal push_computes, has_remaining_delayed_constraints
             if isinstance(R, Partition):
                 # the partition requires that a variable is grounded out on all branches
                 imode = tuple(v.isBound(bound_vars) for v in R._unioned_vars)
@@ -110,12 +113,16 @@ class SafetyPlanner:
                 if mode in R.det or mode in R.nondet:
                     for v in R.vars:
                         track_set(v)
+                else:
+                    has_remaining_delayed_constraints = True
             elif isinstance(R, BuildStructure):
                 if R.result.isBound(bound_vars):
                     for v in R.arguments:
                         track_set(v)
                 elif all(v.isBound(bound_vars) for v in R.arguments):
                     track_set(R.result)
+                else:
+                    has_remaining_delayed_constraints = True
             elif isinstance(R, CallTerm):
                 # then we need to look this expression up, but that is also
                 # going to have to determine which variables are coming back or
@@ -125,19 +132,25 @@ class SafetyPlanner:
 
                 l = self._lookup((R.term_ref, arg_vars), mode, push_computes)
                 if l:
-                    out_mode, tracking = l
+                    out_mode, has_remain, tracking = l
                     if name:
                         tracking.add(name)  # track that we performed a read on this expression
+                    if has_remain:
+                        has_remaining_delayed_constraints = True
 
                     # track that this variable is now set
                     for av, rm in zip(arg_vars, out_mode):
                         if rm:
                             track_set(R.var_map[av])
+                else:
+                    has_remaining_delayed_constraints = True
             elif isinstance(R, Unify):
                 if R.v1.isBound(bound_vars):
                     track_set(R.v2)
                 elif R.v2.isBound(bound_vars):
                     track_set(R.v1)
+                else:
+                    has_remaining_delayed_constraints = True
             elif isinstance(R, Aggregator):
                 walker(R.body)
                 # we need to figure out if the arguments are bound sufficient
@@ -148,6 +161,8 @@ class SafetyPlanner:
 
                 if R.body_res.isBound(bound_vars):
                     track_set(R.result)
+                else:
+                    has_remaining_delayed_constraints = True
             else:
                 for c in R.children:
                     walker(c)
@@ -160,6 +175,7 @@ class SafetyPlanner:
                 # we stop at this point
                 break
 
+        has_remaining_delayed_constraints = False  # reset
         push_computes = True  # push that we would like the modes of the methods we are calling to be determiend if they could be better
         walker(R)
 
@@ -169,7 +185,7 @@ class SafetyPlanner:
 
         out_mode = tuple(v.isBound(bound_vars) for v in exposed_vars)
 
-        return out_mode
+        return out_mode, has_remaining_delayed_constraints
 
     def _process_agenda(self):
         while self._agenda:
@@ -183,8 +199,8 @@ class SafetyPlanner:
     def __call__(self, R, exposed_vars, in_mode):
         # do the planning for an R-expr
         while True:
-            out_mode = self._compute_R(R, exposed_vars, in_mode, None)
+            out_mode, has_delayed = self._compute_R(R, exposed_vars, in_mode, None)
             if not self._agenda:
                 break  # meaning that nothing was pushed to work on in the processe
             self._process_agenda()
-        return out_mode
+        return out_mode, has_delayed

@@ -711,19 +711,22 @@ def test_safety_planning1():
 
     factorial(0, 1).
     factorial(N, F) :- F is N*Q, factorial(N-1, Q).
+
+    goal_delayed :- X > 7.  % these delayed constraints can't be processed
     """)
 
-    # check what mode we could
-
+    # check what mode we could enumerate these variables.
 
     sp = dyna_system.safety_planner
 
     if 1:
         call_poly = dyna_system.call_term('poly', 3)
-        out_mode = sp(call_poly, variables_named(0,1,2,interpreter.ret_variable), (False,True,True,False))
+        out_mode, has_delayed = sp(call_poly, variables_named(0,1,2,interpreter.ret_variable), (False,True,True,False))
         assert out_mode == (False,True,True,True)  # the variable X should still be unbound
+        assert has_delayed
 
     call_fact = dyna_system.call_term('factorial', 2)
-    out_fact = sp(call_fact, variables_named(0,1,interpreter.ret_variable), (True,False,False))
+    out_fact, has_delayed = sp(call_fact, variables_named(0,1,interpreter.ret_variable), (True,False,False))
 
     assert out_fact == (True,True,True)
+    assert not has_delayed

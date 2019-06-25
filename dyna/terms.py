@@ -14,9 +14,9 @@ class Term:
 
     def __init__(self, name, arguments):
         self.__name = name
-        assert all(not isinstance(a, Variable) for a in arguments)
+        assert all(not isinstance(a, Variable) for a in arguments) and isinstance(name, str)
         self.__arguments = tuple(arguments)  # ensure this is a tuple and thus immutable
-        self.__hashcache = hash(self.name) ^ reduce(operator.xor, map(hash, self.arguments), 0)
+        self.__hashcache = hash(self.name) ^ hash(self.__arguments)
 
     @property
     def name(self):

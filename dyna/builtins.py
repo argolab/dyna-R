@@ -331,7 +331,7 @@ for i, a in enumerate(dtypes):
 from .terms import BuildStructure, Term
 
 # list_length(0, []).
-# list_length(L+1, [X|Xs]) :- list_length(L, Xs).
+# list_length(L+1, [X|Xs]) :- list_length(L, Xs), L >= 0.
 list_length = intersect(Unify(constant(True), ret_variable),  # set the "returned" variable as just always true, might not have this with :-???
                         partition(variables_named(0,1),
                                   (intersect(Unify(constant(0), VariableId(0)), BuildStructure('nil', VariableId(1), ())),
