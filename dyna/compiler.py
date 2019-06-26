@@ -177,6 +177,11 @@ class CompiledFrame:
         # key = self._vmap[varname]
         # self._values[key] = value
 
+    def __repr__(self):
+        nice = {str(k).split('\n')[0]:self._values[v] for k,v in self._vmap.items()}
+        import pprint
+        return pprint.pformat(nice, indent=1)
+
 
 class CompiledVariable(Variable):
     """This should know which slot it is contained in.  this means that there
@@ -598,6 +603,7 @@ class CompiledInstance:
                 # this is currently run builtin and run external as we are just wrapping that up into a python function that does the work internally
                 success = data(frame)
                 if not success:
+                #    import ipdb; ipdb.set_trace()
                     fail()
                 else:
                     #assert success == True  # need to handle failure cases, or where we find ourselves branching to a different case becasue of a difference in values
@@ -625,6 +631,7 @@ class CompiledInstance:
                 data.rawSetValue(frame, None)  # init the value to nothing
                 pc += 1
             elif instr == 'aggregator_add':
+                #import ipdb; ipdb.set_trace()
                 slot, body_res, aggregator = data
                 old_value = slot.getValue(frame)
                 new_value = body_res.getValue(frame)

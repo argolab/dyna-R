@@ -674,8 +674,6 @@ def test_compiler3():
 
 
 def test_compiler4():
-    return  # currently failing, need to return to
-
     # testing of unification failure inside of the compiler
 
     # f(X, Y) += Z for Z:X..Y, Z < 8.
@@ -697,7 +695,7 @@ def test_compiler4():
     rr = simplify(r, frame)
 
     assert rr == Terminal(1)
-    assert interpreter.ret_variable.getValue(frame) == sum(range(3,7))
+    assert interpreter.ret_variable.getValue(frame) == sum(range(3,8))
 
 
 
@@ -719,14 +717,18 @@ def test_safety_planning1():
 
     sp = dyna_system.safety_planner
 
-    if 1:
-        call_poly = dyna_system.call_term('poly', 3)
-        out_mode, has_delayed = sp(call_poly, variables_named(0,1,2,interpreter.ret_variable), (False,True,True,False))
-        assert out_mode == (False,True,True,True)  # the variable X should still be unbound
-        assert has_delayed
+    call_poly = dyna_system.call_term('poly', 3)
+    out_mode, has_delayed = sp(call_poly, variables_named(0,1,2,interpreter.ret_variable), (False,True,True,False))
+    assert out_mode == (False,True,True,True)  # the variable X should still be unbound
+    assert has_delayed
 
     call_fact = dyna_system.call_term('factorial', 2)
     out_fact, has_delayed = sp(call_fact, variables_named(0,1,interpreter.ret_variable), (True,False,False))
 
     assert out_fact == (True,True,True)
     assert not has_delayed
+
+    call_goal_delayed = dyna_system.call_term('goal_delayed', 0)
+    out_delayed, has_delayed = sp(call_goal_delayed, (), ())
+    assert out_delayed == ()
+    assert has_delayed

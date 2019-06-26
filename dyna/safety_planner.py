@@ -197,7 +197,7 @@ class SafetyPlanner:
             self._agenda.append(n)
 
     def __call__(self, R, exposed_vars, in_mode):
-        # do the planning for an R-expr
+        # do the safety planning for an R-expr
         while True:
             out_mode, has_delayed = self._compute_R(R, exposed_vars, in_mode, None)
             if not self._agenda:
