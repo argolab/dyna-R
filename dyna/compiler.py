@@ -14,6 +14,8 @@ class IdentityKey:
         return type(self) is type(other) and self.key is other.key
     def __hash__(self):
         return object.__hash__(self.key)
+    def __repr__(self):
+        return f'Identity({self.key})'
 
 
 # abstract information about what modes are going to come back from an expression and how
@@ -269,7 +271,6 @@ class CompiledCallTerm(CallTerm):
         return CompiledCallTerm(dict((k, remap(v)) for k,v in self.var_map.items()), self.dyna_system, self.term_ref, self.compiled_ref)
 
 
-
 # class CompiledModedCall(RBaseType):
 
 #     def __init__(self, dyna_system, term_ref, call_mode :Tuple[bool], arguments :Tuple[Variable]):
@@ -294,6 +295,98 @@ def replace_calls(R):
     if isinstance(R, (Evaluate, Evaluate_reflect, ReflectStructure)):
         raise RuntimeError('unable to compile this expression, it uses reflection, try the optimizer first')  # TODO: should be some typed error that we can throw
     return R.rewrite(replace_calls)
+
+
+
+class CompiledPartition(RBaseType):
+
+    def __init__(self, unioned_vars :Tuple[VariableId], children :List[Tuple[Tuple[object],int,RBaseType]]):
+        super().__init__()
+        self._unioned_vars = unioned_vars
+        self._children = children
+
+    def rename_vars(self, remap):
+        r = tuple(remap(v) for v in self._unioned_vars)
+        assert not any(isinstance(v, ConstantVariable) for v in r)  # TODO: handle this case
+        return CompiledPartition(r, [(a,b,c.rename_vars(remap)) for a,b,c in self._children])
+
+    @property
+    def vars(self):
+        return self._unioned_vars
+
+    @property
+    def children(self):
+        return tuple(c for _,_,c in self._children)
+
+@simplify.define(CompiledPartition)
+def simplify_compiled_partition(self, frame):
+    # this is running in the interpreter on the result of a compiled partition.
+    # This should return a /normal/ partition which uses the information that
+    # was tracked statically about what elements of the partition were rewritten
+
+    raise NotImplementedError()
+
+
+class CheckEqualConstant(RBaseType):
+
+    def __init__(self, constant: object, variable: VariableId):
+        super().__init__()
+        self.constant = constant
+        self.variable = variable
+
+    @property
+    def vars(self):
+        return self.variable,
+
+    def rename_vars(self, remap):
+        v = remap(self,variable)
+        if v == self.variable: return self
+        if isinstance(v, ConstantVariable):
+            if v.getValue(None) == self.constant:  # then the check can be done statically so we do that
+                return Terminal(1)
+            else:
+                return Terminal(0)
+        return CheckEqualConstant(self.constant, v)
+
+
+def replace_partitions(R):
+    counter = 1
+    def rewriter(R):
+        nonlocal counter
+        if isinstance(R, Partition):
+            children = []
+            for kk, vv in R._children.items():
+                assert not any(isinstance(k, ConstantVariable) for k in kk)  # TODO: this needs to be handled by rewriting as unifications and embedding constant values into the program
+                for v in vv:
+                    # need new variable names for this operation.  Then we can have that
+                    rpv = tuple(VariableId() if kk is None else None for k in kk)
+
+                    consts = []
+                    for u, k in zip(self._unioned_vars, kk):
+                        if k is not None:
+                            consts.append(CheckEqualConstant(k, u))  # this shouldn't set a variable equal to a value, but should be usable for iteration and checking equality with this constant
+                            #consts.append(Unify(constant(k), u)  # check that these variables are consistent with the value that
+
+                    c = counter
+                    counter += 1
+
+                    rm = dict((k,r or v) for k,r,v in zip(self._unioned_vars, rpv, kk))
+                    v = v.rename_vars(lambda x: rm.get(x,x))  # rename the variables to get new slots
+
+
+                    if not v.isEmpty():  # ignore stuff that we somehow manage to delete?
+
+                        children.append((rpv, c, rewriter(v)))
+
+            # TODO: this also should check if for one of the variables that it is the same value across all branches, in which case that should get propagated up.
+
+            return CompiledPartition(R._unioned_vars, children)
+        else:
+            return R.rewrite(rewriter)
+    return rewriter(R)
+
+
+####################################################################################################
 
 
 class CompiledInstance:
@@ -328,6 +421,10 @@ class CompiledInstance:
 
     def _operation_add(self, operation):
         self.operations.append(operation)
+
+    @property
+    def _operation_pc(self):
+        return len(self.operations)
 
     def finalize_compiler(self):
         in_vars_out = tuple(self.bound_variables[i] for i in range(len(self.incoming_mode)))
@@ -387,12 +484,62 @@ class CompiledInstance:
             elif isinstance(R, Intersect):
                 return R.rewrite(rewriter)
             elif isinstance(R, Partition):
-                raise NotImplementedError()  # TODO: handle partition, I suppose
-                                             # that this should just simplify
-                                             # the children.  Which means that
-                                             # this needs to call on the
-                                             # children branches and evaluate
-                                             # the different expressions.
+                assert False  # should never happen.  partitions need to be replaced by CompiledPartitions first
+            elif isinstance(R, CompiledPartition):
+                result_children = []
+                parent_failure = self.failure_handler_instruction
+                try:
+                    for (kk, pid, v) in R._children:
+                        assert not any(isinstance(k, ConstantVariable) for k in kk)  # TODO: ??? I am not sure if this could happen at this point
+                        try:
+                            failure_pc = self._operation_pc
+                            self._operation_add(('failure_handler_conditional_run', '__FILL_IN__', pid))
+
+                            # do the generation for this branch.  If there are
+                            # constants than we need to check if those are set?
+                            # The constants should be embedded into the branch.
+                            # That should be something that we can do before we
+                            # get to this point in compilation.
+
+                            res = rewriter(v)
+
+                            result_children.append((kk, pid, v))
+                        finally:
+                            self.operations[failure_pc] = ('failure_handler_conditional_run', self._operation_pc, pid)
+
+                finally:
+                    self._operation_add(('failure_handler_jump', parent_failure))
+                    self.failure_handler_instruction = parent_failure
+
+                return CompiledPartition(R._unioned_vars, result_children)
+
+            # elif isinstance(R, Partition):
+
+            #     for kk, vv in R._children.items():
+            #         # we are going to compile the branches of the partition and then set the binding modes to that of the result
+
+            #         const_rewrites = {k:constant(v) for k,v in zip(kk,R._unioned_vars) if v is not None}
+
+
+            #         # this needs to first check if any of these constants are
+            #         # not consistent with the values that were present the last
+            #         # time that this was used.  Which means that any new
+            #         # variables that were bound, need to be checked.  So this is going to need to track that
+            #         assert not const_rewrites
+
+            #         for v in vv:
+            #             if const_rewrites:
+            #                 # any constant values are going to be embedded into the expression.  This does not introduce new variables
+            #                 v = v.rename_vars(lambda x: const_rewrites.get(x,x))
+
+            #             # the new body result that contains the values for this expression
+            #             res = rewriter(v)  #
+            #     raise NotImplementedError()  # TODO: handle partition, I suppose
+            #                                  # that this should just simplify
+            #                                  # the children.  Which means that
+            #                                  # this needs to call on the
+            #                                  # children branches and evaluate
+            #                                  # the different expressions.
             elif isinstance(R, CompiledCallTerm):
                 # then we are going to require handling.  If the mode is
                 # present, then we /could/ call it, or we could delay calling
@@ -498,7 +645,7 @@ class CompiledInstance:
 
         entry_binding_state = self.bound_variables.copy()  # we want to unset any bound variables when we return
 
-        self.operations.append(('iterator_make', (run_iterator, iter_slot)))
+        self.operations.append(('iterator_load_start', (run_iterator, iter_slot)))
         loop_pc = len(self.operations)
         self.operations.append(('iterator_next', (iter_slot, -1)))  # we have to fill in the jump location for when this loop is done
 
@@ -541,6 +688,7 @@ class CompiledInstance:
             if isinstance(R, Partition):
                 raise NotImplementedError()
             elif isinstance(R, Aggregator):
+                # this needs to filter which things are reported as runnable so that we don't have
                 raise NotImplementedError()
             else:
                 out_mode = abstract_outmodes(R, self)
@@ -580,6 +728,9 @@ class CompiledInstance:
         ninstrs = len(self.operations)
         frame = CompiledFrame(self.frame_variables)
         failure_handler = -1
+
+        # this stack stuff should just become embedded as new variables rather than having its own things that are tracked?
+        # then we can just put it into the frame
         failure_handler_stack = [0]  # this should just become static variables in C++
         failure_handler_condition = 0
 
@@ -603,19 +754,45 @@ class CompiledInstance:
                 # this is currently run builtin and run external as we are just wrapping that up into a python function that does the work internally
                 success = data(frame)
                 if not success:
-                #    import ipdb; ipdb.set_trace()
                     fail()
                 else:
                     #assert success == True  # need to handle failure cases, or where we find ourselves branching to a different case becasue of a difference in values
                     pc += 1
             elif instr == 'jump':
                 pc = data
-            elif instr == 'iterator_make':
+            elif instr == 'iterator_load_start':
                 # take something that we are going to iterate over and save it
                 # to some slot.  This will then set the
                 run_iterator, iter_slot = data
                 iter_slot.rawSetValue(frame, run_iterator(frame))  # start the iterator
                 pc += 1
+            elif instr == 'iterator_start':
+                iterator_construct_slot, iter_slot = data
+                it = iterator_construct_slot.getValue(frame)
+                if it is None:
+                    # then all of the iterators failed to be constructed, this is empty
+                    # we are going to need to go to some failure handler in this case
+                    fail()
+                else:
+                    iter_slot.rawSetValue(frame, it(frame))
+                pc += 1
+            elif instr == 'iterator_union_make':
+                # construct a union iterator taking into account which partition is currently "alive"
+                run_iterator, iter_slot, condition = data
+
+                # check the condition
+                if not (failure_handler_stack[-1] & (1 << condition)):
+                    # then we can add this iterator
+                    it = iter_slot.getValue(frame)
+                    if it is None:
+                        assert False
+                    elif isinstance(it, UnionIterator):
+                        assert False
+                    else:
+                        # then build a union iterator out of these two iterators
+                        assert False
+
+                    iter_slot.rawSetValue(frame, it)
             elif instr == 'iterator_next':
                 iterator_slot, end_iterator_location = data
                 iterator = iterator_slot.getValue(frame)
@@ -631,7 +808,6 @@ class CompiledInstance:
                 data.rawSetValue(frame, None)  # init the value to nothing
                 pc += 1
             elif instr == 'aggregator_add':
-                #import ipdb; ipdb.set_trace()
                 slot, body_res, aggregator = data
                 old_value = slot.getValue(frame)
                 new_value = body_res.getValue(frame)
@@ -678,8 +854,6 @@ class CompiledInstance:
 
 
 
-
-
 def run_compiler(dyna_system, ce, R, incoming_mode):
     # take an R-expr, and wrap it such that we compile it.  For now this should
     # just be the moded operations and determining which results are going to be
@@ -707,6 +881,7 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
 
     assumptions = set()
     R = remove_all_assumptions(R, assumptions.add)
+    R = replace_partitions(R)
 
 
     # this will wrap the compiled code.  Atm this stays around, though in the

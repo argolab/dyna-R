@@ -606,6 +606,42 @@ def test_mapl_neural_network():
         assert ret_variable.getValue(frame) == true_values[k]
 
 
+def test_safety_planning1():
+
+    from dyna.syntax.normalizer import add_rules
+
+    add_rules("""
+    poly(X, [], 0).
+    poly(X, [A|As], F) :- poly(X, As, Q), F is X*Q + A.
+
+    factorial(0, 1).
+    factorial(N, F) :- F is N*Q, factorial(N-1, Q).
+
+    goal_delayed :- X > 7.  % these delayed constraints can't be processed
+    """)
+
+    # check what mode we could enumerate these variables.
+
+    sp = dyna_system.safety_planner
+
+    call_poly = dyna_system.call_term('poly', 3)
+    out_mode, has_delayed = sp(call_poly, variables_named(0,1,2,interpreter.ret_variable), (False,True,True,False))
+    assert out_mode == (False,True,True,True)  # the variable X should still be unbound
+    assert has_delayed
+
+    call_fact = dyna_system.call_term('factorial', 2)
+    out_fact, has_delayed = sp(call_fact, variables_named(0,1,interpreter.ret_variable), (True,False,False))
+
+    assert out_fact == (True,True,True)
+    assert not has_delayed
+
+    call_goal_delayed = dyna_system.call_term('goal_delayed', 0)
+    out_delayed, has_delayed = sp(call_goal_delayed, (), ())
+    assert out_delayed == ()
+    assert has_delayed
+
+
+
 def test_compiler1():
     # simplest version of the compiler that returns fully ground
     add3 = Intersect(add('x', 2, ret=interpreter.ret_variable), add(0,1,ret='x'))
@@ -698,37 +734,64 @@ def test_compiler4():
     assert interpreter.ret_variable.getValue(frame) == sum(range(3,8))
 
 
+def test_compiler5():
+    # testing partitiosn that might be overlapping
 
-def test_safety_planning1():
+    # f(X, Y) += I for I:X...(2*Y) I > 5.
+    # f(X, Y) += I for I:X...Y, I < 8.
+    srange5 = Aggregator(interpreter.ret_variable, variables_named(0,1), VariableId('RR'), AggregatorOpImpl(lambda a,b:a+b),
+                         Partition(variables_named(0,1,interpreter.ret_variable),
+                                   [
+                                       Intersect(dyna_system.call_term('*', 2)(1, constant(2), ret='mm'),
+                                           dyna_system.call_term('range', 3)(VariableId('RR'), 0, 'mm'),
+                                                 dyna_system.call_term('<', 2)(VariableId('RR'), constant(8))),
+                                       Intersect(dyna_system.call_term('range', 3)(VariableId('RR'), 0, 1),
+                                                 dyna_system.call_term('>', 2)(VariableId('RR'), constant(5))),
+                                   ]))
+
+
+    dyna_system.define_term('comp_range5', 2, srange5)
+    dyna_system._optimize_term(('comp_range5', 2))
+
+    dyna_system._compile_term(('comp_range5', 2), set(variables_named(0,1)))
+
+    frame = Frame()
+    r = simplify(dyna_system.call_term('comp_range5', 2), frame)
+
+
+
+
+def test_counting_custom_int():
+    return
+    # this test doesn't work as it can't get an iterator over the X variable at
+    # the start.  The backchaining that is required would construct an infinite
+    # iterator, and the current backchaining rules are preventing this from
+    # going all the way to the base case.  It also wouldn't know that the base
+    # case is as that is value dependent.
+    #
+    # This is basically that it won't run the - -> + mode via backwards chaining
+    # as it can't know when it would stop.  So I guess the safety thing in this
+    # case is just that we could forward chain this operation, but then it
+    # doesn't allow for it to stop once it has observed enough values? (if it
+    # could even prove that)
+    #
+    # This should end up getting marked as mode plannable, but this requires
+    # that there is an infinite recursion which means that it likely doesn't
+    # terminate.
 
     from dyna.syntax.normalizer import add_rules
 
     add_rules("""
-    poly(X, [], 0).
-    poly(X, [A|As], F) :- poly(X, As, Q), F is X*Q + A.
+    positive_int(1).
+    positive_int(X+1) :- X >= 1, positive_int(X).  % parser bug, the last expression is not unified with True when with :-, and thus the X>=1 can't be the last expression
 
-    factorial(0, 1).
-    factorial(N, F) :- F is N*Q, factorial(N-1, Q).
-
-    goal_delayed :- X > 7.  % these delayed constraints can't be processed
+    count_positive_int(Y) += positive_int(X), X < Y, 1.
     """)
 
-    # check what mode we could enumerate these variables.
+    count_call = dyna_system.call_term('count_positive_int', 1)
+    frame = Frame()
+    frame[0] = 1
 
-    sp = dyna_system.safety_planner
+    rr = saturate(count_call, frame)
 
-    call_poly = dyna_system.call_term('poly', 3)
-    out_mode, has_delayed = sp(call_poly, variables_named(0,1,2,interpreter.ret_variable), (False,True,True,False))
-    assert out_mode == (False,True,True,True)  # the variable X should still be unbound
-    assert has_delayed
-
-    call_fact = dyna_system.call_term('factorial', 2)
-    out_fact, has_delayed = sp(call_fact, variables_named(0,1,interpreter.ret_variable), (True,False,False))
-
-    assert out_fact == (True,True,True)
-    assert not has_delayed
-
-    call_goal_delayed = dyna_system.call_term('goal_delayed', 0)
-    out_delayed, has_delayed = sp(call_goal_delayed, (), ())
-    assert out_delayed == ()
-    assert has_delayed
+    assert rr == Terminal(1)
