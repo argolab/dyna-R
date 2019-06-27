@@ -257,3 +257,19 @@ There should be some support for loading in packages which already written in dy
   packages that are annotated (during their install) with special parameters.
   - can also ~distutils.setup_keywords~ to define a custom keyword for setup.py
     which would invoke some custom handler code when a dyna package is installed.
+
+
+* other notes
++ If something is known to be safe in some mode and doesn't come back with delayed
+  constraints, then it should be willing to keep inlining it?  But in that case,
+  it would potentially run the interpreter backwards forever.  So it would need to
+  identify these cases, and then be willing to do prolog style unconsolidated
+  results.  So those cases would have to be detected.
+  - if the heads are known to not be unifiable, then it could know that it can
+    do prolog style safely.  this would let it do peano without having extra
+    consolidation.
+  - cuts in prolog can make the system more efficient if there are no free
+    variables that are present in the arguments to an expression.  As in the
+    case that an expression is fully ground, it would at best only prove the
+    same expression again.  When there are free variables, then it could end up
+    proving different states which are true.

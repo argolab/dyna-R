@@ -312,19 +312,44 @@ class CompiledPartition(RBaseType):
 
     @property
     def vars(self):
-        return self._unioned_vars
+        return self._unioned_vars + tuple(v for c in self._children for v in c[0] if v is not None)
 
     @property
     def children(self):
         return tuple(c for _,_,c in self._children)
 
 @simplify.define(CompiledPartition)
-def simplify_compiled_partition(self, frame):
+def simplify_compiled_partition(self, frame, **kwargs):
     # this is running in the interpreter on the result of a compiled partition.
     # This should return a /normal/ partition which uses the information that
     # was tracked statically about what elements of the partition were rewritten
 
+    nc = PrefixTrie(len(self._unioned_vars))
+    # this should just loop over the different branches of the partition and
+    # convert each one into a branch in the "normal" partition.  Then just call
+    # that to perform its simplification
+
+    for local_vars, failure_id, body in self._children:
+        # this needs to get the failure ID and determine if this branch has actually failed, or if it would just have
+
+        values = tuple(v.getValue(frame) for v in local_vars)
+        # this can either just use the local vars with unification or it could
+        # perform a rename on the body of the expression.  With the rename, it
+        # would be easier to detect iteration possibilityies (atm).
+
+        # this should do the rename back to the origional variable names, that
+        # will allow it to delete the additional variables out of the frame as
+        # well, which can be helpful in the interpreter to try and /not/ polute
+        # the namespace too much.
+
+
+        pass
+
+
     raise NotImplementedError()
+
+    nr = Partition(self._unioned_vars, nc)
+    return simplify(nr, frame, **kwargs)
 
 
 class CheckEqualConstant(RBaseType):
@@ -348,6 +373,10 @@ class CheckEqualConstant(RBaseType):
                 return Terminal(0)
         return CheckEqualConstant(self.constant, v)
 
+@abstract_outmodes.define(CheckEqualConstant)
+def abstract_outmodes_checkequals(self, manager):
+    raise NotImplementedError()  # TODO: should make the variable iterable as a single value and also be able to check that the value is equal
+
 
 def replace_partitions(R):
     counter = 1
@@ -359,10 +388,10 @@ def replace_partitions(R):
                 assert not any(isinstance(k, ConstantVariable) for k in kk)  # TODO: this needs to be handled by rewriting as unifications and embedding constant values into the program
                 for v in vv:
                     # need new variable names for this operation.  Then we can have that
-                    rpv = tuple(VariableId() if kk is None else None for k in kk)
+                    rpv = tuple(VariableId() if k is None else None for k in kk)
 
                     consts = []
-                    for u, k in zip(self._unioned_vars, kk):
+                    for u, k in zip(R._unioned_vars, kk):
                         if k is not None:
                             consts.append(CheckEqualConstant(k, u))  # this shouldn't set a variable equal to a value, but should be usable for iteration and checking equality with this constant
                             #consts.append(Unify(constant(k), u)  # check that these variables are consistent with the value that
@@ -370,9 +399,9 @@ def replace_partitions(R):
                     c = counter
                     counter += 1
 
-                    rm = dict((k,r or v) for k,r,v in zip(self._unioned_vars, rpv, kk))
+                    rm = dict((k,r or v) for k,r,v in zip(R._unioned_vars, rpv, kk))
                     v = v.rename_vars(lambda x: rm.get(x,x))  # rename the variables to get new slots
-
+                    #assert None not in v.all_vars()
 
                     if not v.isEmpty():  # ignore stuff that we somehow manage to delete?
 
@@ -398,9 +427,15 @@ class CompiledInstance:
         self.operations = []  # List[Tuple[RBaseType,EvalFunction (if any)]]
         self.R = R
         self.origional_R = R
+
+        # TODO: the variables should just be those that we actually set at some
+        # point in time.  It is possible that there are extra variables that are
+        # never used (such on branches of partitions that are disabled) and in
+        # those cases we would like to ignore the resulting values
         self.bound_variables = dict((v._compiler_name, False) for v in set(R.all_vars()) if not isinstance(v, ConstantVariable))
         self.frame_variables = list(self.bound_variables.keys())  ####################################### BAD USING THE PRIVATE NAME, NEED TO FIX THIS AS AN API OR SOMETHING
         #self.exposed_vars = exposed_vars
+
         self.incoming_mode = incoming_mode
         self.outgoing_mode = None
         self.outgoing_additional_variables = [] # list of variables that will be added to the frame, these are appended to the list of the result
@@ -420,7 +455,9 @@ class CompiledInstance:
         self.frame_variables.append(variable._compiler_name)
 
     def _operation_add(self, operation):
+        pc = len(self.operations)
         self.operations.append(operation)
+        return pc
 
     @property
     def _operation_pc(self):
@@ -464,19 +501,19 @@ class CompiledInstance:
         pass
 
 
-    def compile_simplfiy(self, R, *, nondet_runners=None, replaced_expressions=None):
+    def compile_simplfiy(self, R, *, replaced_expressions=None):
         # this is going to compile a single round of simplify, looking for
         # expressions that are able to run.  To emulate the entire saturate
         # call, this should be called in a loop until there is nothing left for
         # it to be able to compile.
 
-        if nondet_runners is None:
-            nondet_runners = {}
+        # if nondet_runners is None:
+        #     nondet_runners = {}
         if replaced_expressions is None:
             replaced_expressions = {}
 
         def rewriter(R):
-            nonlocal nondet_runners, replaced_expressions
+            nonlocal replaced_expressions
             if IdentityKey(R) in replaced_expressions:
                 return replaced_expressions.pop(IdentityKey(R))
             elif isinstance(R, FinalState):
@@ -488,12 +525,15 @@ class CompiledInstance:
             elif isinstance(R, CompiledPartition):
                 result_children = []
                 parent_failure = self.failure_handler_instruction
+                incoming_mode = tuple(v.isBound(self) for v in R._unioned_vars)
                 try:
+                    # any variable that is bound, should just be deleted from the partition, and we can just focus on things that are non-ground
+                    all_ground = all(incoming_mode)  # we can use a simpler failure handler as there will be nothing left for us to track after this point
                     for (kk, pid, v) in R._children:
                         assert not any(isinstance(k, ConstantVariable) for k in kk)  # TODO: ??? I am not sure if this could happen at this point
                         try:
                             failure_pc = self._operation_pc
-                            self._operation_add(('failure_handler_conditional_run', '__FILL_IN__', pid))
+                            self._operation_add(('PLACE HOLDER failure_handler_conditional_run', '__FILL_IN__', pid))
 
                             # do the generation for this branch.  If there are
                             # constants than we need to check if those are set?
@@ -501,45 +541,29 @@ class CompiledInstance:
                             # That should be something that we can do before we
                             # get to this point in compilation.
 
+                            var_renames = {lvar: uvar for imode, uvar, lvar in zip(incoming_mode, R._unioned_vars, kk) if imode and lvar is not None}
+
+                            if var_renames:
+                                v = v.rename_vars(lambda x: var_renames.get(x,x))
+
+                            #import ipdb; ipdb.set_trace()
                             res = rewriter(v)
 
-                            result_children.append((kk, pid, v))
+                            kkr = tuple(k for k, imode in zip(kk, incoming_mode) if not imode)
+                            result_children.append((kkr, pid, v))
                         finally:
+                            if all_ground:
+                                pass
+                            # then this should only be used in the case that we need to track this for another step
                             self.operations[failure_pc] = ('failure_handler_conditional_run', self._operation_pc, pid)
 
                 finally:
                     self._operation_add(('failure_handler_jump', parent_failure))
                     self.failure_handler_instruction = parent_failure
 
-                return CompiledPartition(R._unioned_vars, result_children)
+                uvr = tuple(v for v, imode in zip(R._unioned_vars, incoming_mode) if not imode)
+                return CompiledPartition(uvr, result_children)
 
-            # elif isinstance(R, Partition):
-
-            #     for kk, vv in R._children.items():
-            #         # we are going to compile the branches of the partition and then set the binding modes to that of the result
-
-            #         const_rewrites = {k:constant(v) for k,v in zip(kk,R._unioned_vars) if v is not None}
-
-
-            #         # this needs to first check if any of these constants are
-            #         # not consistent with the values that were present the last
-            #         # time that this was used.  Which means that any new
-            #         # variables that were bound, need to be checked.  So this is going to need to track that
-            #         assert not const_rewrites
-
-            #         for v in vv:
-            #             if const_rewrites:
-            #                 # any constant values are going to be embedded into the expression.  This does not introduce new variables
-            #                 v = v.rename_vars(lambda x: const_rewrites.get(x,x))
-
-            #             # the new body result that contains the values for this expression
-            #             res = rewriter(v)  #
-            #     raise NotImplementedError()  # TODO: handle partition, I suppose
-            #                                  # that this should just simplify
-            #                                  # the children.  Which means that
-            #                                  # this needs to call on the
-            #                                  # children branches and evaluate
-            #                                  # the different expressions.
             elif isinstance(R, CompiledCallTerm):
                 # then we are going to require handling.  If the mode is
                 # present, then we /could/ call it, or we could delay calling
@@ -553,13 +577,13 @@ class CompiledInstance:
             elif isinstance(R, Aggregator):
                 # the aggregator might create a loop if the body is finished
 
-                parent_nondets = nondet_runners
-                local_nondets = {}
-                nondet_runners = local_nondets
-                try:
-                    body = rewriter(R.body)
-                finally:
-                    nondet_runners = parent_nondets
+                #parent_nondets = nondet_runners
+                #local_nondets = {}
+                #nondet_runners = local_nondets
+                #try:
+                body = rewriter(R.body)
+                #finally:
+                #    nondet_runners = parent_nondets
 
                 # this needs to check if one of the iterators could bind
                 # something that is in a higher frame.  that might mean tracking
@@ -570,7 +594,7 @@ class CompiledInstance:
                     # then we can run this aggregator for a specific variable, so we are going to do that now
 
                     # this is going to need to select something that can be used to run properly.  For now, we are just choosing the first thing
-                    assert len(local_nondets) == 1
+                    #assert len(local_nondets) == 1
 
                     aggregator_slot = VariableId()
                     self._add_variable(aggregator_slot)
@@ -578,7 +602,11 @@ class CompiledInstance:
 
                     self.operations.append(('aggregator_init', aggregator_slot))
 
-                    loop_driver, loop_op = list(local_nondets.items())[0]  # just get the first value for now
+                    runnable_parts = list(self.identify_runnable_partitions(body))
+
+                    #loop_driver, loop_op = list(local_nondets.items())[0]  # just get the first value for now
+                    loop_driver = IdentityKey(runnable_parts[0][0])
+                    loop_op = runnable_parts[0][1]
 
                     replaced_expressions[loop_driver] = loop_op[1]
 
@@ -619,7 +647,8 @@ class CompiledInstance:
                         self.operations.append(('run_function', evaluate))
                         return out_r
                     else:
-                        nondet_runners[IdentityKey(R)] = out_mode[0]  # track this for something else could use this to drive a loop
+                        pass
+                        #nondet_runners[IdentityKey(R)] = out_mode[0]  # track this for something else could use this to drive a loop
                         # assert False  # then we need to mark that this oepration
                         #               # could be run in a non-det mode
                         #               # (iterating) the domain of some variable
@@ -679,23 +708,34 @@ class CompiledInstance:
         raise NotImplementedError()
 
 
-    def identify_runnable_partitions(R):
+    def identify_runnable_partitions(self, R):
         # identify where there are iterators and we could run the expression.
         # This should be if there are some moded operations that can bind a
         # variable, then we would like to know about that?
 
         def walker(R):
-            if isinstance(R, Partition):
+            if isinstance(R, CompiledPartition):
+                children_iterable = {}
+
+
+                # this should map to the variables that are bound.  In which case, this will want to handle if there are differences.
+                for vs, pid, c in R._children:
+                    for r, info in walker(c):
+                        for var in info[2]:
+                            children_iterable.setdefault(var, []).append((r, info))
+
+
                 raise NotImplementedError()
             elif isinstance(R, Aggregator):
                 # this needs to filter which things are reported as runnable so that we don't have
                 raise NotImplementedError()
             else:
-                out_mode = abstract_outmodes(R, self)
-                if out_mode:
-                    is_semidet, out, bound_variables, evaluate = out_mode[0]
-                    if not is_semidet:
-                        yield out_mode[0]
+                if not isinstance(R, Intersect):
+                    out_mode = abstract_outmodes(R, self)
+                    if out_mode:
+                        is_semidet, out, bound_variables, evaluate = out_mode[0]
+                        if not is_semidet:
+                            yield R, out_mode[0]
                 for c in R.children:
                     yield from walker(c)
 

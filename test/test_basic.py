@@ -795,3 +795,16 @@ def test_counting_custom_int():
     rr = saturate(count_call, frame)
 
     assert rr == Terminal(1)
+
+    # this problem with backwards chaining also occures with prolog style
+    # programs if we follow the top to bottom execution order, eg if we write:
+    #
+    # peano(s(X)) :- peano(X).
+    # peano(z).
+    #
+    # if we try and run - -> + (which this supports via forward chaining) then
+    # it would simply not terminate, as it would just keep backwards as it can
+    # keep expanding one more level.  We can think of our system as if it was
+    # expanding all of the branches at the same time, so the "non-terminating"
+    # branches that prolog would eventually encoutner are something that we
+    # encounter "up front"
