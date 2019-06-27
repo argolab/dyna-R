@@ -66,44 +66,60 @@ def abstract_outmodes_modedop(self, manager: 'CompileManager'):
 
         binding_vars = tuple(v for imode, v in zip(mode, self.vars) if not imode)
 
-        def run_iterator(frame):
-            # then this creates an iterator and will perform modifications to
-            # the frame in place
-            #
-            # I don't think that this needs to handle the binding case, as it
-            # could just use the normal execution of a subgoal to check the
-            # grounding of a variable
+        # def run_iterator(frame):
+        #     # then this creates an iterator and will perform modifications to
+        #     # the frame in place
+        #     #
+        #     # I don't think that this needs to handle the binding case, as it
+        #     # could just use the normal execution of a subgoal to check the
+        #     # grounding of a variable
 
+        #     vals = tuple(v.getValue(frame) for v in self.vars)
+        #     r = f(*vals)
+
+        #     # first check any ground variables are matched with the returned expression
+        #     for ival, rval, imode in zip(vals, r, mode):
+        #         if imode:
+        #             if hasattr(rval, '__iter__'):
+        #                 if ival not in rval:
+        #                     return
+        #             else:
+        #                 if ival != rval:
+        #                     return
+
+        #     from itertools import product
+        #     iterator = product(*(p if hasattr(p, '__iter__') else [p] for p, m in zip(r, mode) if not m))  # get the product of all of the iterators that are getting bound, this is a bit different from the way this is normally implemented....
+
+        #     for binding in iterator:
+        #         for var, val in zip(binding_vars, binding):
+        #             var.rawSetValue(frame, val)
+        #         yield  # let our caller get to the next state
+
+        #     # unset the variables.  Not strictly required, but will ensure that
+        #     # we don't use an unset value after the loop is done while debugging
+        #     for var in binding_vars:
+        #         var.rawSetValue(frame, None)
+
+
+        # this should just get the iterator, and
+
+        def get_iterator(frame):
             vals = tuple(v.getValue(frame) for v in self.vars)
             r = f(*vals)
 
-            # first check any ground variables are matched with the returned expression
-            for ival, rval, imode in zip(vals, r, mode):
-                if imode:
-                    if hasattr(rval, '__iter__'):
-                        if ival not in rval:
-                            return
-                    else:
-                        if ival != rval:
-                            return
+            assert r != () and not isinstance(r, FinalState)
 
-            from itertools import product
-            iterator = product(*(p if hasattr(p, '__iter__') else [p] for p, m in zip(r, mode) if not m))  # get the product of all of the iterators that are getting bound, this is a bit different from the way this is normally implemented....
+            for var, val, imode in zip(self.vars, r, mode):
+                if hasattr(val, '__iter__'):
+                    yield IteratorFromIterable(var, val)
+                elif not imode:
+                    yield SingleIterator(var, val)
 
-            for binding in iterator:
-                for var, val in zip(binding_vars, binding):
-                    var.rawSetValue(frame, val)
-                yield  # let our caller get to the next state
-
-            # unset the variables.  Not strictly required, but will ensure that
-            # we don't use an unset value after the loop is done while debugging
-            for var in binding_vars:
-                var.rawSetValue(frame, None)
-
+        assert len(binding_vars) == 1  # this should generate different expressions for the variable that it is binding
 
         return [
             # return that this is non-det and which variables are going to be bound as a result of this expression
-            (False, Terminal(1), binding_vars, run_iterator)
+            (False, Terminal(1), binding_vars, get_iterator)
         ]
 
     return None  # indicates that there is nothing that we can do here
@@ -145,6 +161,13 @@ def abstract_outmodes_buildstructure(self, manager):
         # then build this structure and set it to the result
         assert False  # TODO
 
+
+def make_interpreter_iterator_to_compiler(iterator, frame):
+    # This is a hack, should be removed?  Ideally we know which expressions are coming back, and which branches can be disabled
+    for result in iterator.run(frame):
+        for var, val in result.items():
+            var.rawSetValue(frame, val)
+        yield  # let the iterator get the value
 
 
 ####################################################################################################
@@ -393,8 +416,13 @@ def replace_partitions(R):
                     consts = []
                     for u, k in zip(R._unioned_vars, kk):
                         if k is not None:
-                            consts.append(CheckEqualConstant(k, u))  # this shouldn't set a variable equal to a value, but should be usable for iteration and checking equality with this constant
+                            # this shouldn't set a variable equal to a value,
+                            # but should be usable for iteration and checking
+                            # equality with this constant
+                            consts.append(CheckEqualConstant(k, u))
                             #consts.append(Unify(constant(k), u)  # check that these variables are consistent with the value that
+
+                            assert False  # TODO: make this work
 
                     c = counter
                     counter += 1
@@ -404,10 +432,11 @@ def replace_partitions(R):
                     #assert None not in v.all_vars()
 
                     if not v.isEmpty():  # ignore stuff that we somehow manage to delete?
-
                         children.append((rpv, c, rewriter(v)))
 
-            # TODO: this also should check if for one of the variables that it is the same value across all branches, in which case that should get propagated up.
+            # TODO: this also should check if for one of the variables that it
+            # is the same value across all branches, in which case that should
+            # get propagated up.
 
             return CompiledPartition(R._unioned_vars, children)
         else:
@@ -717,12 +746,31 @@ class CompiledInstance:
             if isinstance(R, CompiledPartition):
                 children_iterable = {}
 
-
                 # this should map to the variables that are bound.  In which case, this will want to handle if there are differences.
                 for vs, pid, c in R._children:
                     for r, info in walker(c):
-                        for var in info[2]:
+                        is_semidet, out, bound_variables, evaluate = info
+                        for var in bound_variables:
+                            # if the var is is in the constants, then it should
+                            # have that these variables are going to just become
+                            # a single iterable value.
                             children_iterable.setdefault(var, []).append((r, info))
+
+                for i, var in enumerate(R._unioned_vars):
+                    cnt_outer = False
+                    iterators = []
+                    for vs, pid, c in R._children:
+                        ci = children_iterable.get(vs[i])
+                        if ci is None:
+                            cnt_outer = True
+                            break
+                        iterators.append(ci)
+                    if cnt_outer:
+                        continue
+
+
+
+                    import ipdb; ipdb.set_trace()
 
 
                 raise NotImplementedError()
@@ -803,8 +851,10 @@ class CompiledInstance:
             elif instr == 'iterator_load_start':
                 # take something that we are going to iterate over and save it
                 # to some slot.  This will then set the
-                run_iterator, iter_slot = data
-                iter_slot.rawSetValue(frame, run_iterator(frame))  # start the iterator
+                get_iterator, iter_slot = data
+                iterators = list(get_iterator(frame))
+                assert len(iterators) == 1
+                iter_slot.rawSetValue(frame, make_interpreter_iterator_to_compiler(iterators[0], frame))  # start the iterator
                 pc += 1
             elif instr == 'iterator_start':
                 iterator_construct_slot, iter_slot = data

@@ -740,7 +740,7 @@ def test_compiler5():
     # f(X, Y) += I for I:X...(2*Y) I > 5.
     # f(X, Y) += I for I:X...Y, I < 8.
     srange5 = Aggregator(interpreter.ret_variable, variables_named(0,1), VariableId('RR'), AggregatorOpImpl(lambda a,b:a+b),
-                         Partition(variables_named(0,1,interpreter.ret_variable),
+                         Partition(variables_named(0,1,'RR'),
                                    [
                                        Intersect(dyna_system.call_term('*', 2)(1, constant(2), ret='mm'),
                                            dyna_system.call_term('range', 3)(VariableId('RR'), 0, 'mm'),
@@ -757,6 +757,14 @@ def test_compiler5():
 
     frame = Frame()
     r = simplify(dyna_system.call_term('comp_range5', 2), frame)
+
+    frame[0] = 3
+    frame[1] = 15
+
+    rr = simplify(r, frame)
+
+    assert rr == Terminal(1)
+    assert False  # check the result variable in the frame
 
 
 
