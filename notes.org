@@ -300,7 +300,14 @@ There should be some support for loading in packages which already written in dy
   the ground values are.
   - the bag with any values contained in it makes it difficult to perform static
     analysis
-
   - with aggregation, we are required to collect all of the contributions to a
     final value, this also means that there are differences with what the final
     result should look like.
++ because we are forward chaining with delayed constraints
+
+
+
+Memoization goes early, as we lead with memoizing code optimizations can go
+later, so the most basic execution story can go up front.  the interpreter story
+with basic left right would be something that we should lead with.  then there
+is something later that is going on for the compiler.

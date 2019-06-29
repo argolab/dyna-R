@@ -1,6 +1,6 @@
 
 from .interpreter import *
-from .terms import BuildStructure, CallTerm
+from .terms import BuildStructure, CallTerm, Evaluate, ReflectStructure
 
 # mode_cache = {
 #     term: {

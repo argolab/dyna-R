@@ -109,11 +109,15 @@ def abstract_outmodes_modedop(self, manager: 'CompileManager'):
 
             assert r != () and not isinstance(r, FinalState)
 
+            ret = None
             for var, val, imode in zip(self.vars, r, mode):
                 if hasattr(val, '__iter__'):
-                    yield IteratorFromIterable(var, val)
+                    assert ret is None
+                    ret = IteratorFromIterable(var, val)
                 elif not imode:
-                    yield SingleIterator(var, val)
+                    assert ret is None
+                    ret = SingleIterator(var, val)
+            return ret
 
         assert len(binding_vars) == 1  # this should generate different expressions for the variable that it is binding
 
@@ -176,11 +180,61 @@ def remap_interpreter_iterator(get_iterator, remap, variable):
             yield RemapVarIterator(remap, it, variable)
     return f
 
-class CompilerUnionIterator:
-    def __init__(self, variable, iterators):
+class CompilerIteratorInfo:
+
+    @property
+    def union_iterator(self):
+        raise NotImplementedError()
+
+    def create_instructions(self, manager):
+        raise NotImplementedError()
+
+    @property
+    def bound_variables(self):
+        return self.variable ,
+
+
+class CompilerSingleIteratorInfo(CompilerIteratorInfo):
+
+    def __init__(self, from_R, variable, iterator):
+        self.variable = variable
+        self.iterator = iterator
+        self.from_R = from_R
+
+    @property
+    def union_iterator(self):
+        return False
+
+    def create_instructions(self, manager):
+        iter_slot = manager._make_variable()
+        manager._operation_add(('iterator_load', (self.iterator, iter_slot)))
+        return iter_slot
+
+class CompilerUnionIteratorInfo(CompilerIteratorInfo):
+
+    def __init__(self, variable, iterators :List[CompilerIteratorInfo]):
         self.variable = variable
         self.iterators = iterators
+        assert len(self.iterators) > 1  # otherwise this should just become a "normal" list of iterators
 
+    @property
+    def union_iterator(self):
+        return True
+
+    def create_instructions(self, manager):
+        iter_slot = manager._make_variable()
+        first = True
+
+        # this clears the slot.  This should really just have some "first" flag
+        # on the instruction so it doesn't perform the merge operation or something
+        manager._operation_add(('clear_slot', iter_slot))  # set the slot to None
+
+        for it in self.iterators:
+            # these iterators could be created when they are not needed.  The only thing that knows if the iterator is "unneeded" is the union operation that is tracking failure
+            lit = it.create_instructions(manager)
+            manager._operation_add(('iterator_union_make', (lit, iter_slot, ...)))
+
+        return iter_slot
 
 
 ####################################################################################################
@@ -496,6 +550,11 @@ class CompiledInstance:
         self.bound_variables[variable._compiler_name] = False
         self.frame_variables.append(variable._compiler_name)
 
+    def _make_variable(self):
+        v = VariableId()
+        self._add_variable(v)
+        return v
+
     def _operation_add(self, operation):
         pc = len(self.operations)
         self.operations.append(operation)
@@ -588,11 +647,10 @@ class CompiledInstance:
                             if var_renames:
                                 v = v.rename_vars(lambda x: var_renames.get(x,x))
 
-                            #import ipdb; ipdb.set_trace()
                             res = rewriter(v)
 
                             kkr = tuple(k for k, imode in zip(kk, incoming_mode) if not imode)
-                            result_children.append((kkr, pid, v))
+                            result_children.append((kkr, pid, res))
                         finally:
                             if all_ground:
                                 pass
@@ -644,15 +702,15 @@ class CompiledInstance:
 
                     self.operations.append(('aggregator_init', aggregator_slot))
 
-                    runnable_parts = list(self.identify_runnable_partitions(body))
+                    # runnable_parts = list(self.identify_runnable_partitions(body))
 
-                    #loop_driver, loop_op = list(local_nondets.items())[0]  # just get the first value for now
-                    loop_driver = IdentityKey(runnable_parts[0][0])
-                    loop_op = runnable_parts[0][1]
+                    # #loop_driver, loop_op = list(local_nondets.items())[0]  # just get the first value for now
+                    # loop_driver = IdentityKey(runnable_parts[0][0])
+                    # loop_op = runnable_parts[0][1]
 
-                    replaced_expressions[loop_driver] = loop_op[1]
+                    # replaced_expressions[loop_driver] = loop_op[1]
 
-                    def aggregator_callback():
+                    def aggregator_callback(body):
                         # this needs to generate the approperate code inside of the loop for handling the R-expr that remains.
 
                         # this needs to become a saturate to get it all the way to the end of running
@@ -663,7 +721,8 @@ class CompiledInstance:
                         self.operations.append(('aggregator_add', (aggregator_slot, R.body_res, R.aggregator)))  # perform the addition into the aggregator for this operation
 
 
-                    self.compile_run_loop(body, loop_op, aggregator_callback)
+                    self.compile_loop(body, aggregator_callback)
+                    # self.compile_run_loop(body, loop_op, aggregator_callback)
 
                     self.operations.append(('aggregator_finalize', (aggregator_slot, R.result)))
                     self.bound_variables[R.result._compiler_name] = True  # mark that the result variable is now set to something
@@ -704,27 +763,26 @@ class CompiledInstance:
 
         return rewriter(R)
 
-    def compile_run_loop(self, R, iterator, callback):
-        # take an aggregator and then loop over the elements.
+    def compile_run_loop(self, iterator :CompilerIteratorInfo, callback):
+        # take a particular iterator and generate teh entry and exit code, place
+        # callback in between so that it will be able to generate the loop body
 
+        # this is going to construct the iterator and return a reference to a variable that now contains the iterator object
+        raw_iter = iterator.create_instructions(self)
 
-        _, result_r, bound_variables, run_iterator = iterator
-
-        iter_slot = VariableId()
-        self._add_variable(iter_slot)
-        #self.bound_variables[iter_slot._compiler_name] = True  # this will make the compiler allocate some slot for this variable
+        iter_slot = self._make_variable()
 
         entry_binding_state = self.bound_variables.copy()  # we want to unset any bound variables when we return
 
-        self.operations.append(('iterator_load_start', (run_iterator, iter_slot)))
+        self.operations.append(('iterator_start', (raw_iter, iter_slot)))
         loop_pc = len(self.operations)
-        self.operations.append(('iterator_next', (iter_slot, -1)))  # we have to fill in the jump location for when this loop is done
+        self.operations.append(('PLACE HOLDER iterator_next', (iter_slot, -1)))  # we have to fill in the jump location for when this loop is done
 
         parent_failure = self.failure_handler_instruction
         self.failure_handler_instruction = loop_pc
 
         try:
-            for var in bound_variables:
+            for var in iterator.bound_variables:
                 self.bound_variables[var._compiler_name] = True  # these are bound by the iterator
 
             callback()
@@ -737,18 +795,30 @@ class CompiledInstance:
                 self.bound_variables[var] = state
             self.failure_handler_instruction = parent_failure
 
-            #self.bound_variables[iter_slot._compiler_name] = False  # this is now unbound
-
-    def compile_loop(self, R, callback):
+    def compile_loop(self, R, callback, *, best_effort=False):
         # compile having multiple loops at the same time until some criteria has been meet.
+
+        if best_effort:
+            # this should get all of the semi-det stuff first
+            R = self.compile_saturate(R)
 
         runnable = list(self.identify_runnable_partitions(R))
 
-        # this should choose something that it can run, and then use that.  Otherwise, we are going to have to handle the cases where
+        # this should then delete the sources that are being used for iteration.
+        # as we don't need to check those sources any more.  I suppose that it
+        # should be "ok" to leave them in though?
 
+        # this might need to build a table of values to make something
+        # "loopable" if we can't get the mode we need, which is basically what
+        # the interpreter does with its make_aggregators loopable.
 
-        raise NotImplementedError()
+        assert len(runnable) == 1  # just take the first one for now
 
+        def cb():
+            r = self.compile_saturate(R)
+            callback(r)
+
+        self.compile_run_loop(runnable[0], cb)
 
     def identify_runnable_partitions(self, R):
         # identify where there are iterators and we could run the expression.
@@ -757,52 +827,91 @@ class CompiledInstance:
 
         def walker(R):
             if isinstance(R, CompiledPartition):
-                children_iterable = {}
+                children_iterable = []
 
                 # this should map to the variables that are bound.  In which case, this will want to handle if there are differences.
                 for vs, pid, c in R._children:
-                    for r, info in walker(c):
-                        is_semidet, out, bound_variables, evaluate = info
-                        for var in bound_variables:
-                            # if the var is is in the constants, then it should
-                            # have that these variables are going to just become
-                            # a single iterable value.
-                            children_iterable.setdefault(var, []).append((r, info))
+                    # this should rename the variables so that we can just get the variable names into the right slots without extra struggle?
+                    # but then we are going to need to track the variables that are
+
+                    vm = {vv:uu for vv,uu in zip(vs, R._unioned_vars)}
+                    c2 = c.rename_vars(lambda x: vm.get(x,x))  # these now have the same names as the public variables
+
+                    liters = {}
+                    for info in walker(c2):
+                        liters.setdefault(info.variable, []).append(info)
+                    children_iterable.append(liters)
 
                 for i, var in enumerate(R._unioned_vars):
-                    cnt_outer = False
+                    ok = True
                     iterators = []
-                    for vs, pid, c in R._children:
-                        ci = children_iterable.get(vs[i])
-                        if ci is None:
-                            cnt_outer = True
+                    for (vs, pid, c), iters in zip(R._children, children_iterable):
+                        if var in iters:
+                            iterators.append(iters[var][0])  # this needs to include the info about which branch this comes from, so that we can disable it when not used
+                        else:
+                            ok = False
                             break
-                        r, (is_semidet, out, bound_variables, evaluate) = ci[0]
-                        assert len(bound_variables) == 1
-                        assert bound_variables[0] == vs[i]
-                        # the iterators have been mapped to other variables, which is sorta...annoying, so just map those back, this is bad
+                    if ok:
+                        # then we can yield this iterator
+                        yield CompilerUnionIteratorInfo(var, iterators)
 
-                        iterators.append((r, (is_semidet, out, (var,), remap_interpreter_iterator(evaluate, {bound_variables:var}, var))))
-                    if cnt_outer:
-                        continue
+                # for i, var in enumerate(R._unioned_vars):
+                #     cnt_outer = False
+                #     iterators = []
+                #     for vs, pid, c in R._children:
+                #         ci = children_iterable.get(vs[i])
+                #         if ci is None:
+                #             cnt_outer = True
+                #             break
+                #         #r, (is_semidet, out, bound_variables, evaluate) = ci[0]
+                #         #assert len(bound_variables) == 1
+                #         # assert bound_variables[0] == vs[i]
+                #         # the iterators have been mapped to other variables, which is sorta...annoying, so just map those back, this is bad
 
-                    # this needs to track which branch an iterator comes from?
-                    yield CompilerUnionIterator(var, iterators)
+                #         iterators.append((r, (is_semidet, out, (var,), remap_interpreter_iterator(evaluate, {bound_variables:var}, var))))
+                #     if cnt_outer:
+                #         continue
 
-                    import ipdb; ipdb.set_trace()
+                #     yield CompilerUnionIteratorInfo(var, iterators)
+
+                    # # this needs to track which branch an iterator comes from?
+                    # yield CompilerIteratorInfo(var, iterators)
+
+                    # import ipdb; ipdb.set_trace()
 
 
-                raise NotImplementedError()
+                #raise NotImplementedError()
             elif isinstance(R, Aggregator):
                 # this needs to filter which things are reported as runnable so that we don't have
+
+                # filter out iterators that would prevent this from aggregating
+                # correctly.  If this is setup such that we have to construct a
+                # table, then that is a different operation which would require
+                # ensuring that the free mdoe can ground out the different
+                # expression.  Would also have the allocating of space somewhere
+                # in the frame that needs to be handled at a higher level I
+                # suppose.  If that object then has to be returned at a later
+                # point in time, that could become tricky?
+
                 raise NotImplementedError()
             else:
                 if not isinstance(R, Intersect):
                     out_mode = abstract_outmodes(R, self)
                     if out_mode:
+                        # I suppose that by this point there should not be
+                        # semidet operations that are left.  because we should
+                        # be running the semi-det stuff before we start trying
+                        # to run loops as otherwise we are running it inside of
+                        # a loop which is just slower.q
                         is_semidet, out, bound_variables, evaluate = out_mode[0]
                         if not is_semidet:
-                            yield R, out_mode[0]
+                            # should the length of the variables == 1?
+                            assert len(bound_variables) == 1
+                            # this needs to yield which R-expr is generating this expression, so that it can be replaced / removed from the expression.
+                            # if the generation is happening as a result of some iteration through a data structure, then that should be tracked so that it can pass the opaque pointer to the next step of iteration
+                            # which is used to walk the next level of the trie
+                            yield CompilerSingleIteratorInfo(R, bound_variables[0], evaluate)
+                            #yield CompilerIteratorInfo(variables, [(R, out_modesiden[0])])
                 for c in R.children:
                     yield from walker(c)
 
@@ -867,13 +976,23 @@ class CompiledInstance:
                     pc += 1
             elif instr == 'jump':
                 pc = data
+            elif instr == 'clear_slot':
+                data.rawSetValue(frame, None)
+                pc += 1
             elif instr == 'iterator_load_start':
                 # take something that we are going to iterate over and save it
                 # to some slot.  This will then set the
+                assert False  # DELETE THIS INSTRUCTION
                 get_iterator, iter_slot = data
                 iterators = list(get_iterator(frame))  # this should maybe just return a single iterator in actuallity, so do we actually need a yield?
                 assert len(iterators) == 1
                 iter_slot.rawSetValue(frame, make_interpreter_iterator_to_compiler(iterators[0], frame))  # start the iterator
+                pc += 1
+            elif instr == 'iterator_load':
+                # load a single "simple" iterator.  at this point, these iterators are the same as the ones that are used in the interpreter.
+                get_iterator, iter_slot = data
+                iterator = get_iterator(frame)
+                iter_slot.rawSetValue(frame, iterator)  # this indirection might not be required in actuallity
                 pc += 1
             elif instr == 'iterator_start':
                 iterator_construct_slot, iter_slot = data
@@ -883,25 +1002,39 @@ class CompiledInstance:
                     # we are going to need to go to some failure handler in this case
                     fail()
                 else:
-                    iter_slot.rawSetValue(frame, it(frame))
+                    iter_slot.rawSetValue(frame, make_interpreter_iterator_to_compiler(it, frame))
                 pc += 1
             elif instr == 'iterator_union_make':
                 # construct a union iterator taking into account which partition is currently "alive"
-                run_iterator, iter_slot, condition = data
+                source_slot, iter_slot, condition = data
 
                 # check the condition
                 if not (failure_handler_stack[-1] & (1 << condition)):
                     # then we can add this iterator
                     it = iter_slot.getValue(frame)
                     if it is None:
-                        assert False
-                    elif isinstance(it, UnionIterator):
-                        assert False
-                    else:
-                        # then build a union iterator out of these two iterators
-                        assert False
+                        it = UnionIterator(None, None, [])
+                        iter_slot.rawSetValue(frame, it)
+                    iter_source = source_slot.getValue(frame)
+                    if iter_source is None:
+                        assert False  # IDK what to do in this case?
 
-                    iter_slot.rawSetValue(frame, it)
+                    # add this iterator to the list of iterators that this iterator will iterate through?
+                    # don't need to reset the slot as this is just a pointer atm.  This is just a bad hack/abstraction leak....need to handle this better
+                    it.iterators.append(iter_source)
+
+                    # the iterator is always a union iterator, and we are just giong to bind the variable to it?
+
+                    # if it is None:
+                    #     assert False
+                    # elif isinstance(it, UnionIterator):
+                    #     assert False
+                    # else:
+                    #     # then build a union iterator out of these two iterators
+                    #     assert False
+                    # iter_slot.rawSetValue(frame, it)
+
+                pc += 1
             elif instr == 'iterator_next':
                 iterator_slot, end_iterator_location = data
                 iterator = iterator_slot.getValue(frame)

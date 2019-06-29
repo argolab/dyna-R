@@ -371,7 +371,7 @@ class Iterator:
 class UnionIterator(Iterator):
     def __init__(self, partition, variable, iterators):
         self.partition = partition
-        self.variable = variable
+        self.variable = variable  # can variable just be get the variable from the iterators that it wraps instead?  do we
         self.iterators = iterators
     def bind_iterator(self, frame, variable, value):
         assert variable == self.variable
