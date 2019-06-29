@@ -273,3 +273,34 @@ There should be some support for loading in packages which already written in dy
     case that an expression is fully ground, it would at best only prove the
     same expression again.  When there are free variables, then it could end up
     proving different states which are true.
+
++ static analysis, is useful for checking that the program is correctly typed
+  and won't perform any "stupid" errors.  Once the program has been determined
+  to be correctly typed, it doesn't actually need to use this information for
+  running, and instead we can take an JIT style approach based around the
+  expressions that we actually see in the program.  This has the advantage of
+  being a potentially tighter analysis?
+
++ things that we would like to JIT
+  - the types of a primitive, is it an int or a float
+  - if something is akin to a matrix (meaning that the axis are small integers
+    and the contained value is some floating point)
+  - that we can use a more efficient execution strategy, eg identifying that
+    something could call a matrix subroutine.  Though that might require that we
+    perform static analysis?  Though identifying that something is a matrix
+    would potentially be something that we would have to handle at runtime?
+
+  - non deterministic compilation?  There could be many different ways in which
+    something is compiled, though this would require searching over different
+    strategies to identify what is the best approach.
+
++ can the memo tables know the shape of what is contained in them.  This would
+  allow it to have a more efficient storage story.  The return results could all
+  be of some form in which case it would just have to identify the form and what
+  the ground values are.
+  - the bag with any values contained in it makes it difficult to perform static
+    analysis
+
+  - with aggregation, we are required to collect all of the contributions to a
+    final value, this also means that there are differences with what the final
+    result should look like.

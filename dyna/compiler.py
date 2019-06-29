@@ -101,7 +101,7 @@ def abstract_outmodes_modedop(self, manager: 'CompileManager'):
         #         var.rawSetValue(frame, None)
 
 
-        # this should just get the iterator, and
+        # this should just get the iterator
 
         def get_iterator(frame):
             vals = tuple(v.getValue(frame) for v in self.vars)
@@ -161,13 +161,26 @@ def abstract_outmodes_buildstructure(self, manager):
         # then build this structure and set it to the result
         assert False  # TODO
 
+####################
 
 def make_interpreter_iterator_to_compiler(iterator, frame):
     # This is a hack, should be removed?  Ideally we know which expressions are coming back, and which branches can be disabled
     for result in iterator.run(frame):
         for var, val in result.items():
             var.rawSetValue(frame, val)
-        yield  # let the iterator get the value
+        yield  # let the generated code continue
+
+def remap_interpreter_iterator(get_iterator, remap, variable):
+    def f(frame):
+        for it in get_iterator(frame):
+            yield RemapVarIterator(remap, it, variable)
+    return f
+
+class CompilerUnionIterator:
+    def __init__(self, variable, iterators):
+        self.variable = variable
+        self.iterators = iterators
+
 
 
 ####################################################################################################
@@ -764,11 +777,17 @@ class CompiledInstance:
                         if ci is None:
                             cnt_outer = True
                             break
-                        iterators.append(ci)
+                        r, (is_semidet, out, bound_variables, evaluate) = ci[0]
+                        assert len(bound_variables) == 1
+                        assert bound_variables[0] == vs[i]
+                        # the iterators have been mapped to other variables, which is sorta...annoying, so just map those back, this is bad
+
+                        iterators.append((r, (is_semidet, out, (var,), remap_interpreter_iterator(evaluate, {bound_variables:var}, var))))
                     if cnt_outer:
                         continue
 
-
+                    # this needs to track which branch an iterator comes from?
+                    yield CompilerUnionIterator(var, iterators)
 
                     import ipdb; ipdb.set_trace()
 
@@ -852,7 +871,7 @@ class CompiledInstance:
                 # take something that we are going to iterate over and save it
                 # to some slot.  This will then set the
                 get_iterator, iter_slot = data
-                iterators = list(get_iterator(frame))
+                iterators = list(get_iterator(frame))  # this should maybe just return a single iterator in actuallity, so do we actually need a yield?
                 assert len(iterators) == 1
                 iter_slot.rawSetValue(frame, make_interpreter_iterator_to_compiler(iterators[0], frame))  # start the iterator
                 pc += 1

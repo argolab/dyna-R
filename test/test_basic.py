@@ -640,6 +640,11 @@ def test_safety_planning1():
     assert out_delayed == ()
     assert has_delayed
 
+    # call_deleteone = dyna_system.call_term('deleteone', 3)
+    # out_delayed, has_delayed = sp(call_deleteone, variables_named(0,1,2), (False,False,False))
+    # import ipdb; ipdb.set_trace()
+
+
 
 
 def test_compiler1():
@@ -767,8 +772,6 @@ def test_compiler5():
     assert False  # check the result variable in the frame
 
 
-
-
 def test_counting_custom_int():
     return
     # this test doesn't work as it can't get an iterator over the X variable at
@@ -794,6 +797,9 @@ def test_counting_custom_int():
     positive_int(X+1) :- X >= 1, positive_int(X).  % parser bug, the last expression is not unified with True when with :-, and thus the X>=1 can't be the last expression
 
     count_positive_int(Y) += positive_int(X), X < Y, 1.
+
+
+
     """)
 
     count_call = dyna_system.call_term('count_positive_int', 1)

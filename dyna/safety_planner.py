@@ -163,6 +163,26 @@ class SafetyPlanner:
                     track_set(R.result)
                 else:
                     has_remaining_delayed_constraints = True
+            elif isinstance(R, Evaluate):
+                if R.term_var.isBound(bound_vars) and all(v.isBound(bound_vars) for v in R.extra_args):
+                    # if there are non-ground variables, then anything might come back, so only when all ground can we be sure
+                    # that due the the semantics of dyna that the resulting variable will be ground
+
+
+                    assert False
+                    # we can only say that there are no delayed constraints in
+                    # the case that we enforce that methods don't come back with
+                    # delayed constraints when all of its arguments are ground.
+                    # We should just mark things that fail the +++ mode with all
+                    # ground as failed and notify the user?
+
+                    track_set(R.ret)
+                else:
+                    # we don't know in this case if it doesn't come back with something delayed as we don't know what is being called
+                    has_remaining_delayed_constraints = True
+            elif isinstance(R, ReflectStructure):
+                assert False  # TODO: this should mark the different modes that this supports
+                has_remaining_delayed_constraints = True
             else:
                 for c in R.children:
                     walker(c)
