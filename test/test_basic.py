@@ -742,8 +742,8 @@ def test_compiler4():
 def test_compiler5():
     # testing partitiosn that might be overlapping
 
-    # f(X, Y) += I for I:X...(2*Y) I > 5.
-    # f(X, Y) += I for I:X...Y, I < 8.
+    # f(X, Y) += I for I:X...(2*Y) I < 8.
+    # f(X, Y) += I for I:X...Y, I > 5.
     srange5 = Aggregator(interpreter.ret_variable, variables_named(0,1), VariableId('RR'), AggregatorOpImpl(lambda a,b:a+b),
                          Partition(variables_named(0,1,'RR'),
                                    [
@@ -769,7 +769,7 @@ def test_compiler5():
     rr = simplify(r, frame)
 
     assert rr == Terminal(1)
-    assert False  # check the result variable in the frame
+    assert interpreter.ret_variable.getValue(frame) == sum(range(3,8)) + sum(range(6,15))
 
 
 def test_counting_custom_int():

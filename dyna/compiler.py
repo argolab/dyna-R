@@ -66,43 +66,7 @@ def abstract_outmodes_modedop(self, manager: 'CompileManager'):
 
         binding_vars = tuple(v for imode, v in zip(mode, self.vars) if not imode)
 
-        # def run_iterator(frame):
-        #     # then this creates an iterator and will perform modifications to
-        #     # the frame in place
-        #     #
-        #     # I don't think that this needs to handle the binding case, as it
-        #     # could just use the normal execution of a subgoal to check the
-        #     # grounding of a variable
-
-        #     vals = tuple(v.getValue(frame) for v in self.vars)
-        #     r = f(*vals)
-
-        #     # first check any ground variables are matched with the returned expression
-        #     for ival, rval, imode in zip(vals, r, mode):
-        #         if imode:
-        #             if hasattr(rval, '__iter__'):
-        #                 if ival not in rval:
-        #                     return
-        #             else:
-        #                 if ival != rval:
-        #                     return
-
-        #     from itertools import product
-        #     iterator = product(*(p if hasattr(p, '__iter__') else [p] for p, m in zip(r, mode) if not m))  # get the product of all of the iterators that are getting bound, this is a bit different from the way this is normally implemented....
-
-        #     for binding in iterator:
-        #         for var, val in zip(binding_vars, binding):
-        #             var.rawSetValue(frame, val)
-        #         yield  # let our caller get to the next state
-
-        #     # unset the variables.  Not strictly required, but will ensure that
-        #     # we don't use an unset value after the loop is done while debugging
-        #     for var in binding_vars:
-        #         var.rawSetValue(frame, None)
-
-
         # this should just get the iterator
-
         def get_iterator(frame):
             vals = tuple(v.getValue(frame) for v in self.vars)
             r = f(*vals)
@@ -361,23 +325,6 @@ class CompiledCallTerm(CallTerm):
         return CompiledCallTerm(dict((k, remap(v)) for k,v in self.var_map.items()), self.dyna_system, self.term_ref, self.compiled_ref)
 
 
-# class CompiledModedCall(RBaseType):
-
-#     def __init__(self, dyna_system, term_ref, call_mode :Tuple[bool], arguments :Tuple[Variable]):
-#         self.dyna_system = dyna_system
-#         self.term_ref = term_ref
-#         self.call_mode = call_mode
-#         self.result_mode = None  # TODO: need to know what is bound after this call is performed, and we are going to need to still plan which expressions in the return bit are still to get handled.
-#         self.arguments = arguments
-
-#         self.returned_rexpr = None  # TODO: need to know what could possibly come back in this case
-
-#     @property
-#     def vars(self):
-#         return self.arguments
-
-
-
 def replace_calls(R):
     if isinstance(R, CallTerm):
         return CompiledCallTerm(R.var_map, R.dyna_system, R.term_ref,
@@ -431,10 +378,7 @@ def simplify_compiled_partition(self, frame, **kwargs):
         # will allow it to delete the additional variables out of the frame as
         # well, which can be helpful in the interpreter to try and /not/ polute
         # the namespace too much.
-
-
         pass
-
 
     raise NotImplementedError()
 
@@ -509,6 +453,7 @@ def replace_partitions(R):
         else:
             return R.rewrite(rewriter)
     return rewriter(R)
+
 
 
 ####################################################################################################
@@ -624,46 +569,7 @@ class CompiledInstance:
             elif isinstance(R, Partition):
                 assert False  # should never happen.  partitions need to be replaced by CompiledPartitions first
             elif isinstance(R, CompiledPartition):
-                result_children = []
-                parent_failure = self.failure_handler_instruction
-                incoming_mode = tuple(v.isBound(self) for v in R._unioned_vars)
-                try:
-                    # any variable that is bound, should just be deleted from the partition, and we can just focus on things that are non-ground
-                    all_ground = all(incoming_mode)  # we can use a simpler failure handler as there will be nothing left for us to track after this point
-                    for (kk, pid, v) in R._children:
-                        assert not any(isinstance(k, ConstantVariable) for k in kk)  # TODO: ??? I am not sure if this could happen at this point
-                        try:
-                            failure_pc = self._operation_pc
-                            self._operation_add(('PLACE HOLDER failure_handler_conditional_run', '__FILL_IN__', pid))
-
-                            # do the generation for this branch.  If there are
-                            # constants than we need to check if those are set?
-                            # The constants should be embedded into the branch.
-                            # That should be something that we can do before we
-                            # get to this point in compilation.
-
-                            var_renames = {lvar: uvar for imode, uvar, lvar in zip(incoming_mode, R._unioned_vars, kk) if imode and lvar is not None}
-
-                            if var_renames:
-                                v = v.rename_vars(lambda x: var_renames.get(x,x))
-
-                            res = rewriter(v)
-
-                            kkr = tuple(k for k, imode in zip(kk, incoming_mode) if not imode)
-                            result_children.append((kkr, pid, res))
-                        finally:
-                            if all_ground:
-                                pass
-                            # then this should only be used in the case that we need to track this for another step
-                            self.operations[failure_pc] = ('failure_handler_conditional_run', self._operation_pc, pid)
-
-                finally:
-                    self._operation_add(('failure_handler_jump', parent_failure))
-                    self.failure_handler_instruction = parent_failure
-
-                uvr = tuple(v for v, imode in zip(R._unioned_vars, incoming_mode) if not imode)
-                return CompiledPartition(uvr, result_children)
-
+                return self.compile_partition_rewriter(R, lambda anames, r: rewriter(r))
             elif isinstance(R, CompiledCallTerm):
                 # then we are going to require handling.  If the mode is
                 # present, then we /could/ call it, or we could delay calling
@@ -721,7 +627,10 @@ class CompiledInstance:
                         self.operations.append(('aggregator_add', (aggregator_slot, R.body_res, R.aggregator)))  # perform the addition into the aggregator for this operation
 
 
-                    self.compile_loop(body, aggregator_callback)
+                    # partition the loop as the variables should already be
+                    # consolidated, which means that we can just run each of the
+                    # branches on their own, and then collect them into the aggregator as the final result
+                    self.compile_loop(body, aggregator_callback, partition_loop=True)
                     # self.compile_run_loop(body, loop_op, aggregator_callback)
 
                     self.operations.append(('aggregator_finalize', (aggregator_slot, R.result)))
@@ -795,14 +704,33 @@ class CompiledInstance:
                 self.bound_variables[var] = state
             self.failure_handler_instruction = parent_failure
 
-    def compile_loop(self, R, callback, *, best_effort=False):
+    def compile_loop(self, R, callback, *, consolidated_variables=None, best_effort=False, partition_loop=False):
         # compile having multiple loops at the same time until some criteria has been meet.
 
         if best_effort:
             # this should get all of the semi-det stuff first
             R = self.compile_saturate(R)
 
+        if partition_loop and isinstance(R, CompiledPartition):
+            # then if this is a partition, we should loop over those branches and compile a loop inside of reach
+            def cb(renames, r):
+                # this needs to unify what the names are with the variables and
+                # then perform the call to the callback?  Though maybe the
+                # callback should just handle the renames....
+                if renames:
+                    r = intersect(r, *(Unify(a,b) for a,b in renames.items()))
+                self.compile_loop(r, callback)
+
+            self.compile_partition_loop(R, cb)
+            return
+
+
         runnable = list(self.identify_runnable_partitions(R))
+
+        # consolidated variables should indicate which variables are the ones
+        # that it wants to have consolidated together.  If it can't consolidate
+        # the variables together, then it would have to develop the construct
+        # intermediate table backup plan.
 
         # this should then delete the sources that are being used for iteration.
         # as we don't need to check those sources any more.  I suppose that it
@@ -812,13 +740,82 @@ class CompiledInstance:
         # "loopable" if we can't get the mode we need, which is basically what
         # the interpreter does with its make_aggregators loopable.
 
+        if not runnable:
+            # then there are no partitions that we can handle, so if we are
+            # allowed to use a partition loop, then we can branch over the
+            # different branches from that point,  Otherwise
+
+            assert False
+
         assert len(runnable) == 1  # just take the first one for now
 
         def cb():
-            r = self.compile_saturate(R)
-            callback(r)
+            callback(R)
 
         self.compile_run_loop(runnable[0], cb)
+
+    def compile_partition_loop(self, R, callback):
+        assert isinstance(R, CompiledPartition)
+        entry_binding_state = self.bound_variables.copy()
+
+        # for each branch of this, this should rename variables so that it
+        # matches their public names, and then there is no return that is
+        # collected, so everything needs to be handled internally
+
+        def cb(renames, r):
+            # if this doesn't get to terminal, then there is an issue?
+            callback(renames, r)
+            return Terminal(1)
+
+        try:
+            self.compile_partition_rewriter(R, cb)
+        finally:
+            for var, state in entry_binding_state.items():
+                self.bound_variables[var] = state
+
+    def compile_partition_rewriter(self, R, rewriter_cb):
+        assert isinstance(R, CompiledPartition)
+        result_children = []
+        parent_failure = self.failure_handler_instruction
+        incoming_mode = tuple(v.isBound(self) for v in R._unioned_vars)
+        try:
+            # any variable that is bound, should just be deleted from the partition, and we can just focus on things that are non-ground
+            all_ground = all(incoming_mode)  # we can use a simpler failure handler as there will be nothing left for us to track after this point
+            for (kk, pid, v) in R._children:
+                assert not any(isinstance(k, ConstantVariable) for k in kk)  # TODO: ??? I am not sure if this could happen at this point
+                try:
+                    failure_pc = self._operation_pc
+                    self._operation_add(('PLACE HOLDER failure_handler_conditional_run', ('__FILL_IN__', pid)))
+
+                    # do the generation for this branch.  If there are
+                    # constants than we need to check if those are set?
+                    # The constants should be embedded into the branch.
+                    # That should be something that we can do before we
+                    # get to this point in compilation.
+
+                    var_renames = {lvar: uvar for imode, uvar, lvar in zip(incoming_mode, R._unioned_vars, kk) if imode and lvar is not None}
+
+                    if var_renames:
+                        v = v.rename_vars(lambda x: var_renames.get(x,x))
+
+                    anames = {uvar: lvar for imode, uvar, lvar in zip(incoming_mode, R._unioned_vars, kk) if not imode}
+
+                    res = rewriter_cb(anames, v)
+
+                    kkr = tuple(k for k, imode in zip(kk, incoming_mode) if not imode)
+                    result_children.append((kkr, pid, res))
+                finally:
+                    if all_ground:
+                        # there is no need to record anything here, so we can just use a "simpler" failure handler that just jumps
+                        pass
+                    # then this should only be used in the case that we need to track this for another step
+                    self.operations[failure_pc] = ('failure_handler_conditional_run', (self._operation_pc, pid))
+        finally:
+            self._operation_add(('failure_handler_jump', parent_failure))
+            self.failure_handler_instruction = parent_failure
+
+        uvr = tuple(v for v, imode in zip(R._unioned_vars, incoming_mode) if not imode)
+        return CompiledPartition(uvr, result_children)
 
     def identify_runnable_partitions(self, R):
         # identify where there are iterators and we could run the expression.
