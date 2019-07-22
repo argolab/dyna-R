@@ -1083,7 +1083,8 @@ class CompiledInstance:
                     failure_handler = next_pc
                     failure_handler_condition = 1 << condition  # use a bit mask for this stuff
                     pc += 1
-
+            else:
+                assert False, instr
 
 
         # this is the returned values that are bound by the expression.  This should instead
@@ -1149,3 +1150,8 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
 #  1. getting the results from memo tables.  needs to handle the differences in what the returned /shapes/ are of R-exprs
 #  2. calling other R-exprs that are compile
 #  3. generating an iterator from compiled code?  Meaning that it has to handle cases where
+
+
+
+# immediate steps:
+#  1. change the compiled partition to just use a "normal" variable (that could be marked as an int).  Then it can avoid having a special stack
