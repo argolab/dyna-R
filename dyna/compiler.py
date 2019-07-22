@@ -1141,3 +1141,11 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
     ce.compiled_expressions[incoming_mode] = manager
 
     return manager
+
+
+
+
+# TODO:
+#  1. getting the results from memo tables.  needs to handle the differences in what the returned /shapes/ are of R-exprs
+#  2. calling other R-exprs that are compile
+#  3. generating an iterator from compiled code?  Meaning that it has to handle cases where

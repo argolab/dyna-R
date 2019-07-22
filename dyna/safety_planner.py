@@ -64,7 +64,6 @@ class SafetyPlanner:
             for d in cache[2]:
                 self._push_agenda(d)  # these need to get reprocessed
 
-
     def _compute_R(self, R, exposed_vars, in_mode, name):
         # determine what the true out mode for this expression is by using
         # lookup and collecting the expressions that we are dependant on.

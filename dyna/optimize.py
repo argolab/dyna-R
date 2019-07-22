@@ -530,3 +530,13 @@ def run_optimizer(R, exposed_variables):
     assert isinstance(mk, RBaseType)
 
     return mk, assumptions
+
+
+
+
+# TODO:
+#  1. if we assume that builtins can only return multiplicity 1, then we can eleminate duplicated constraints.
+#     maybe we could just put a marking on builtins that might return a higher multiplicity, so that we can eleminate them.  Or if higher multiplicities are only allowed by binding a variable multiple times, then those should always be "exposed" at least at R-expr level, so we could elminate those builtins.
+#     In that case, if a user wrote a builtin multiple times, there would be two different variables that would need to be attached to the multiplicity, which does not quite give the behavior that we want.  This instead would still need to track that the two builtins would require a square on the multiplicity
+#     could have some R-expr which just takes the multiplicity to some higher power?  Then it could combine anything that it wanted?  Though that probably is not that useful in general
+#     - this only lets it remove if _all_ of the variables are already the same.  Otherwise something like range could have an issue where two variables are merged inapproperatly?  Maybe the result variables could be merged in some cases, or if it knew that there was a functional relationship between two of the variables, then it would

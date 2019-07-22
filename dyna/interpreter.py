@@ -1221,3 +1221,9 @@ def modedop_getPartitions(self, frame):
                 yield IteratorFromIterable(var, val)
             elif not var.isBound(frame):
                 yield SingleIterator(var, val)
+
+
+
+
+# TODO:
+#   1. If statement as an R-expr. Then it would be able to directly write even base case aggregators as R-exprs.  the if statement could work as a limited form of a cut?  So maybe it would just be duplicate with guards and preconditions.
