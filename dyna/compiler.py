@@ -2,7 +2,7 @@ from typing import *
 
 from .interpreter import *
 from .terms import CallTerm, BuildStructure, Evaluate, ReflectStructure, Evaluate_reflect
-from .guards import remove_all_assumptions
+from .guards import remove_all_assumptions, Assumption
 
 
 class IdentityKey:
@@ -258,7 +258,12 @@ class EnterCompiledCode(RBaseType):
     referring to something that is compiled.  When this successfully matches
     against the mode, then it will call into the compiled code.  This should be
     only run inside of the interpreter where we are checking if we are in a mode
-    that we have currently compiled code for
+    that we have currently compiled code for.
+
+    In the case that this is being called from another unit of compiled code, if
+    this can determine that the returned result is /terminal/, meaning there is
+    no additional R-exprs that would be returned, then it should just go ahead
+    and call the expression.  
 
     """
 
@@ -301,9 +306,8 @@ def simplify_enter_compiled_code(self, frame):
             if omode:
                 v.rawSetValue(frame, val)
 
+        # return the remaining r-expr and rename the variables such that they 
         return expr.R.rename_vars(lambda v: nvm[v] if not isinstance(v, ConstantVariable) else v)  # there should not be variables that we are unaware of
-
-        # return expr.R  # this needs to rename the additional variables
 
     return self
 
@@ -315,7 +319,7 @@ class CompiledCallTerm(CallTerm):
 
     """
 
-    def __init__(self, var_map, dyna_syste, term_ref, compiled_ref):
+    def __init__(self, var_map, dyna_system, term_ref, compiled_ref):
         super().__init__(var_map, dyna_system, term_ref)
         self.parent_calls_blocker = []  # we are not using tihs
 
@@ -328,7 +332,7 @@ class CompiledCallTerm(CallTerm):
 def replace_calls(R):
     if isinstance(R, CallTerm):
         return CompiledCallTerm(R.var_map, R.dyna_system, R.term_ref,
-                                R.dyna_system.create_compiled_expression(R.term_ref, R.var_map.values()))
+                                R.dyna_system.create_compiled_expression(R.term_ref, tuple(R.var_map.keys())))
     if isinstance(R, (Evaluate, Evaluate_reflect, ReflectStructure)):
         raise RuntimeError('unable to compile this expression, it uses reflection, try the optimizer first')  # TODO: should be some typed error that we can throw
     return R.rewrite(replace_calls)
@@ -337,19 +341,20 @@ def replace_calls(R):
 
 class CompiledPartition(RBaseType):
 
-    def __init__(self, unioned_vars :Tuple[VariableId], children :List[Tuple[Tuple[object],int,RBaseType]]):
+    def __init__(self, unioned_vars :Tuple[VariableId], children :List[Tuple[Tuple[object],int,RBaseType]], conditional_variable :VariableId):
         super().__init__()
         self._unioned_vars = unioned_vars
+        self._conditional_variable = conditional_variable  # this variable should be a bit vector of which branches are disabled
         self._children = children
 
     def rename_vars(self, remap):
         r = tuple(remap(v) for v in self._unioned_vars)
         assert not any(isinstance(v, ConstantVariable) for v in r)  # TODO: handle this case
-        return CompiledPartition(r, [(a,b,c.rename_vars(remap)) for a,b,c in self._children])
+        return CompiledPartition(r, [(a,b,c.rename_vars(remap)) for a,b,c in self._children], remap(self._conditional_variable))
 
     @property
     def vars(self):
-        return self._unioned_vars + tuple(v for c in self._children for v in c[0] if v is not None)
+        return self._unioned_vars + tuple(v for c in self._children for v in c[0] if v is not None) + (self._conditional_variable,)
 
     @property
     def children(self):
@@ -409,7 +414,28 @@ class CheckEqualConstant(RBaseType):
 
 @abstract_outmodes.define(CheckEqualConstant)
 def abstract_outmodes_checkequals(self, manager):
-    raise NotImplementedError()  # TODO: should make the variable iterable as a single value and also be able to check that the value is equal
+    bound = self.variable.isBound(manager)
+    if bound:
+        def ev(frame):
+            # then the value is bound, so we are just going to check equality
+            return self.variable.getValue(frame) == self.constant
+        return [
+            (True, Terminal(1), self.vars, ev)
+        ]
+    else:
+        # then the variable is not bound, so we are going to make this iterable
+        def ev(frame):
+            self.variable.rawSetValue(frame, self.constant)
+            return True
+        
+        def get_iterator(frame):
+            return SingleIterator(self.variable, self.constant)
+        return [
+            (True, Terminal(1), self.vars, ev),
+            (False, Terminal(1), self.vars, get_iterator)
+        ]
+               
+    # raise NotImplementedError()  # TODO: should make the variable iterable as a single value and also be able to check that the value is equal
 
 
 def replace_partitions(R):
@@ -432,8 +458,8 @@ def replace_partitions(R):
                             # equality with this constant
                             consts.append(CheckEqualConstant(k, u))
                             #consts.append(Unify(constant(k), u)  # check that these variables are consistent with the value that
-
-                            assert False  # TODO: make this work
+                            
+                            #assert False  # TODO: make this work
 
                     c = counter
                     counter += 1
@@ -449,7 +475,7 @@ def replace_partitions(R):
             # is the same value across all branches, in which case that should
             # get propagated up.
 
-            return CompiledPartition(R._unioned_vars, children)
+            return CompiledPartition(R._unioned_vars, children, VariableId())
         else:
             return R.rewrite(rewriter)
     return rewriter(R)
@@ -469,6 +495,9 @@ class CompiledInstance:
         self.R = R
         self.origional_R = R
 
+        self.returned_R = Terminal(1)
+        self.returned_R_assumption = Assumption()
+        
         # TODO: the variables should just be those that we actually set at some
         # point in time.  It is possible that there are extra variables that are
         # never used (such on branches of partitions that are disabled) and in
@@ -571,15 +600,7 @@ class CompiledInstance:
             elif isinstance(R, CompiledPartition):
                 return self.compile_partition_rewriter(R, lambda anames, r: rewriter(r))
             elif isinstance(R, CompiledCallTerm):
-                # then we are going to require handling.  If the mode is
-                # present, then we /could/ call it, or we could delay calling
-                # this until we evaluate more of the delayed constraints
-
-                # if the expression can be called and would return the correct
-
-
-                raise NotImplementedError()
-
+                return self.compile_call_term(R)
             elif isinstance(R, Aggregator):
                 # the aggregator might create a loop if the body is finished
 
@@ -778,14 +799,19 @@ class CompiledInstance:
         result_children = []
         parent_failure = self.failure_handler_instruction
         incoming_mode = tuple(v.isBound(self) for v in R._unioned_vars)
+
+        if not R._conditional_variable.isBound(self):
+            # then we need to set the initial value for this
+            self._operation_add(('set_slot', (R._conditional_variable, 0)))
+            self.bound_variables[R._conditional_variable._compiler_name] = True
+
         try:
             # any variable that is bound, should just be deleted from the partition, and we can just focus on things that are non-ground
             all_ground = all(incoming_mode)  # we can use a simpler failure handler as there will be nothing left for us to track after this point
             for (kk, pid, v) in R._children:
                 assert not any(isinstance(k, ConstantVariable) for k in kk)  # TODO: ??? I am not sure if this could happen at this point
                 try:
-                    failure_pc = self._operation_pc
-                    self._operation_add(('PLACE HOLDER failure_handler_conditional_run', ('__FILL_IN__', pid)))
+                    failure_pc = self._operation_add(('PLACE HOLDER failure_handler_conditional_run', ('__FILL_IN__', pid, R._conditional_variable)))
 
                     # do the generation for this branch.  If there are
                     # constants than we need to check if those are set?
@@ -809,13 +835,13 @@ class CompiledInstance:
                         # there is no need to record anything here, so we can just use a "simpler" failure handler that just jumps
                         pass
                     # then this should only be used in the case that we need to track this for another step
-                    self.operations[failure_pc] = ('failure_handler_conditional_run', (self._operation_pc, pid))
+                    self.operations[failure_pc] = ('failure_handler_conditional_run', (self._operation_pc, pid, R._conditional_variable))
         finally:
             self._operation_add(('failure_handler_jump', parent_failure))
             self.failure_handler_instruction = parent_failure
 
         uvr = tuple(v for v, imode in zip(R._unioned_vars, incoming_mode) if not imode)
-        return CompiledPartition(uvr, result_children)
+        return CompiledPartition(uvr, result_children, R._conditional_variable)
 
     def identify_runnable_partitions(self, R):
         # identify where there are iterators and we could run the expression.
@@ -914,6 +940,22 @@ class CompiledInstance:
 
         yield from walker(R)
 
+
+    def compile_call_term(self, R):
+        # then we are going to require handling.  If the mode is
+        # present, then we /could/ call it, or we could delay calling
+        # this until we evaluate more of the delayed constraints
+
+        # if the returned result would be terminal, then it should just directly call the value
+        # otherwise, we will try and delay for now.
+
+        # if the expression can be called and would return the correct
+
+        # the mode of the variables that we are going to currently call these expressions
+        mode = tuple(R.var_map[v].isBound(self) for v in R.compiled_ref.variable_order)
+        
+        raise NotImplementedError()
+
     def compile_saturate(self, R):
         # this should try and emulate the simplify and then loop strategy to try
         # and ground out expressions? Or should loop only be used inside of an
@@ -944,13 +986,17 @@ class CompiledInstance:
 
         # this stack stuff should just become embedded as new variables rather than having its own things that are tracked?
         # then we can just put it into the frame
-        failure_handler_stack = [0]  # this should just become static variables in C++
+        #failure_handler_stack = [0]  # this should just become static variables in C++
         failure_handler_condition = 0
+        failure_handler_variable = None
 
         def fail():
-            nonlocal pc, frame, failure_handler, failure_handler_stack, failure_handler_condition
+            nonlocal pc, frame, failure_handler, failure_handler_condition, failure_handler_variable
             pc = failure_handler
-            failure_handler_stack[-1] |= failure_handler_condition
+            if failure_handler_variable is not None:
+                v = failure_handler_variable.getValue(frame)
+                v |= failure_handler_condition
+                failure_handler_variable.rawSetValue(frame, v)
 
         # load in the arguments for this expression
         for vid, (imode, val) in enumerate(zip(self.incoming_mode, arguments)):
@@ -975,6 +1021,17 @@ class CompiledInstance:
                 pc = data
             elif instr == 'clear_slot':
                 data.rawSetValue(frame, None)
+                pc += 1
+            elif instr == 'set_slot':
+                # normally, variables that are "used" by the program directly are immutable, though
+                # we are also storing the partition branches controls into these variables which
+                # means that those variables are going to become mutable.
+                variable, value = data
+                variable.rawSetValue(frame, value)
+                pc += 1
+            elif instr == 'copy_slot':
+                target, source = data
+                target.rawSetValue(frame, source.getValue(frame))
                 pc += 1
             elif instr == 'iterator_load_start':
                 # take something that we are going to iterate over and save it
@@ -1003,10 +1060,11 @@ class CompiledInstance:
                 pc += 1
             elif instr == 'iterator_union_make':
                 # construct a union iterator taking into account which partition is currently "alive"
-                source_slot, iter_slot, condition = data
+                source_slot, iter_slot, condition, condition_variable = data
 
                 # check the condition
-                if not (failure_handler_stack[-1] & (1 << condition)):
+                condition_variable_value = condition_variable.getValue(frame)
+                if not (condition_variable_value & (1 << condition)):
                     # then we can add this iterator
                     it = iter_slot.getValue(frame)
                     if it is None:
@@ -1066,15 +1124,14 @@ class CompiledInstance:
             elif instr == 'failure_handler_jump':  # this shouldn't really be here?  I suppose that we currently need to be able to reset this instruction
                 failure_handler = data
                 pc += 1
-            elif instr == 'failure_handler_push':
-                failure_handler_stack.append(failure_handler_stack[-1])
-                pc += 1
-            elif instr == 'failure_handler_pop':
-                del failure_handler_stack[-1]
+            elif instr == 'failure_handler_conditional_variable':
+                # set the variable that is currently tracking where failures would be set
+                failure_handler_variable = data
                 pc += 1
             elif instr == 'failure_handler_conditional_run':  # run the next block if it hasn't already been marked as failed, otherwise set
-                next_pc, condition = data
-                if failure_handler_stack[-1] & (1 << condition):
+                next_pc, condition, condition_variable = data
+                failure_condition_value = condition_variable.getValue(frame)
+                if failure_condition_value & (1 << condition):
                     # then this branch is currently disabled
                     pc = next_pc
                     failure_handler = -1

@@ -445,13 +445,6 @@ class Visitor:
     def default(self, method):
         self._default = method
 
-    # def delay(self, typ):
-    #     # this should basically be used for external calls that this rewrite can
-    #     # not see into.  If these are delayed rewrites, then we are going to
-    #     # want to get all of the referenced expressions.
-    #     # if there is some rewrite that is being applied to an operation, then we can
-    #     raise NotImplementedError()
-
     def __call__(self, R :RBaseType, *args, **kwargs):
         res = self.lookup(R)(R, *args, **kwargs)
         if not self._track_source:

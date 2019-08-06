@@ -772,6 +772,50 @@ def test_compiler5():
     assert interpreter.ret_variable.getValue(frame) == sum(range(3,8)) + sum(range(6,15))
 
 
+def test_compiler6():
+    rrv = variables_named('RR')[0]
+    fib = Aggregator(interpreter.ret_variable, variables_named(0), rrv, AggregatorOpImpl(lambda a,b: a+b),
+    Partition(variables_named(0, rrv),
+                    (Intersect(Unify(constant(0), VariableId(0)), Unify(constant(0), rrv)),  # fib(0) = 0
+                     Intersect(Unify(constant(1), VariableId(0)), Unify(constant(1), rrv)),  # fib(1) = 1
+                     Intersect(gteq(VariableId(0), constant(2)), lteq(VariableId(0), constant(40)),  # fib(X) = X >= 2, X <= 40, fib(X-1) + fib(X-2).
+                               sub(VariableId(0), constant(1), ret=VariableId('Xm1')),
+                               sub(VariableId(0), constant(2), ret=VariableId('Xm2')),
+                               dyna_system.call_term('fib_comp', 1)(VariableId('Xm1'), ret=VariableId('F1')),
+                               dyna_system.call_term('fib_comp', 1)(VariableId('Xm2'), ret=VariableId('F2')),
+                               add(VariableId('F1'), VariableId('F2'), ret=rrv)
+                     )))
+    )
+    dyna_system.define_term('fib_comp', 1, fib)
+
+    dyna_system._optimize_term(('fib_comp', 1))
+    dyna_system._compile_term(('fib_comp', 1), set(variables_named(0)))
+    
+    
+    
+    
+# def test_compiler6():
+#     # test calling other expressions that are already compiled.  
+    
+#     comp_add6 = dyna_system.call_term('+', 2)
+
+#     dyna_system.define_term('comp_add6', 2, comp_add6)
+
+#     dyna_system._optimize_term(('comp_add6', 2))
+#     dyna_system._compile_term(('comp_add6', 2), set())
+
+#     frame = Frame()
+#     r = simplify(dyna_system.call_term('comp_add6', 2), frame)
+
+#     assert r == add  # this thing isn't moded properly, so it will just get back the same thing
+
+#     # test calling other expresions which are already compiled, these other expression
+
+#     import ipdb; ipdb.set_trace()
+    
+
+    
+
 def test_counting_custom_int():
     return
     # this test doesn't work as it can't get an iterator over the X variable at

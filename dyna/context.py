@@ -241,7 +241,7 @@ class SystemContext:
     def create_compiled_expression(self, term_ref, exposed_vars: Set[Variable]):
         if term_ref in self.terms_as_compiled:
             r = self.terms_as_compiled[term_ref]
-            assert r.exposed_vars == exposed_vars
+            assert set(r.exposed_vars) == set(exposed_vars)
         else:
             r = CompiledExpression(term_ref, exposed_vars)
             self.terms_as_compiled[term_ref] = r
