@@ -12,7 +12,7 @@ from .terms import BuildStructure, CallTerm, Evaluate, ReflectStructure
 # has_delayed_constraints is an upper bound on if this has delayed constraints.  (There might not be delayed constraints due to something value dependent)
 # basic_is_finite:  Start with the assumption that everything is not finite, and then if it is only calling builtins and other finite things, then it can
 #                   be marked as finite
-# dependants_sets: tracks which things need to be updated if there are 
+# dependants_sets: tracks which things need to be updated if there are
 
 
 class SafetyPlanner:
@@ -33,7 +33,7 @@ class SafetyPlanner:
             # that all expressions are going to come back as ground.  But then
             # we are going to mark that we have to reprocess the agenda for this
             # expression
-            cache = {(False,)*len(mode): ((True,)*len(mode), False, set())}
+            cache = {(False,)*len(mode): ((True,)*len(mode), False, False, set())}
             self.mode_cache[term] = cache
             self._push_agenda((term, (False,)*len(mode)))
 
@@ -51,7 +51,7 @@ class SafetyPlanner:
             # if we are unable to find it, then we guess that it could fully
             # ground the arguments meaning that it returns without any delayed
             # constraints.  This will get checked via the agenda
-            r = ((True,)*len(mode), False, set())
+            r = ((True,)*len(mode), False, False, set())
             cache[mode] = r
             self._push_agenda((term, mode))
             return r
@@ -65,9 +65,9 @@ class SafetyPlanner:
                                        # optimized versions of a program
         out_mode = self._compute_R(R, exposed_vars, mode, name)
 
-        if cache[0:2] != out_mode:
-            self.mode_cache[term][mode] = (out_mode[0], out_mode[1], set())
-            for d in cache[2]:
+        if cache[0:-1] != out_mode:
+            self.mode_cache[term][mode] = (*out_mode, set())
+            for d in cache[-1]:
                 self._push_agenda(d)  # these need to get reprocessed
 
     def _compute_R(self, R, exposed_vars, in_mode, name):
@@ -77,7 +77,7 @@ class SafetyPlanner:
         bound_vars = Frame()  # just set the value of true in the case that something is bound
         push_computes = False
         has_remaining_delayed_constraints = False  # if there are constraints that we were unable to evaluate
-
+        basic_is_finite = True  # an basic approximation that this is finite, that this only uses builtins or things that are not possibly calling itself
 
         def track_set(var):
             try:
@@ -90,7 +90,7 @@ class SafetyPlanner:
                 track_set(var)
 
         def walker(R):
-            nonlocal push_computes, has_remaining_delayed_constraints
+            nonlocal push_computes, has_remaining_delayed_constraints, basic_is_finite
             if isinstance(R, Partition):
                 # the partition requires that a variable is grounded out on all branches
                 imode = tuple(v.isBound(bound_vars) for v in R._unioned_vars)
@@ -137,11 +137,13 @@ class SafetyPlanner:
 
                 l = self._lookup((R.term_ref, arg_vars), mode, push_computes)
                 if l:
-                    out_mode, has_remain, tracking = l
+                    out_mode, has_remain, is_finite, tracking = l
                     if name:
                         tracking.add(name)  # track that we performed a read on this expression
                     if has_remain:
                         has_remaining_delayed_constraints = True
+                    if not is_finite:
+                        basic_is_finite = False
 
                     # track that this variable is now set
                     for av, rm in zip(arg_vars, out_mode):
@@ -210,7 +212,7 @@ class SafetyPlanner:
 
         out_mode = tuple(v.isBound(bound_vars) for v in exposed_vars)
 
-        return out_mode, has_remaining_delayed_constraints
+        return out_mode, has_remaining_delayed_constraints, basic_is_finite
 
     def _process_agenda(self):
         while self._agenda:
@@ -224,8 +226,8 @@ class SafetyPlanner:
     def __call__(self, R, exposed_vars, in_mode):
         # do the safety planning for an R-expr
         while True:
-            out_mode, has_delayed = self._compute_R(R, exposed_vars, in_mode, None)
+            out_mode, has_delayed, basic_is_finite = self._compute_R(R, exposed_vars, in_mode, None)
             if not self._agenda:
                 break  # meaning that nothing was pushed to work on in the processe
             self._process_agenda()
-        return out_mode, has_delayed
+        return out_mode, has_delayed, basic_is_finite

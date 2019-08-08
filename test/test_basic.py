@@ -625,20 +625,23 @@ def test_safety_planning1():
     sp = dyna_system.safety_planner
 
     call_poly = dyna_system.call_term('poly', 3)
-    out_mode, has_delayed = sp(call_poly, variables_named(0,1,2,interpreter.ret_variable), (False,True,True,False))
+    out_mode, has_delayed, is_finite = sp(call_poly, variables_named(0,1,2,interpreter.ret_variable), (False,True,True,False))
     assert out_mode == (False,True,True,True)  # the variable X should still be unbound
     assert has_delayed
+    assert not is_finite
 
     call_fact = dyna_system.call_term('factorial', 2)
-    out_fact, has_delayed = sp(call_fact, variables_named(0,1,interpreter.ret_variable), (True,False,False))
+    out_fact, has_delayed, is_finite = sp(call_fact, variables_named(0,1,interpreter.ret_variable), (True,False,False))
 
     assert out_fact == (True,True,True)
     assert not has_delayed
+    assert not is_finite
 
     call_goal_delayed = dyna_system.call_term('goal_delayed', 0)
-    out_delayed, has_delayed = sp(call_goal_delayed, (), ())
+    out_delayed, has_delayed, is_finite = sp(call_goal_delayed, (), ())
     assert out_delayed == ()
     assert has_delayed
+    assert is_finite
 
     # call_deleteone = dyna_system.call_term('deleteone', 3)
     # out_delayed, has_delayed = sp(call_deleteone, variables_named(0,1,2), (False,False,False))
@@ -773,7 +776,7 @@ def test_compiler5():
 
 
 def test_compiler6():
-    # test compiling the recursive definition of fib 
+    # test compiling the recursive definition of fib
     rrv = variables_named('RR')[0]
     fib = Aggregator(interpreter.ret_variable, variables_named(0), rrv, AggregatorOpImpl(lambda a,b: a+b),
     Partition(variables_named(0, rrv),
@@ -791,13 +794,13 @@ def test_compiler6():
 
     dyna_system._optimize_term(('fib_comp', 1))
     dyna_system._compile_term(('fib_comp', 1), set(variables_named(0)))
-    
-    
-    
-    
+
+
+
+
 # def test_compiler6():
-#     # test calling other expressions that are already compiled.  
-    
+#     # test calling other expressions that are already compiled.
+
 #     comp_add6 = dyna_system.call_term('+', 2)
 
 #     dyna_system.define_term('comp_add6', 2, comp_add6)
@@ -813,9 +816,9 @@ def test_compiler6():
 #     # test calling other expresions which are already compiled, these other expression
 
 #     import ipdb; ipdb.set_trace()
-    
 
-    
+
+
 
 def test_counting_custom_int():
     return
