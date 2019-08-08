@@ -263,7 +263,7 @@ class EnterCompiledCode(RBaseType):
     In the case that this is being called from another unit of compiled code, if
     this can determine that the returned result is /terminal/, meaning there is
     no additional R-exprs that would be returned, then it should just go ahead
-    and call the expression.  
+    and call the expression.
 
     """
 
@@ -306,7 +306,7 @@ def simplify_enter_compiled_code(self, frame):
             if omode:
                 v.rawSetValue(frame, val)
 
-        # return the remaining r-expr and rename the variables such that they 
+        # return the remaining r-expr and rename the variables such that they
         return expr.R.rename_vars(lambda v: nvm[v] if not isinstance(v, ConstantVariable) else v)  # there should not be variables that we are unaware of
 
     return self
@@ -336,6 +336,30 @@ def replace_calls(R):
     if isinstance(R, (Evaluate, Evaluate_reflect, ReflectStructure)):
         raise RuntimeError('unable to compile this expression, it uses reflection, try the optimizer first')  # TODO: should be some typed error that we can throw
     return R.rewrite(replace_calls)
+
+
+class CompiledReadMemo(RBaseType):
+    """This represents a call to a memo table, if something is unk memoized, then
+    we might want figure out what the shape of the returned r-expr will be.  In
+    this case that this is null memoized, then we want to also determine the
+    shape of the r-expr.  This is something that will
+
+    """
+
+    def __init__(self, ):
+        pass
+
+    def rename_vars(self, remap):
+        return CompiledReadMemo(self, ...)
+
+@simplify.define(CompiledReadMemo)
+def simplify_read_memo(self, frame):
+    # this should just return the memoized expression back to the normal memoized expression?
+    #
+    # it might be better if both of these memoized expressions where the same
+    raise NotImplementedError()
+
+
 
 
 
@@ -427,14 +451,14 @@ def abstract_outmodes_checkequals(self, manager):
         def ev(frame):
             self.variable.rawSetValue(frame, self.constant)
             return True
-        
+
         def get_iterator(frame):
             return SingleIterator(self.variable, self.constant)
         return [
             (True, Terminal(1), self.vars, ev),
             (False, Terminal(1), self.vars, get_iterator)
         ]
-               
+
     # raise NotImplementedError()  # TODO: should make the variable iterable as a single value and also be able to check that the value is equal
 
 
@@ -458,7 +482,7 @@ def replace_partitions(R):
                             # equality with this constant
                             consts.append(CheckEqualConstant(k, u))
                             #consts.append(Unify(constant(k), u)  # check that these variables are consistent with the value that
-                            
+
                             #assert False  # TODO: make this work
 
                     c = counter
@@ -497,7 +521,7 @@ class CompiledInstance:
 
         self.returned_R = Terminal(1)
         self.returned_R_assumption = Assumption()
-        
+
         # TODO: the variables should just be those that we actually set at some
         # point in time.  It is possible that there are extra variables that are
         # never used (such on branches of partitions that are disabled) and in
@@ -548,6 +572,7 @@ class CompiledInstance:
         # the variables.  So we might expose more variables then we actually
         # want in that case?
 
+        assert self.outgoing_additional_variables == []  # for now, just ensure that there is nothing that was previously saved
         self.outgoing_additional_variables += additional_vars
 
         additional_mode = tuple(self.bound_variables[v._compiler_name] for v in self.outgoing_additional_variables)
@@ -953,7 +978,7 @@ class CompiledInstance:
 
         # the mode of the variables that we are going to currently call these expressions
         mode = tuple(R.var_map[v].isBound(self) for v in R.compiled_ref.variable_order)
-        
+
         raise NotImplementedError()
 
     def compile_saturate(self, R):
@@ -1186,7 +1211,14 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
     # the that compiles would be two different classes with the later generating
     # the first.
     manager = CompiledInstance(R, incoming_mode)
-    manager.do_compilation()
+    try:
+        # this needs to handle cases where this is reaching the end of the
+        ce.compiled_expressions[incoming_mode] = manager
+        manager.do_compilation()
+    except:
+        # if this fails, then it should delete compiled expression, otherwise this is not complete
+        del ce.compiled_expressions[incoming_mode]
+        raise
 
     # there needs to be some handling in the case that we are not successful
 
@@ -1196,7 +1228,7 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
     # save this expression back, as we might want to put some marker here so
     # that we know that we are compiling this expression.  This would mean that
     # we want to be able to later mark that it is done.
-    ce.compiled_expressions[incoming_mode] = manager
+
 
     return manager
 
@@ -1212,4 +1244,4 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
 
 # immediate steps:
 #  1. change the compiled partition to just use a "normal" variable (that could be marked as an int).  Then it can avoid having a special stack
-#     then to return the different compiled R-exprs from each version, it should be able to just 
+#     then to return the different compiled R-exprs from each version, it should be able to just

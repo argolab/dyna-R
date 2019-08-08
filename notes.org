@@ -214,6 +214,34 @@ becomes a failed object itself.
     key/value pairs, then we are just going to have a terminal state with a
     higher multiplicity.  If there are
 
+
+
+** blocks
++ if there is some block which is tracking the representation of /null/ in the
+  memo table that we have to find first, then it would need to be able to
+  determine that it wouldn't look back to something that is at a higher level.
+  - while the representation is commutative and can be combined, the
+    representation as being able to be compiled and be able to identify what
+    values are getting looked up seems off.
+  - To be able to work well, this is going to have to know /what/ modes are
+    supported by a memo table.
+    - Q1: does it make sense for this to support multiple modes for the memo
+      table.  Or does this just become something degenerate where it just
+      supporting more than it needs.  In the case that there is something that
+      is not memoized, then it has to fall through.  ATM this is using the
+      absence of something memoized to identifiy cases where it must fall
+      through.  If there are two non-overlapping query modes, then this gets
+      into the complication that this needs to handle having some overrides in
+      the case that something in is /partially/ memoized
+  - Can we delay some of the memoization but not others
+    - basically want to say that some of the keys are unk while others are null.
+      Thinking that this could represent something like the key that tracks what
+      sentence is getting parse is unk, while the parse chart itself is null.
+    - one way in which this could be done is by having some memo table of memo
+      tables, but this becomes complicated when dealing with what the returned
+      shapes are?  The memo table will need to be able to determine the shape of
+      the returned values.  I think that this is something that could be done
+      using only the mode?
 * rewrites included
 ** simplify
 ** evaluation and quoting

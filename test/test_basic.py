@@ -773,6 +773,7 @@ def test_compiler5():
 
 
 def test_compiler6():
+    # test compiling the recursive definition of fib 
     rrv = variables_named('RR')[0]
     fib = Aggregator(interpreter.ret_variable, variables_named(0), rrv, AggregatorOpImpl(lambda a,b: a+b),
     Partition(variables_named(0, rrv),

@@ -4,9 +4,15 @@ from .terms import BuildStructure, CallTerm, Evaluate, ReflectStructure
 
 # mode_cache = {
 #     term: {
-#         in_mode (as a tuple of the arguments) : (out_mode (as a tuple of the arguments), has_delayed_constraints, dependants_set)
+#         in_mode (as a tuple of the arguments) : (out_mode (as a tuple of the arguments), has_delayed_constraints, basic_is_finite, dependants_set)
 #     }
 # }
+
+# out_mode is a boolean mode for which variables are bound
+# has_delayed_constraints is an upper bound on if this has delayed constraints.  (There might not be delayed constraints due to something value dependent)
+# basic_is_finite:  Start with the assumption that everything is not finite, and then if it is only calling builtins and other finite things, then it can
+#                   be marked as finite
+# dependants_sets: tracks which things need to be updated if there are 
 
 
 class SafetyPlanner:

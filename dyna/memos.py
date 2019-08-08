@@ -279,7 +279,7 @@ def simplify_memo(self, frame):
     vmap = dict(zip(self.memos.variables, self.variables))
     res2 = res.rename_vars_unique(vmap.get)
 
-    # run the new result once, which can
+    # run the new result once
     return simplify(res2, frame)
 
 
@@ -303,37 +303,6 @@ def get_assumptions_memos(self):
     a = self.memos.assumption
     assert a.isValid()
     yield a
-
-
-# def _flatten_keys(save, R, frame):
-#     """
-#     THIS IS THE WORSE, MOST BUGGY METHOD IN THE ENTIRE PROGRAM.  IT SUCK SOOOOOO BAD.  ITS SHORT LENGTH IS VERY DECEPTIVE
-#     """
-
-#     # this needs to loop until all of the keys are ground, if we are
-#     # unable to ground everything, then we are going to have delayed
-#     # R-expr, but that needs to still avoid overlapping?
-#     # if 'ddd' in frame:
-#     #     import ipdb; ipdb.set_trace()
-#     if isinstance(R, FinalState):
-#         save(R, frame)
-#     else:
-#         # then we are going to loop and try and ground out more
-#         def cb(R, frame2):
-#             # if frame != frame2:
-#             #     import ipdb; ipdb.set_trace()
-#             # this needs to save any additional variables that are set in the frame into the R-expr
-#             # the loop method can construct new copies of the frame, and that might be over variables that are not going to be saved by the partition
-
-#             # if frame != frame2:
-#             #     # FML
-#             #     R = R.rename_vars(lambda x: constant(x.getValue(frame2)) if (x.isBound(frame2) and not x.isBound(frame) and x not in save.unioned_vars) else x)
-
-#             # double FML
-#             r2 = R.rename_vars_unique(lambda x: constant(x.getValue(frame2)) if x.isBound(frame2) else (x if x in save.unioned_vars else None))
-
-#             save(r2, frame2)
-#         loop(R, frame, cb, best_effort=True)
 
 
 def naive_converge_memos(*tables):
@@ -394,13 +363,14 @@ class ForwardMemoHole(RBaseType):
 def simplift_memohole(self, frame):
     return Terminal(1)
 
+
 class AgendaMessage(NamedTuple):
     table : MemoContainer  # the container that we are updating, this will be tracked via pointer instead of name
     key : Tuple[object]  # the key in the table, this should match the order of arguments as used by the table, None indicates variable not set
 
     # used in the case that this is an update, and we are able to just add these changes
     addition : RBaseType = None  # an Rexpr that we are adding to the table or None to indicate nothing here
-    deletion : RBaseType = None# an Rexpr that we are removing form the table or None
+    deletion : RBaseType = None  # an Rexpr that we are removing form the table or None
 
     # if this is going through an unmemoized aggregator, then we might not be able to just directly modify the value in the table
     # so we are going to have to invalidate something and the perform a recomputation
@@ -427,7 +397,6 @@ def process_agenda_message(msg: AgendaMessage):
 
     # TODO: handle these cases
     assert msg.addition is None and msg.deletion  is None
-
 
     t = msg.table
 
@@ -493,7 +462,7 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
         return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, RMemo(variables, memos))
 
     elif isinstance(R, Partition):
-        variables = R.unioned_vars
+        variables = R._unioned_vars
 
         assert mem_variables is not None  # we need to know which variables are going to need to be present to perform queries (aka don't want to query on the result variables as we likely can't easily compute on them)
 
