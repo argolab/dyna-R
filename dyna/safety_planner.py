@@ -15,9 +15,16 @@ from .terms import BuildStructure, CallTerm, Evaluate, ReflectStructure
 # dependants_sets: tracks which things need to be updated if there are
 
 
+# the memoized values could change what can run, as atm the memoized expressions require that the groundings are fully grounded before they can run.
+# that means this should look at what modes are proposed for the memoized expressions such that it can determine if the mode is too strict
+# in the case that a memoized mode is not supported, I suppose that this should either change the memoized mode so
+# that it can run what it needs.
+
+
 class SafetyPlanner:
 
     def __init__(self, get_rexpr):
+        # this should have some way of copying stuff so that we can check that a code change will not violate the declared queries
         self.mode_cache = {}
         self._agenda = []
         self.get_rexpr = get_rexpr
@@ -231,3 +238,16 @@ class SafetyPlanner:
                 break  # meaning that nothing was pushed to work on in the processe
             self._process_agenda()
         return out_mode, has_delayed, basic_is_finite
+
+    def invalidate_term(self, term):
+        # invalidate a term when the definition of it has changed.  We will push
+        # changes to the agenda, but we are not going to eagerly process the
+        # agenda instead leaving that for something else that wants to ensure different declared queries
+        cache = self.mode_cache.get(term)
+        if cache is not None:
+            for mode in cache.keys():
+                # these are going to need to be refreshed, so pushing them to
+                # the agenda will make it such that they will get recomputed.
+                # These changes could later propagate in the case that these
+                # later are found to have different modes.
+                self._push_agenda((term, mode))

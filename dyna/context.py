@@ -49,14 +49,16 @@ class SystemContext:
         # where we fallback for other defined expressions
         self.parent = None
 
-    @property
-    def safety_planner(self):
-        # TODO: we should build a single instance and then update it.  In the
-        # case of optimization, we might idnetify that we are willing to work
-        # with a more free mode and still perform grounding.  In the case that
-        # new rules are added, we are going to have to invalidate those terms
-        # and then redo any compuation that they were involved in.
-        return SafetyPlanner(lambda term: self.lookup_term(term, ignore=('memos', 'compile')))
+        self.safety_planner = SafetyPlanner(lambda term: self.lookup_term(term, ignore=('memos', 'compile')))
+
+    # @property
+    # def safety_planner(self):
+    #     # TODO: we should build a single instance and then update it.  In the
+    #     # case of optimization, we might idnetify that we are willing to work
+    #     # with a more free mode and still perform grounding.  In the case that
+    #     # new rules are added, we are going to have to invalidate those terms
+    #     # and then redo any compuation that they were involved in.
+    #     return SafetyPlanner(
 
     def term_assumption(self, name):
         if name not in self.term_assumptions:
@@ -75,6 +77,9 @@ class SystemContext:
         n = Assumption(name)
         self.term_assumptions[name] = n
         a.invalidate()
+        # this invalidates safety planning more than it should be.  as we are also calling this also happens in the case of something
+        # getting memoized, which should not change the result of what modes are supported?
+        self.safety_planner.invalidate_term(name)
         return n
 
     def delete_term(self, name, arity):
@@ -139,8 +144,6 @@ class SystemContext:
     def memoize_term(self, name, kind='null', mem_variables=None):
         assert kind in ('unk', 'null')
 
-
-
         if mem_variables is not None:
             mem_variables = variables_named(*mem_variables)  # ensure these are cast to variables
 
@@ -191,17 +194,17 @@ class SystemContext:
         elif isinstance(name, MergedExpression) and name in self.merged_expressions:
             r = name.expression  # the optimizer has combined some states together, but we have not processed this item yet, so we can just return the expression as it will be semantically equivalent
         elif self.parent:
-            r = self.parent.lookup_term(name)
+            r = self.parent.lookup_term(name, ignore=ignore)
         else:
             assert not isinstance(name, (MergedExpression,CompiledExpression))  # this should get handled at some point along the chain. So it should not get to this undefiend point
             r = Terminal(0)  # this should probably be an error or something so that we can identify that this method doesn't exit
             print('[warn] failed lookup', name)
 
         if 'assumption' not in ignore:
+            # wrapped the returned result in an assumption so we can track if
+            # the code changes.
             r = AssumptionWrapper(self.term_assumption(name), r)
 
-        # wrapped the returned result in an assumption so we can track if the
-        # code changes.
         return r
 
     def run_agenda(self):

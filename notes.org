@@ -339,3 +339,19 @@ Memoization goes early, as we lead with memoizing code optimizations can go
 later, so the most basic execution story can go up front.  the interpreter story
 with basic left right would be something that we should lead with.  then there
 is something later that is going on for the compiler.
+
+* compilation
++ Atm the compiler can not support unexpected returned results.  It would be
+  nice if there was some way in which it could transfer to the interpreter in
+  the case that it got some unexpected result.  This would make it closer to a
+  tracing JIT as it could just guess what the returned result would be.  To
+  handle this case, it would have to know what the structure of the R-expr would
+  look like at some point in time, and then be able to handle that the R-expr?
+  for the newly replaced expression, it would then have to identify where in the
+  tree that expression would be represented.
+  - I suppose that this could track which R-expr has been run, and then
+    represent the entire tree.  The complication would be if there was some
+    attempt at returning a compact representation?  Most things do not return
+    unexpected results, so it would probably be ok. later being able to update
+    the compiled code would be nice, but the current design requires that it
+    predict what is coming back
