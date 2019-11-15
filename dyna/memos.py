@@ -453,6 +453,9 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
 
         variables = R.head_vars + (R.body_res,)
         assert mem_variables is None  # TODO: handle selecting which variables that we want to memoize
+        # TODO: this should rearangle the variables such that the variables that we want to memoize come first
+        # that is going to be the most efficient way of using the prefix trie, otherwise it is having to look through more
+        # values.
         if mem_variables is None:
             mode = (True,)*len(R.head_vars)+(False,)
         else:

@@ -26,7 +26,7 @@ def abstract_outmodes_default(R, bound):
     raise NotImplementedError()
 
 @abstract_outmodes.define(ModedOp)
-def abstract_outmodes_modedop(self, manager: 'CompileManager'):
+def abstract_outmodes_modedop(self, manager: 'CompiledInstance'):
     mode = tuple(v.isBound(manager) for v in self.vars)
     if mode in self.det:
         # then we can evaluate this expression
@@ -38,7 +38,7 @@ def abstract_outmodes_modedop(self, manager: 'CompileManager'):
             if isinstance(r, FinalState):
                 # then we need to end this expression and allow this to continue running
                 # in the case
-                assert isinstance(r, Terminal)  # TODO: handle
+                assert isinstance(r, Terminal)  # TODO: handle other cases?
                 if r.multiplicity == 0:
                     return False  # then this failed
                 elif r.multiplicity == 1:
@@ -629,38 +629,15 @@ class CompiledInstance:
             elif isinstance(R, Aggregator):
                 # the aggregator might create a loop if the body is finished
 
-                #parent_nondets = nondet_runners
-                #local_nondets = {}
-                #nondet_runners = local_nondets
-                #try:
                 body = rewriter(R.body)
-                #finally:
-                #    nondet_runners = parent_nondets
-
-                # this needs to check if one of the iterators could bind
-                # something that is in a higher frame.  that might mean tracking
-                # if there is some functional dependency between one of the
-                # operators?
 
                 if all(v.isBound(self) for v in R.head_vars):
                     # then we can run this aggregator for a specific variable, so we are going to do that now
 
-                    # this is going to need to select something that can be used to run properly.  For now, we are just choosing the first thing
-                    #assert len(local_nondets) == 1
-
                     aggregator_slot = VariableId()
                     self._add_variable(aggregator_slot)
-                    #self.bound_variables[aggregator_slot._compiler_name] = True
 
                     self.operations.append(('aggregator_init', aggregator_slot))
-
-                    # runnable_parts = list(self.identify_runnable_partitions(body))
-
-                    # #loop_driver, loop_op = list(local_nondets.items())[0]  # just get the first value for now
-                    # loop_driver = IdentityKey(runnable_parts[0][0])
-                    # loop_op = runnable_parts[0][1]
-
-                    # replaced_expressions[loop_driver] = loop_op[1]
 
                     def aggregator_callback(body):
                         # this needs to generate the approperate code inside of the loop for handling the R-expr that remains.
@@ -903,32 +880,6 @@ class CompiledInstance:
                         # then we can yield this iterator
                         yield CompilerUnionIteratorInfo(var, iterators)
 
-                # for i, var in enumerate(R._unioned_vars):
-                #     cnt_outer = False
-                #     iterators = []
-                #     for vs, pid, c in R._children:
-                #         ci = children_iterable.get(vs[i])
-                #         if ci is None:
-                #             cnt_outer = True
-                #             break
-                #         #r, (is_semidet, out, bound_variables, evaluate) = ci[0]
-                #         #assert len(bound_variables) == 1
-                #         # assert bound_variables[0] == vs[i]
-                #         # the iterators have been mapped to other variables, which is sorta...annoying, so just map those back, this is bad
-
-                #         iterators.append((r, (is_semidet, out, (var,), remap_interpreter_iterator(evaluate, {bound_variables:var}, var))))
-                #     if cnt_outer:
-                #         continue
-
-                #     yield CompilerUnionIteratorInfo(var, iterators)
-
-                    # # this needs to track which branch an iterator comes from?
-                    # yield CompilerIteratorInfo(var, iterators)
-
-                    # import ipdb; ipdb.set_trace()
-
-
-                #raise NotImplementedError()
             elif isinstance(R, Aggregator):
                 # this needs to filter which things are reported as runnable so that we don't have
 
@@ -1121,12 +1072,12 @@ class CompiledInstance:
                 failure_handler = pc
                 try:
                     next(iterator)  # get the next value from the iterator
-                    pc += 1  # go to the next slot
+                    pc += 1  # go to the next instruction
                 except StopIteration:
                     pc = end_iterator_location
                     iterator_slot.rawSetValue(frame, None)  # delete the iterator from the frame slot
                 iterator = None
-            elif instr == 'aggregator_init':
+            elif instr == 'aggregator_init':  # this is the same as clear slot
                 data.rawSetValue(frame, None)  # init the value to nothing
                 pc += 1
             elif instr == 'aggregator_add':

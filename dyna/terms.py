@@ -480,6 +480,7 @@ def simplify_call(self, frame):
                 # break
 
     # sanitity check for now
+    # in the case this fails, then it is likely that the python program would get a stack overflow exception without this block
     assert len(self.parent_calls_blocker) < 10
 
     # check if the arguments are unique, otherwise don't try and run this

@@ -190,14 +190,26 @@ def imath_op(name, op, inverse):
     }
     return moded_op(name, d)
 
+def def_inverse(op, inv):
+    r = dyna_system.call_term(op, 1)
+    dyna_system.define_term(inv, 1, r(ret_variable,ret=0))
+
 import math
 dyna_system.define_term('sin', 1, imath_op('sin', math.sin, math.asin))
 dyna_system.define_term('cos', 1, imath_op('cos', math.cos, math.acos))
 dyna_system.define_term('tan', 1, imath_op('tan', math.tan, math.atan))
 
+def_inverse('sin', 'asin')
+def_inverse('cos', 'acos')
+def_inverse('tan', 'atan')
+
 dyna_system.define_term('sinh', 1, imath_op('sinh', math.sinh, math.asinh))
 dyna_system.define_term('cosh', 1, imath_op('cosh', math.cosh, math.acosh))
 dyna_system.define_term('tanh', 1, imath_op('tanh', math.tanh, math.atanh))
+
+def_inverse('sinh', 'asinh')
+def_inverse('cosh', 'acosh')
+def_inverse('tanh', 'atanh')
 
 exp = imath_op('exp', math.exp, math.log)
 dyna_system.define_term('exp', 1, exp)
@@ -300,6 +312,23 @@ dyna_system.define_infered(
     lteq('a', 'b')  # would like this to be able to use this to identify redudant constraints also, which means that we can delete stuff?
 )
 
+dyna_system.define_infered(
+    # in the case that the same variable is used for multiplication, then would like to identify it as a power
+    # as teh power operator supports the mode where 'a' is not grounded
+    mul('a', 'a', ret='b'),  # a*a == a^2
+    pow_v('a', constant(2), ret='b')
+)
+
+dyna_system.define_infered(
+    intersect(pow_v('a', 'b', ret='c'), mul('a', 'c', ret='d')),  # a^b * a == a^(b + 1)
+    intersect(pow_v('a', '_s', ret='d'), add('b', constant(1), ret='_s'))
+)
+
+dyna_system.define_infered(
+    intersect(pow_v('a', 'b', ret='c'), pow_v('c', 'd', ret='e')),  # (a^b)^d == a^(b*d)
+    intersect(pow_v('a', '_m', ret='e'), mul('b', 'd', ret='_m'))
+)
+
 
 # this needs to be able ot check if some constraint could have been valid, so if
 # 0 < C, if its value was known then it should be able to consider this
@@ -372,7 +401,7 @@ dyna_system.define_term('$reflect', 4, Intersect((Unify(constant(True), ret_vari
 # $reflect(Out, Name :str, [arg1, arg2, arg3...])
 dyna_system.define_term('$reflect', 3, Intersect((Unify(constant(True), ret_variable), ReflectStructure(VariableId(0), VariableId(1), VariableId('not_used'), VariableId(2)))))
 
-# $call(&foo(1,2,3), X) => foo(1,2,3,X)
+# Z is $call(&foo(1,2,3), X) => Z is foo(1,2,3,X)
 # the parser should just use Evaluate directly from terms, as this is only going up to 8 (which matches the prolog docs...)
 for i in range(8):
     dyna_system.define_term('$call', i+1, Evaluate(dyna_system, ret_variable, VariableId(0), tuple(VariableId(j+1) for j in range(i))))

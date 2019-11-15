@@ -93,6 +93,7 @@ class RBaseType:
         rm = {}
         ii = 0
         for var in vl:
+            if var in rm: continue  # already processed
             while True:  # the thing that calls us might have used $W variable names, so we can't generate those
                 v = VariableId(f'$W{ii}')
                 ii += 1
@@ -660,7 +661,7 @@ def simplify_intersect(self :Intersect, frame: Frame):
 
 class Partition(RBaseType):
     """
-    This class is /verhy/ overloaded in that we are going to be using the same representation for memoized entries as well as the partitions
+    This class is /very/ overloaded in that we are going to be using the same representation for memoized entries as well as the partitions
     """
     def __init__(self, unioned_vars :Tuple, children :PrefixTrie):#Dict[Tuple[object], List[RBaseType]]):
         super().__init__()
@@ -670,7 +671,6 @@ class Partition(RBaseType):
 
         assert isinstance(children, PrefixTrie)
 
-        # make the children simple in that we are just going to scan the list in the case that
         self._children = children  # this should be treated as "immutable"
 
     @property

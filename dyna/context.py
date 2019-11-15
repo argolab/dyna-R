@@ -43,7 +43,7 @@ class SystemContext:
 
         self.agenda = Agenda()
 
-        self.infered_constraints = []  # going to want some matching expression against having multiple
+        self.infered_constraints = []  # the constraints with generic versions that can be quickly matched to identify when something new can be infered
         self.infered_constraints_index = {}
 
         # where we fallback for other defined expressions
