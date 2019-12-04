@@ -501,7 +501,10 @@ class SimplifyVisitor(Visitor):
         # pushing this failure up the chain?  Though maybe that is closer to
         # what we want
         try:
-            return super().__call__(R, *args, **kwargs)
+            assert R is not None
+            r = super().__call__(R, *args, **kwargs)
+            assert r is not None
+            return r
         except UnificationFailure:
             return terminal(0)
 
@@ -510,6 +513,7 @@ simplify = SimplifyVisitor()
 @simplify.default
 def simplify_default(self, frame):
     # these should be defined for all methods to do something
+    print(type(self))
     raise NotImplementedError()
 
 @simplify.define(Terminal)
@@ -670,6 +674,8 @@ class Partition(RBaseType):
         # though we are going to construct this class via
 
         assert isinstance(children, PrefixTrie)
+        assert all(all(isinstance(v, RBaseType) for v in vv) for vv in children.values())
+        assert len(unioned_vars) == children.nvars
 
         self._children = children  # this should be treated as "immutable"
 
@@ -682,10 +688,12 @@ class Partition(RBaseType):
 
     def rename_vars(self, remap):
         r = tuple(remap(u) for u in self._unioned_vars)
-        assert not any(isinstance(v, ConstantVariable) for v in r)  # TODO: handle deleting a variable from the map..
+        fr = tuple(z.getValue(None) if isinstance(z, ConstantVariable) else None for z in r)
+        nr = tuple(z for z in r if not isinstance(z, ConstantVariable))
+        #assert not any(isinstance(v, ConstantVariable) for v in r)  # TODO: handle deleting a variable from the map..
         #c = dict((k, [c.rename_vars(remap) for c in v]) for k, v in self._children.items())
-        c = self._children.map_values(lambda v: [a.rename_vars(remap) for a in v])
-        return Partition(r, c)
+        c = self._children.filter(fr).map_values(lambda v: [a.rename_vars(remap) for a in v])
+        return Partition(nr, c)
 
     def rewrite(self, rewriter):
         #c = dict((k, [rewriter(c) for c in v]) for k,v in self._children.items())
@@ -720,7 +728,9 @@ def partition(unioned_vars, children):
         return Terminal(sum(c.multiplicity for c in children))
 
     c = PrefixTrie(len(unioned_vars))
-    c[(None,)*len(unioned_vars)] = list(children)
+    nc = list(children)
+    assert None not in nc and all(isinstance(n, RBaseType) for n in nc)
+    c[(None,)*len(unioned_vars)] = nc
 
     return Partition(unioned_vars, c)
 
@@ -796,6 +806,7 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
             if val is not None:
                 var.setValue(frame, val)
 
+        assert isinstance(Rexprs, list)
         for Rexpr in Rexprs:
             if simplify_rexprs:
                 res = simplify(Rexpr, frame)
@@ -859,7 +870,7 @@ def partition_lookup(self :Partition, key):
     nc = self._children.filter(key)
     if not nc:
         return None
-    return Partition(self._unioned_vars, nc)
+    return Partition(tuple(var for var, val in zip(self._unioned_vars, key) if val is None), nc)
 
     # res = {}
     # for grounds, Rexprs in self._children.items():
@@ -1011,7 +1022,7 @@ class AggregatorOpImpl(AggregatorOpBase):
     def combine(self, x, y): return self.op(x,y)
 
 class AggregatorSaturated(Exception):
-    # not a "real" exception.  Used to stop the aggregator for continuing to run in the csae that the value is done
+    # not a "real" exception.  Used to stop the aggregator for continuing to run in the case that the value is done
     def __init__(self, value):
         self.value = value
 

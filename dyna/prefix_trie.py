@@ -1,5 +1,5 @@
 _NOT_FOUND = object()
-_EMPTY_FILTER = slice(None)
+#_EMPTY_FILTER = slice(None)
 
 setdefault = dict.setdefault
 
@@ -75,7 +75,20 @@ class PrefixTrie:
 
     def filter(self, key):
         # we need to merge this with the operators that are getting filtered
-        return PrefixTrie(0, _filter=key, _root=self._root)
+        #assert len(key) == len(self._filter)  # otherwise the number of filtered variables is off and this will return a internal dict
+        nfilter = []
+        a = b = 0
+        while a < len(self._filter):
+            if self._filter[a] is None:
+                nfilter.append(key[b])
+                a += 1
+                b += 1
+            else:
+                nfilter.append(self._filter[a])
+                a += 1
+        assert b == len(key)
+
+        return PrefixTrie(0, _filter=tuple(nfilter), _root=self._root)
 
     def delete_all(self):
         # delete everything that matches the current filter
@@ -189,6 +202,10 @@ class PrefixTrie:
 
     def __repr__(self):
         return repr(dict(self))
+
+    @property
+    def nvars(self):
+        return sum(None is v for v in self._filter)
 
 
 def zip_tries(Ta, Tb):

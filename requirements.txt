@@ -6,5 +6,12 @@ networkx
 
 pytest
 
+# for the repl
+pygments
+prompt_toolkit
+path
+
+
+# for representing Neural networks
 # onnx
 # pytorch

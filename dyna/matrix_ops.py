@@ -6,6 +6,7 @@ from .interpreter import *
 from .builtins import moded_op, check_op, mul as builtin_multiply
 from .context import dyna_system
 from .optimize import optimizer
+from .aggregators import AGGREGATORS
 
 USE_PYTORCH = False
 
@@ -134,7 +135,8 @@ class MakeNDArrayAccess(RBaseType):
     def children(self):
         return (self.wrapped,)
     def rename_vars(self, remap):
-        return MakeNDArrayAccess(tuple(remap(a) for a in self.args), remap(self.ret), remap(self.array_ref), self.wrapped.rename_vars(remap))
+        return MakeNDArrayAccess(tuple(remap(a) for a in self.args), remap(self.ret),
+                                 remap(self.array_ref), self.wrapped.rename_vars(remap))
     def rewrite(self, rewriter):
         return MakeNDArrayAccess(self.args, self.ret, self.array_ref, rewriter(self.wrapped))
 
@@ -200,16 +202,20 @@ def NDArrayAccess_optimize(self, info):
             elif isinstance(r, Aggregator):
                 assert aggregator is None or aggregator is r
                 aggregator = r
-            elif isinstance(r, NDArrayAccess):
+            elif isinstance(r, (NDArrayAccess,MakeNDArrayAccess)):
                 # check that this is a return variable fom the array
                 nd_arrays.add(r)
+            else:
+                # there is some other constraint that is present, then we are not able to rewrite this as an optimized expression
+                assert False
 
 
-    ret_constraints = info.conjunctive_constraints[self.ret]
+    assert aggregator is not None
+    if aggregator.aggregator is not AGGREGATORS['+=']:
+        # this is the wrong aggregator to rewrite as a matrix operation
+        assert False
+        return self
 
-    for r in ret_constraints:
-        if r.possibly_equal(builtin_multiply):
-            pass
 
 
     return self
