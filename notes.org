@@ -361,3 +361,11 @@ is something later that is going on for the compiler.
     issues where a memoized value could be difficult to predict.
   - if an expression could be backed off to the interpreter at any point in
     time, even for builtins, then it would
+
+
+* dynabase
+Can represent this using an additional argument at the start of a sequence.
+- there needs to be some way of identifying which arguments are getting passed
+  from the context.  That should be handled by the parser, thoug that would
+  require that
+- notes about how this can be implemented in the [[file:~/Dropbox/dyna/docs/ir/dyna-core-spec.org::*Dynabases][docs/ir/dyna-core]] file

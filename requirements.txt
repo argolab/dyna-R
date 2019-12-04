@@ -5,3 +5,6 @@ lark-parser
 networkx
 
 pytest
+
+# onnx
+# pytorch

@@ -1010,6 +1010,11 @@ class AggregatorOpImpl(AggregatorOpBase):
     def lower(self, x): return x
     def combine(self, x, y): return self.op(x,y)
 
+class AggregatorSaturated(Exception):
+    # not a "real" exception.  Used to stop the aggregator for continuing to run in the csae that the value is done
+    def __init__(self, value):
+        self.value = value
+
 
 class Aggregator(RBaseType):
 
@@ -1078,21 +1083,33 @@ def simplify_aggregator(self, frame):
             if not R.isEmpty():  # ignore the empty states
                 v = self.body_res.getValue(frame)
                 assert v is not InvalidValue  # if this happens some invalid R-expr was generated?
-                for _ in range(R.multiplicity):
-                    if agg_result is not None:
-                        agg_result = self.aggregator.combine(agg_result, v)
-                    else:
-                        agg_result = v
+                mul = R.multiplicity
+                if agg_result is None:
+                    agg_result = v
+                    mul -= 1
+                if mul > 0:
+                    agg_result = self.aggregator.combine_multiplicity(agg_result, v, mul)
 
         body = saturate(body, frame)
 
-        loop(body, frame, loop_cb)
+        try:
+            loop(body, frame, loop_cb)
+        except AggregatorSaturated as s:
+            agg_result = s.value
 
         if agg_result is None:
             return terminal(0)  # nothing from the aggregator
-        else:
-            self.result.setValue(frame, agg_result)
-            return terminal(1)  # return that we are done and the result of aggregation has been computed
+
+        result = self.aggregator.lower(agg_result)
+        if result is None:
+            return terminal(0)
+
+        self.result.setValue(frame, result)
+        return terminal(1)
+
+        # else:
+        #     self.result.setValue(frame, agg_result)
+        #     return terminal(1)  # return that we are done and the result of aggregation has be
 
     # There also needs to be some handling in the case that the result variable
     # from the body is fully grounded, but the head variables are not grounded.

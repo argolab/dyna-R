@@ -3,6 +3,7 @@ from . import builtins
 from . import terms
 from . import context
 from . import guards
+from . import aggregators
 
 from .interpreter import (
     RBaseType, FinalState, Terminal, Variable, variables_named, constant, Frame,
@@ -19,6 +20,11 @@ from .memos import MemoContainer, RMemo, naive_converge_memos, rewrite_to_memoiz
 from .optimize import run_optimizer
 
 from . import compiler
+
+
+# extra optimizations
+from . import matrix_ops
+
 
 # This is a shortcut for writing code quickly where we are going to lookup a method
 # so we can write something like `M.add(1,2,3)`

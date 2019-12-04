@@ -1,9 +1,14 @@
-from functools import reduce
-import operator
+#from functools import reduce
+#import operator
 
 from .interpreter import *
 from .optimize import optimizer
 
+def _term_op(op):
+    def oper(*args):
+        from .context import dyna_system
+        return dyna_system.raw_call('op_'+op, args)
+    return oper
 
 class Term:
     # This should probably be renamed from "term" to "named tuple" or something
@@ -60,6 +65,14 @@ class Term:
         if len(lst) == 0:
             return Term('nil', ())
         return Term('.', (lst[0], Term.fromlist(lst[1:])))
+
+    # this should have operators which are defined for terms
+    # in the case that there is nothing defined, then
+    __add__ = _term_op('+')
+    __sub__ = _term_op('-')
+    __mul__ = _term_op('*')
+    __div__ = _term_op('/')
+    __truediv__ = _term_op('/')
 
 
 

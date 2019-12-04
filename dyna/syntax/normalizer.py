@@ -95,13 +95,18 @@ def normalize(x):
         return xs
 
 
-AGGR = {
-    '=': AggregatorOpImpl(lambda a,b: 1/0),   # should never combine
-    '+=': AggregatorOpImpl(lambda a,b: a+b),
-    'max=': AggregatorOpImpl(max),
-    'min=': AggregatorOpImpl(min),
-    ':-': AggregatorOpImpl(lambda a,b: 1/0)  # TODO:...
-}
+from dyna.aggregators import AGGREGATORS as AGGR
+# AGGR = {
+#     '=': AggregatorOpImpl(lambda a,b: 1/0),   # should never combine
+#     '+=': AggregatorOpImpl(lambda a,b: a+b),
+#     '*=': AggregatorOpImpl(lambda a,b: a*b),
+#     'max=': AggregatorOpImpl(max),
+#     'min=': AggregatorOpImpl(min),
+#     ':-': AggregatorOpImpl(lambda a,b: a or b),  # TODO:...  this should terminate early in the case that this identifies that there is a true value.
+#     '|=': AggregatorOpImpl(lambda a,b: a or b),
+#     '&=': AggregatorOpImpl(lambda a,b: a and b)
+# }
+colon_line_tracking = 0
 
 
 def add_rule(x):
@@ -142,10 +147,23 @@ def add_rule(x):
         Unify(iret, r.value),
     )
 
+
+    if r.aggr == ':-':
+        body = intersect(Unify(iret, constant(True)), body)
+    elif r.aggr == ':=':
+        global colon_line_tracking
+        niret = VariableId()
+        body = intersect(body, BuildStructure('$colon_line_tracking', niret,
+                                              (constant(colon_line_tracking), iret)))
+        iret = niret
+        colon_line_tracking += 1
+
+
     # rename the variables that are not explicitly referenced to be unique to this rule
     rm = {VariableId(x): VariableId(x) for x in range(arity)}
     rm[iret] = iret
     body = body.rename_vars_unique(rm.get)
+
 
     rule = Aggregator(interpreter.ret_variable,
                       args,

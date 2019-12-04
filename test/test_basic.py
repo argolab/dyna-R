@@ -854,3 +854,40 @@ def test_counting_custom_int():
     # expanding all of the branches at the same time, so the "non-terminating"
     # branches that prolog would eventually encoutner are something that we
     # encounter "up front"
+
+
+def test_colon_equals():
+    from dyna.syntax.normalizer import add_rules
+
+    add_rules("""
+    colon_e(X) := 0.
+    colon_e(1) := 1.
+    colon_e(Y) := 2 for Y > 7, Y < 10.
+    """)
+
+    def c(x):
+        colon_e = dyna_system.call_term('colon_e', 1)
+        frame = Frame()
+        frame[0] = x
+        rr = saturate(colon_e, frame)
+        assert rr == Terminal(1)
+        return interpreter.ret_variable.getValue(frame)
+
+    assert c(1) == 1
+    assert c(0) == 0
+    assert c(5) == 0
+    assert c(8) == 2
+
+def test_aggregator_saturates():
+    from dyna.syntax.normalizer import add_rules
+
+    add_rules("""
+    agg_saturates |= true for range(X, 0, 1000000000000000000000).  % big number so it should stop the loop early
+    """)
+
+    a = dyna_system.call_term('agg_saturates', 0)
+    frame = Frame()
+    rr = saturate(a, frame)
+    assert rr == Terminal(1)
+
+    assert interpreter.ret_variable.getValue(frame) == True

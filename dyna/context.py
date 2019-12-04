@@ -174,6 +174,18 @@ class SystemContext:
         m[ret_variable] = ret_variable
         return CallTerm(m, self, (name, arity))
 
+    def raw_call(self, name, arguments):
+        t = self.call_term(name, len(arguments))
+        frame = Frame()
+        for i, v in enumerate(arguments):
+            frame[i] = v
+        rr = simplify(t, frame)
+        if rr == Terminal(0):
+            return None
+        if rr == Terminal(1):
+            return ret_variable.getValue(frame)
+        assert False  # something else represented as the R-expr
+
     def lookup_term(self, name, *, ignore=()):
         # if a term isn't defined, we are going to return Terminal(0) as there
         # is nothing that could have unified with the given expression.  we do

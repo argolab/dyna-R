@@ -7,7 +7,8 @@ from .interpreter import *
 
 def get_intersecting_constraints(R):
     yield R
-    if not isinstance(R, (Partition, Aggregator)):  # partition has different branches and aggregators can internally use loop which means their state might become split between different operators
+    # include the aggregator as a constraint?  Though not purely intersecting
+    if not isinstance(R, (Partition)):  # partition has different branches and aggregators can internally use loop which means their state might become split between different operators
         for z in R.children:
             yield from get_intersecting_constraints(z)
 
