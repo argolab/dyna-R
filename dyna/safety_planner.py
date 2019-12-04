@@ -204,6 +204,7 @@ class SafetyPlanner:
         while True:
             last_binding = Frame(bound_vars)  # copy
             walker(R)
+            walker(R)
             if last_binding == bound_vars:
                 # then this has reached a fixed point for what can be bound, so
                 # we stop at this point
@@ -212,12 +213,15 @@ class SafetyPlanner:
         has_remaining_delayed_constraints = False  # reset
         push_computes = True  # push that we would like the modes of the methods we are calling to be determiend if they could be better
         walker(R)
+        walker(R)
 
         # now this needs to save the result to the cache and if there are
         # differences, then we also will need to push everything to the
         # agenda
 
         out_mode = tuple(v.isBound(bound_vars) for v in exposed_vars)
+
+        #print(name, in_mode, out_mode, has_remaining_delayed_constraints, basic_is_finite)
 
         return out_mode, has_remaining_delayed_constraints, basic_is_finite
 
