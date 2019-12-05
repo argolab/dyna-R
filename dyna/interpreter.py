@@ -675,7 +675,7 @@ class Partition(RBaseType):
 
         assert isinstance(children, PrefixTrie)
         assert all(all(isinstance(v, RBaseType) for v in vv) for vv in children.values())
-        assert len(unioned_vars) == children.nvars
+        #assert len(unioned_vars) == children.nvars
 
         self._children = children  # this should be treated as "immutable"
 
@@ -690,9 +690,9 @@ class Partition(RBaseType):
         r = tuple(remap(u) for u in self._unioned_vars)
         fr = tuple(z.getValue(None) if isinstance(z, ConstantVariable) else None for z in r)
         nr = tuple(z for z in r if not isinstance(z, ConstantVariable))
-        #assert not any(isinstance(v, ConstantVariable) for v in r)  # TODO: handle deleting a variable from the map..
+        assert not any(isinstance(v, ConstantVariable) for v in r)  # TODO: handle deleting a variable from the map..
         #c = dict((k, [c.rename_vars(remap) for c in v]) for k, v in self._children.items())
-        c = self._children.filter(fr).map_values(lambda v: [a.rename_vars(remap) for a in v])
+        c = self._children.map_values(lambda v: [a.rename_vars(remap) for a in v])
         return Partition(nr, c)
 
     def rewrite(self, rewriter):
@@ -787,7 +787,7 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
     # depending on the storage strategy of this, going to need to have something
     # better?  This is going to require that
 
-    for grounds, Rexprs in self._children.filter([a if b else None for a,b in zip(incoming_values, incoming_mode)]):
+    for grounds, Rexprs in self._children.filter_raw([a if b else None for a,b in zip(incoming_values, incoming_mode)]):
 
         #for grounds, Rexprs in self._children.items():
         # this needs to check that the assignment of variables is consistent otherwise skip it
@@ -870,7 +870,8 @@ def partition_lookup(self :Partition, key):
     nc = self._children.filter(key)
     if not nc:
         return None
-    return Partition(tuple(var for var, val in zip(self._unioned_vars, key) if val is None), nc)
+    # tuple(var for var, val in zip(self._unioned_vars, key) if val is None)
+    return Partition(self._unioned_vars, nc)
 
     # res = {}
     # for grounds, Rexprs in self._children.items():

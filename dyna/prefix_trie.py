@@ -90,6 +90,9 @@ class PrefixTrie:
 
         return PrefixTrie(0, _filter=tuple(nfilter), _root=self._root)
 
+    def filter_raw(self, key):
+        return PrefixTrie(0, _filter=tuple(key), _root=self._root)
+
     def delete_all(self):
         # delete everything that matches the current filter
         def r(prefix, f, a):
