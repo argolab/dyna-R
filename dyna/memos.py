@@ -414,7 +414,7 @@ def process_agenda_message(msg: AgendaMessage):
 
         # this needs to handle if the partition does the single
 
-        tf = t.memos._children.filter(msg.key)
+        tf = t.memos._children.filter_raw(msg.key)
         tn = nR._children
 
 
@@ -438,7 +438,7 @@ def process_agenda_message(msg: AgendaMessage):
     else:
         # then we are just going to delete the memos as they are unk
         # we are also going to send messages to downstream entries
-        t.memos._children.filter(msg.key).delete_all()
+        t.memos._children.filter_raw(msg.key).delete_all()
         t.memos._hashcache = None
 
         # send notifications to everything downstream

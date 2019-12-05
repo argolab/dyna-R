@@ -676,6 +676,7 @@ class Partition(RBaseType):
         assert isinstance(children, PrefixTrie)
         assert all(all(isinstance(v, RBaseType) for v in vv) for vv in children.values())
         #assert len(unioned_vars) == children.nvars
+        #assert all(n is None for n in children._filter)
 
         self._children = children  # this should be treated as "immutable"
 
@@ -689,11 +690,11 @@ class Partition(RBaseType):
     def rename_vars(self, remap):
         r = tuple(remap(u) for u in self._unioned_vars)
         fr = tuple(z.getValue(None) if isinstance(z, ConstantVariable) else None for z in r)
-        nr = tuple(z for z in r if not isinstance(z, ConstantVariable))
-        assert not any(isinstance(v, ConstantVariable) for v in r)  # TODO: handle deleting a variable from the map..
+        #nr = tuple(z for z in r if not isinstance(z, ConstantVariable))
+        #assert not any(isinstance(v, ConstantVariable) for v in r)  # TODO: handle deleting a variable from the map..
         #c = dict((k, [c.rename_vars(remap) for c in v]) for k, v in self._children.items())
-        c = self._children.map_values(lambda v: [a.rename_vars(remap) for a in v])
-        return Partition(nr, c)
+        c = self._children.filter_raw(fr).map_values(lambda v: [a.rename_vars(remap) for a in v])
+        return Partition(r, c)
 
     def rewrite(self, rewriter):
         #c = dict((k, [rewriter(c) for c in v]) for k,v in self._children.items())
@@ -867,7 +868,7 @@ def partition_lookup(self :Partition, key):
     # return a new partition that matches the values that are in the key
     assert len(self._unioned_vars) == len(key)
 
-    nc = self._children.filter(key)
+    nc = self._children.filter_raw(key)
     if not nc:
         return None
     # tuple(var for var, val in zip(self._unioned_vars, key) if val is None)

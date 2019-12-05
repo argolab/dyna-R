@@ -73,9 +73,9 @@ class PrefixTrie:
             a = setdefault(a, i, {})
         return a.setdefault(key[-1], default)
 
-    def filter(self, key):
-        # we need to merge this with the operators that are getting filtered
-        #assert len(key) == len(self._filter)  # otherwise the number of filtered variables is off and this will return a internal dict
+
+    def filter_extend(self, key):
+        # this extends a given filter that might already be applied to the prefix trie
         nfilter = []
         a = b = 0
         while a < len(self._filter):
@@ -91,6 +91,8 @@ class PrefixTrie:
         return PrefixTrie(0, _filter=tuple(nfilter), _root=self._root)
 
     def filter_raw(self, key):
+        # this resets the filter, and might expose more stuff then was initially requested
+        assert len(key) == len(self._filter)
         return PrefixTrie(0, _filter=tuple(key), _root=self._root)
 
     def delete_all(self):
