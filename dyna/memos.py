@@ -55,7 +55,6 @@ class MemoContainer:
 
             push_work(lambda: refresh_whole_table(self))
 
-
     def lookup(self, values):
         assert len(values) == len(self.variables)
         r = partition_lookup(self.memos, values)
@@ -64,6 +63,7 @@ class MemoContainer:
         # assert compute_if_not_set != self.is_null_memo
 
         if r is not None or self.is_null_memo:
+            print('memo ret: ', values, r)
             return r
         # then we are going to compute the value for this and then return the result
 
@@ -72,6 +72,9 @@ class MemoContainer:
         self._error_cycle.add(values)
 
         nR = self.compute(values)
+
+        assert not nR.isEmpty()
+        #import ipdb; ipdb.set_trace()
 
         self._error_cycle.remove(values)
 
@@ -411,7 +414,7 @@ def process_agenda_message(msg: AgendaMessage):
 
         # this needs to handle if the partition does the single
 
-        tf = t.memos._children.filter(msg.key)
+        tf = t.memos._children.filter_raw(msg.key)
         tn = nR._children
 
 
@@ -435,7 +438,7 @@ def process_agenda_message(msg: AgendaMessage):
     else:
         # then we are just going to delete the memos as they are unk
         # we are also going to send messages to downstream entries
-        t.memos._children.filter(msg.key).delete_all()
+        t.memos._children.filter_raw(msg.key).delete_all()
         t.memos._hashcache = None
 
         # send notifications to everything downstream
