@@ -1,3 +1,4 @@
+from .exceptions import *
 from . import interpreter
 from . import builtins
 from . import terms
@@ -20,7 +21,6 @@ from .memos import MemoContainer, RMemo, naive_converge_memos, rewrite_to_memoiz
 from .optimize import run_optimizer
 
 from . import compiler
-
 
 # extra optimizations
 from . import matrix_ops

@@ -29,6 +29,7 @@ from dyna.syntax.syntax import DynaParserException, Cmd, term, run_parser
 from dyna.syntax.normalizer import add_rules, user_query
 
 from dyna.context import dyna_system
+from dyna import DynaSolverError
 
 
 # from https://github.com/timvieira/arsenal/blob/master/arsenal/terminal.py
@@ -88,6 +89,8 @@ class REPL:
         self.hist = hist
         self.hist_file = hist
         self.lineno = 0
+        self.excpt = None
+        self.suggested_prompt = None
 
         self.subscriptions = []
         self.checkpoints = []
@@ -252,15 +255,42 @@ class REPL:
         results = self._query(q)
         print(results)
 
-    def do_tickle(self, _):
-        "Tickle: run each rule's 'initializer' (i.e., tickle it) to see what they emit."
-        d = self.interp
-        for r in d.rules:
-            print()
-            print(colors.yellow % r.metadata['original'])
-            for c in RulePropagateCtx(d, r):
-                print(' ', c)
-        print()
+    # def do_tickle(self, _):
+    #     "Tickle: run each rule's 'initializer' (i.e., tickle it) to see what they emit."
+    #     d = self.interp
+    #     for r in d.rules:
+    #         print()
+    #         print(colors.yellow % r.metadata['original'])
+    #         for c in RulePropagateCtx(d, r):
+    #             print(' ', c)
+    #     print()
+
+    def do_pdb(self, _):
+        "Enter the debugger at the point of the last exception"
+        import ipdb
+        ipdb.post_mortem(self.excpt[2])
+
+    def do_run_agenda(self, _):
+        "Run the agenda until convergence"
+        dyna_system.run_agenda()
+
+    def do_memoize_null(self, q):
+        """Memoize a term using a null default
+        Term identified as `foo/arity`, eg: `fib/1`
+        """
+        name, arity = q.split('/')
+        arity = int(arity)
+        dyna_system.memoize_term((name, arity), kind='null')
+
+    def do_memoize_unk(self, q):
+        """Memoize a term using a unknown default
+        Term identified as `foo/arity`, eg: `fib/1`
+        """
+        name, arity = q.split('/')
+        arity = int(arity)
+        dyna_system.memoize_term((name, arity), kind='unk')
+
+
 
     # def do_memos(self, q: Term):
     #     """
@@ -500,10 +530,18 @@ class REPL:
             validate_while_typing = False,
         )
 
+        has_agenda_work = False
         while True:
+            if bool(dyna_system.agenda) and not has_agenda_work and not self.suggested_prompt:
+                self.suggested_prompt = 'run_agenda '
+            has_agenda_work = bool(dyna_system.agenda)
             try:
-                text = session.prompt(ANSI('\x1b[31m>\x1b[0m '))
-                #text = session.prompt('> ')
+                suggest = self.suggested_prompt
+                self.suggested_prompt = None
+                text = session.prompt(
+                    ANSI(('(agenda has pending work) ' if has_agenda_work else '')+'\x1b[31m>\x1b[0m '),
+                    **({'default': suggest} if suggest else {})
+                )
             except KeyboardInterrupt:
                 print('^C')
                 continue  # Control-C pressed. Try again.
@@ -518,8 +556,13 @@ class REPL:
             except KeyboardInterrupt:
                 print('^C')
                 continue  # Control-C pressed. Try again.
-            except Exception:
-                print(colors.red % ''.join(traceback.format_exception(*sys.exc_info())))
+            except Exception as err:
+                self.excpt = sys.exc_info()
+                print(colors.red % ''.join(traceback.format_exception(*self.excpt)))
+                if isinstance(err, DynaSolverError):
+                    print(colors.yellow % err)
+                    if hasattr(err, 'suggest'):
+                        self.suggested_prompt = err.suggest
 
     def parse_cmd(self, x):
         commands = {x[3:] for x in dir(self) if x.startswith('do_')}
@@ -579,6 +622,11 @@ class REPL:
 
 
 def main():
+    # increase the stack size so that this can run long backchaining sequences
+    import resource
+    resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+    sys.setrecursionlimit(20_000)
+
     repl = REPL(dyna_system)
     repl.cmdloop()
 

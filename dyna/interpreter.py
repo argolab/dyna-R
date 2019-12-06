@@ -501,10 +501,10 @@ class SimplifyVisitor(Visitor):
         # pushing this failure up the chain?  Though maybe that is closer to
         # what we want
         try:
-            assert R is not None
-            r = super().__call__(R, *args, **kwargs)
-            assert r is not None
-            return r
+            #assert R is not None
+            return super().__call__(R, *args, **kwargs)
+            #assert r is not None
+            #return r
         except UnificationFailure:
             return terminal(0)
 
@@ -513,8 +513,7 @@ simplify = SimplifyVisitor()
 @simplify.default
 def simplify_default(self, frame):
     # these should be defined for all methods to do something
-    print(type(self))
-    raise NotImplementedError()
+    raise NotImplementedError(f'Simplify not defined for {type(self)}')
 
 @simplify.define(Terminal)
 def simplify_terminal(self, frame):
@@ -825,7 +824,10 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
 
     if not nc:
         # then nothing matched, so just return that the partition is empty
-        return Terminal(0)
+        if reduce_to_single:
+            return Terminal(0)
+        else:
+            return Partition(self._unioned_vars, nc)  # this should be an empty partition object
 
     set_values = list(next(iter(nc.keys())))
 
@@ -1017,6 +1019,7 @@ class AggregatorOpBase:
             x = self.combine(x, y)
         return x
 
+
 class AggregatorOpImpl(AggregatorOpBase):
     def __init__(self, op): self.op = op
     def lift(self, x): return x
@@ -1036,7 +1039,7 @@ class Aggregator(RBaseType):
         self.result = result
         self.body_res = body_res
         self.body = body
-        self.head_vars = head_vars
+        self.head_vars = tuple(head_vars)
         self.aggregator = aggregator
 
         assert result != body_res  # we require that there is some difference in variable so that there is someway that this can propagate through (maybe this should just rewrite the body itself before it attaches it?)

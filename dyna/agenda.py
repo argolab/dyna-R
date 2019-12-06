@@ -16,6 +16,8 @@ class Agenda:
             r = self.pop()
             r()  # run the task.
 
+    def __bool__(self):
+        return bool(self._agenda)
 
 def push_work(work):
     # I suppose that there should be some "global" accessable function which can

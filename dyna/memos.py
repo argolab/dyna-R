@@ -63,20 +63,20 @@ class MemoContainer:
         # assert compute_if_not_set != self.is_null_memo
 
         if r is not None or self.is_null_memo:
-            print('memo ret: ', values, r)
+            #print('memo ret: ', values, r)
             return r
         # then we are going to compute the value for this and then return the result
 
         # TODO: this should use the same storage as the object, with this as an external object this is annoying...
         assert values not in self._error_cycle
+
         self._error_cycle.add(values)
+        try:
+            nR = self.compute(values)
 
-        nR = self.compute(values)
-
-        assert not nR.isEmpty()
-        #import ipdb; ipdb.set_trace()
-
-        self._error_cycle.remove(values)
+            #assert not nR.isEmpty()
+        finally:
+            self._error_cycle.remove(values)
 
         # modify the data structure in place, so we are assuming that we own
         # this (which better be the case), though it breaks the "ideal" that
@@ -363,7 +363,7 @@ class ForwardMemoHole(RBaseType):
     pass
 
 @simplify.define(ForwardMemoHole)
-def simplift_memohole(self, frame):
+def simplify_memohole(self, frame):
     return Terminal(1)
 
 
@@ -479,7 +479,11 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
         if len(R.children) == 1:
             return R.rewrite(lambda x: rewrite_to_memoize(x, mem_variables=mem_variables, is_null_memo=is_null_memo))
 
-        raise NotImplementedError()  # TODO:??? maybe just walk through the structure, or just wrap this in a partition, but then need to figure out what variables are going to be shared
+        raise RuntimeError("""
+        Did not find an aggregator or partition to rewrite to memoize.
+        Can not memoize generic R-exprs which branch into multiple children
+        """)
+        #raise NotImplementedError()  # TODO:??? maybe just walk through the structure, or just wrap this in a partition, but then need to figure out what variables are going to be shared
 
 
 def split_partitions(R):

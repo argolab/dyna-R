@@ -1,6 +1,7 @@
 #from functools import reduce
 #import operator
 
+from .exceptions import *
 from .interpreter import *
 from .optimize import optimizer
 
@@ -494,7 +495,18 @@ def simplify_call(self, frame):
 
     # sanitity check for now
     # in the case this fails, then it is likely that the python program would get a stack overflow exception without this block
-    assert len(self.parent_calls_blocker) < 10
+
+    if len(self.parent_calls_blocker) >= 10:
+        err = 'Dyna backchaining stack depth has exceeded 10 recurisve frames'
+        suggested_command = None
+        if isinstance(self.term_ref, tuple) and len(self.term_ref) == 2:
+            name, arity = self.term_ref
+            if isinstance(name, str) and isinstance(arity, int):
+                err += '\nPossible fix is to memoize the intermeidate results and limit the stack depth, Eg:'
+                suggested_prompt = f'memoize_unk {name}/{arity}'
+        raise DynaSolverErrorSuggestPrompt(err, suggested_prompt)
+
+    # assert len(self.parent_calls_blocker) < 10
 
     # check if the arguments are unique, otherwise don't try and run this
     vs = [tuple(v.getValue(frame) for v in vv) for vv in self.parent_calls_blocker]

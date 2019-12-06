@@ -41,6 +41,12 @@ class AggregatorColonEquals(AggregatorOpBase):
             return b
 
 
+# the colon equals aggregator needs to be able to identify if there is a value which is partially instantiated
+# in the case that something else is added?
+# ideally, there should be some way to limit the
+
+
+
 AGGREGATORS = {
     '=': AggregatorEqual(),
     '+=': AggregatorOpImpl(lambda a,b: a+b),
