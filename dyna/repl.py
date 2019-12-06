@@ -276,7 +276,7 @@ class REPL:
 
     def do_memoize_null(self, q):
         """Memoize a term using a null default
-        Term identified as `foo/arity`, eg: `fib/1`
+        Term identified as `name/arity`, eg: `fib/1`
         """
         name, arity = q.split('/')
         arity = int(arity)
@@ -284,12 +284,23 @@ class REPL:
 
     def do_memoize_unk(self, q):
         """Memoize a term using a unknown default
-        Term identified as `foo/arity`, eg: `fib/1`
+        Term identified as `name/arity`, eg: `fib/1`
         """
         name, arity = q.split('/')
         arity = int(arity)
         dyna_system.memoize_term((name, arity), kind='unk')
 
+    def do_memoize_del(self, q):
+        """Delete a memo table
+        Term identified as `name/arity`, eg: `fib/1`
+        """
+        name, arity = q.split('/')
+        arity = int(arity)
+        dyna_system.memoize_term((name, arity), kind='none')
+
+    def do_optimize(self, q):
+        "Run the optimizer on all of the terms in the system"
+        dyna_system.optimize_system()
 
 
     # def do_memos(self, q: Term):
@@ -555,6 +566,7 @@ class REPL:
                     self.runcmd(text)
             except KeyboardInterrupt:
                 print('^C')
+                self.excpt = sys.exc_info()
                 continue  # Control-C pressed. Try again.
             except Exception as err:
                 self.excpt = sys.exc_info()

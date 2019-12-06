@@ -336,10 +336,12 @@ class SystemContext:
             # then there is no way for this to ever match something, so just report it as empty
             rr = Terminal(0)
 
-        assumption_response = AssumptionResponse(lambda: self._optimize_term(term))
+        # if the assumption used for optimizing is invalidated, then push work to the agenda to
+        # redo the optimization
+        assumption_response = AssumptionResponse(lambda: self.agenda.push(lambda: self._optimize_term(term)))
         invalidate = False
 
-        if rr != popt:
+        if popt is None or not rr.possibly_equal(popt):
             if rr.isEmpty() or popt is not None:
                 # then we have "proven" something interesting, so we are going
                 # to use the assumption to notify anything that might want to
@@ -349,10 +351,19 @@ class SystemContext:
 
         if invalidate:
             assumptions.remove(assumpt)
+            assert all(a.isValid() for a in assumptions)
+            print(assumptions)
             assumptions.add(self.invalidate_term_assumption(term))
+            print('post', assumptions)
 
         for a in assumptions:
+            #if a.isValid():
             a.track(assumption_response)
+            # else:
+            #     # will push to the agenda to redo this again
+            #     assert False
+            #     assumption_response.invalidate()
+            #     break
 
 
     def _compile_term(self, term, ground_vars :Set[Variable]):

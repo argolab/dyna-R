@@ -1042,7 +1042,7 @@ class Aggregator(RBaseType):
         self.head_vars = tuple(head_vars)
         self.aggregator = aggregator
 
-        assert result != body_res  # we require that there is some difference in variable so that there is someway that this can propagate through (maybe this should just rewrite the body itself before it attaches it?)
+        assert result != body_res or isinstance(result, ConstantVariable)  # we require that there is some difference in variable so that there is someway that this can propagate through (maybe this should just rewrite the body itself before it attaches it?)
 
     @property
     def vars(self):

@@ -34,7 +34,7 @@ class Assumption:
             d.signal(msg)
 
     def __str__(self):
-        return f'Assumption({self._name})'
+        return f'Assumption({self._name}, valid={not self._invalid})'
 
     def __repr__(self):
         return str(self)

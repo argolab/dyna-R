@@ -35,3 +35,16 @@ memoize_unk fib/1
 fib(100)
 
 ```
+
+
+```
+even([]).
+even([X,Y|Z]) :- even(Z).
+odd([X|Y]) :- even(Y).
+even_odd(X) :- even(X), odd(X).
+
+# run the optimizer on the program to identify that even_odd(X) is empty
+optimize
+
+even_odd(X)
+```
