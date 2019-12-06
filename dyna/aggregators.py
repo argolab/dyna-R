@@ -5,7 +5,7 @@ class AggregatorEqual(AggregatorOpBase):
     def lift(self, x): return x
     def lower(self, x): return x
     def combine(self, a,b):
-        return Term('$error', ())
+        return Term('$error', ("Aggregator `=` should not have more than two values",))
 
 class AggregatorSaturate(AggregatorOpBase):
     def __init__(self, op, saturated):
@@ -43,7 +43,11 @@ class AggregatorColonEquals(AggregatorOpBase):
 
 # the colon equals aggregator needs to be able to identify if there is a value which is partially instantiated
 # in the case that something else is added?
-# ideally, there should be some way to limit the
+#
+# There could be something which adds additional R-exprs to unpack the aggregated value and then compares which line
+# number is in use.
+#
+# Currently, the aggregator on "runs" in the case that all of the keys are bound.  This would need
 
 
 

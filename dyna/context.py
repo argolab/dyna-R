@@ -10,7 +10,7 @@ from .guards import Assumption, AssumptionWrapper, AssumptionResponse
 from .agenda import Agenda
 from .optimize import run_optimizer
 from .compiler import run_compiler, EnterCompiledCode
-from .memos import rewrite_to_memoize
+from .memos import rewrite_to_memoize, RMemo
 from .safety_planner import SafetyPlanner
 
 from functools import reduce
@@ -40,6 +40,7 @@ class SystemContext:
         self.merged_expressions = {}
 
         self.term_assumptions = {}
+        self.terms_as_defined_assumptions = {}
 
         self.agenda = Agenda()
 
@@ -60,9 +61,16 @@ class SystemContext:
     #     # and then redo any compuation that they were involved in.
     #     return SafetyPlanner(
 
+    def term_as_defined_assumption(self, name):
+        if name not in self.terms_as_defined_assumptions:
+            self.terms_as_defined_assumptions[name] = Assumption(f'defined {name}')
+        return self.terms_as_defined_assumptions[name]
+
     def term_assumption(self, name):
         if name not in self.term_assumptions:
-            self.term_assumptions[name] = Assumption(name)
+            a = Assumption(name)
+            self.term_assumptions[name] = a
+            self.term_as_defined_assumption(name).track(a)
         return self.term_assumptions[name]
 
     def invalidate_term_assumption(self, name):
@@ -75,10 +83,22 @@ class SystemContext:
         # implementation would want to use the more efficient expression
         a = self.term_assumption(name)
         n = Assumption(name)
+        self.term_as_defined_assumption(name).track(n)
         self.term_assumptions[name] = n
         a.invalidate()
         # this invalidates safety planning more than it should be.  as we are also calling this also happens in the case of something
         # getting memoized, which should not change the result of what modes are supported?
+        self.safety_planner.invalidate_term(name)
+        return n
+
+    def invalidate_term_as_defined_assumption(self, name):
+        a = self.term_as_defined_assumption(name)
+        n = Assumption(f'defined: {name}')
+        nt = Assumption(name)
+        self.terms_as_defined_assumptions[name] = n
+        self.term_assumptions[name] = nt
+        n.track(nt)
+        a.invalidate()
         self.safety_planner.invalidate_term(name)
         return n
 
@@ -139,23 +159,36 @@ class SystemContext:
                 mt.setdefault(key, []).extend(vals)
 
         # track that this expression has changed, which can cause things to get recomputed/propagated to the agenda etc
-        self.invalidate_term_assumption(a)
+        self.invalidate_term_as_defined_assumption(a)
+        #self.invalidate_term_assumption(a)
 
     def memoize_term(self, name, kind='null', mem_variables=None):
-        assert kind in ('unk', 'null')
+        assert kind in ('unk', 'null', 'none')
 
         if mem_variables is not None:
             mem_variables = variables_named(*mem_variables)  # ensure these are cast to variables
 
-        R = self.lookup_term(name, ignore=('memo', 'assumption'))
+        old_memoized = self.terms_as_memoized.get(name)
 
-        # this really needs to call, but avoid hitting the memo wrapper that we
-        # are going to add.  As in the case that the assumption is blown then we
-        # are going to want to get a new version of the code.
-        Rm = rewrite_to_memoize(R, mem_variables=mem_variables, is_null_memo=(kind == 'null'))
-        self.terms_as_memoized[name] = Rm
+        if kind != 'none':
+            R = self.lookup_term(name, ignore=('memo', 'assumption'))
 
+            # this really needs to call, but avoid hitting the memo wrapper that we
+            # are going to add.  As in the case that the assumption is blown then we
+            # are going to want to get a new version of the code.
+            Rm = rewrite_to_memoize(R, mem_variables=mem_variables, is_null_memo=(kind == 'null'))
+            self.terms_as_memoized[name] = Rm
+        else:
+            self.terms_as_memoized.pop(name)
+
+        # invalidate and remove all assumptions
         self.invalidate_term_assumption(name)
+        if old_memoized is not None:
+            for child in old_memoized.all_children():
+                if isinstance(child, RMemo):
+                    # single to anything that was depending on this memo table that it no longer exists
+                    child.memos.assumption.invalidate()
+
 
     def define_infered(self, required :RBaseType, added :RBaseType):
         z = (required, added)
@@ -213,9 +246,18 @@ class SystemContext:
             print('[warn] failed lookup', name)
 
         if 'assumption' not in ignore:
-            # wrapped the returned result in an assumption so we can track if
-            # the code changes.
-            r = AssumptionWrapper(self.term_assumption(name), r)
+            # this assumption tracks if the code changes at all and the result
+            # should be refreshed this can included new compiled versions as
+            # well as new results values as a result of memoization
+            a = self.term_assumption(name)
+            assert a.isValid()
+            r = AssumptionWrapper(a, r)
+        elif 'assumption_defined' not in ignore:
+            # this assumption is only invalidated in the case that a term is
+            # changed by the user at the repl or by an external driver program.
+            a = self.term_as_defined_assumption(name)
+            assert a.isValid()
+            r = AssumptionWrapper(a, r)
 
         return r
 
