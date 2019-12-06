@@ -175,7 +175,7 @@ class REPL:
         for q in self.subscriptions:
             print(q, self._query(q))
 
-    def do_ip(self, _):
+    def do_shell(self, _):
         """
         Development tool. Jump into an interactive python shell.
         """
@@ -539,7 +539,7 @@ class REPL:
                 suggest = self.suggested_prompt
                 self.suggested_prompt = None
                 text = session.prompt(
-                    ANSI(('(agenda has pending work) ' if has_agenda_work else '')+'\x1b[31m>\x1b[0m '),
+                    ANSI(('(agenda has pending work) ' if has_agenda_work else '')+'\x1b[31m$>\x1b[0m '),
                     **({'default': suggest} if suggest else {})
                 )
             except KeyboardInterrupt:

@@ -10,7 +10,7 @@ from .guards import Assumption, AssumptionWrapper, AssumptionResponse
 from .agenda import Agenda
 from .optimize import run_optimizer
 from .compiler import run_compiler, EnterCompiledCode
-from .memos import rewrite_to_memoize, RMemo
+from .memos import rewrite_to_memoize, RMemo, AgendaMessage, process_agenda_message
 from .safety_planner import SafetyPlanner
 
 from functools import reduce
@@ -158,6 +158,16 @@ class SystemContext:
             for key, vals in nr.body._children.items():
                 mt.setdefault(key, []).extend(vals)
 
+            # if there is a memo table, then will mark these keys as needing to be refreshed
+            memoized = self.terms_as_memoized.get(a)
+            if memoized is not None:
+                for child in memoized.all_children():
+                    if isinstance(child, RMemo):
+                        table = child.memos
+                        for key, vals in nr.body._children.items():
+                            msg = AgendaMessage(table=table, key=key)
+                            self.agenda.push(lambda: process_agenda_message(msg))
+
         # track that this expression has changed, which can cause things to get recomputed/propagated to the agenda etc
         self.invalidate_term_as_defined_assumption(a)
         #self.invalidate_term_assumption(a)
@@ -171,7 +181,7 @@ class SystemContext:
         old_memoized = self.terms_as_memoized.get(name)
 
         if kind != 'none':
-            R = self.lookup_term(name, ignore=('memo', 'assumption'))
+            R = self.lookup_term(name, ignore=('memo', 'assumption', 'assumption_defined'))
 
             # this really needs to call, but avoid hitting the memo wrapper that we
             # are going to add.  As in the case that the assumption is blown then we
@@ -226,7 +236,9 @@ class SystemContext:
         # able to change the expression.
 
         if name in self.terms_as_memoized and 'memo' not in ignore:
-            r = self.terms_as_memoized[name]  # should contain an RMemo type which will perform reads from a memo table
+            # do not include additional assumptions as the assumptions are "broken" by the memo table
+            # which includes its own assumptions
+            return self.terms_as_memoized[name]  # should contain an RMemo type which will perform reads from a memo table
         elif name in self.terms_as_compiled and 'compile' not in ignore:
             # return a wrapper around the compiled expression such that it can
             # be embedded into the R-expr by the interpreter

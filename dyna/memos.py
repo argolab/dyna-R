@@ -176,6 +176,7 @@ class MemoContainer:
 
         propagators = []
 
+        # these rewrite to propagates should be cached so that they can be reused
         for rp, variables in rewrite_to_propagate(self._full_body, msg.table, ForwardMemoHole):
             r = True
             m = {}
