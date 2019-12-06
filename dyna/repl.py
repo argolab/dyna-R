@@ -26,8 +26,10 @@ from dyna.syntax.pygments_lexer import DynaLexer
 # from dyna.util import colordiff
 
 from dyna.syntax.syntax import DynaParserException, Cmd, term, run_parser
-
 from dyna.syntax.normalizer import add_rules, user_query
+
+from dyna.context import dyna_system
+
 
 # from https://github.com/timvieira/arsenal/blob/master/arsenal/terminal.py
 def ansi(color=None, light=None, bg=3):
@@ -409,10 +411,15 @@ class REPL:
                     'for',
                 }
 
+                from dyna.aggregators import AGGREGATORS
+                words.update(AGGREGATORS.keys())
+                words.update(commands)
+                words.update(name for (name, arity) in dyna_system.terms_as_defined.keys())
+
                 # TODO: add REPL commands to the completions list
-                words.update(AGG)
-                words.update(f for (f,_) in interp.functors)
-                words.update(name for name in commands)
+                # words.update(AGG)
+                # words.update(f for (f,_) in interp.functors)
+                # words.update(name for name in commands)
 
                 try:
 
@@ -441,7 +448,10 @@ class REPL:
         # conversion.  When we call the method we can use the same stuff except
         # we'll actually call the method with the converted (and validated
         # type).
+        validated_as_query = False
         def validate(text):
+            nonlocal validated_as_query
+            validated_as_query = False
             x = self.parse_cmd(text)
             if x is None: return
             cmd, args = x
@@ -454,6 +464,15 @@ class REPL:
                 if cmd == '':
                     if args: run_parser(args)
             except DynaParserException:
+                # try to see if this can validate as a query
+                # this should probably just work?
+                try:
+                    run_parser(f'{text} ?')
+                    validated_as_query = True
+                    return True
+                except DynaParserException:
+                    pass
+
                 return False
             return True
 
@@ -492,7 +511,10 @@ class REPL:
                 break  # Control-D pressed.
 
             try:
-                self.runcmd(text)
+                if validated_as_query:
+                    user_query(text)
+                else:
+                    self.runcmd(text)
             except KeyboardInterrupt:
                 print('^C')
                 continue  # Control-C pressed. Try again.
@@ -531,14 +553,18 @@ class REPL:
 
     def do_help(self, line):
         # create help routines based on doc string.
-        for x in dir(REPL):
-            v = getattr(self, x)
-            if x.startswith('do_') and hasattr(v, '__doc__'):
-                v = getattr(self, x)
-                print(v.__doc__)
-                break
+        if line:
+            method = getattr(self, f'do_{line.strip()}', None)
+            if method and hasattr(method, '__doc__'):
+                print(method.__doc__)
+            else:
+                print(f'{line} not found')
         else:
-            print('no help found')
+            for x in dir(REPL):
+                v = getattr(self, x)
+                if x.startswith('do_') and getattr(v, '__doc__', None):
+                    v = getattr(self, x)
+                    print(x[3:], v.__doc__)
 
     def do_load(self, line: Path):
         "Load rules from a dyna source file."
@@ -546,10 +572,13 @@ class REPL:
         with open(line.strip()) as f:
             self.add_src(f.read())
 
+    def do_quit(self, *a):
+        import sys
+        sys.exit(0)
+
 
 
 def main():
-    from dyna.context import dyna_system
     repl = REPL(dyna_system)
     repl.cmdloop()
 

@@ -1,8 +1,12 @@
 #!/usr/bin/env python
 
+import os
 from setuptools import setup
 
 
+# this is only going to work in the csae that nothing is install directly from git etc
+requirements = open(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'requirements.txt')).read().split('\n')
+requirements = [r.strip() for r in requirements if not r.strip().startswith('#') and r]
 
 setup(
     name='dyna',
@@ -12,7 +16,6 @@ setup(
     entry_points = {
         'console_scripts': ['dyna=dyna.repl:main'],
     },
-    install_requires=[
-        # should put stuff here instead in requirements.txt???
+    install_requires= requirements + [
     ]
 )

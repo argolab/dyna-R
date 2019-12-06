@@ -1,12 +1,12 @@
 
 
-.PHONY: install test
+.PHONY: install test repl
 
+repl:
+	dyna
 
 test:
 	pytest
-
-
 
 install:
 	pip install -r requirements.txt
