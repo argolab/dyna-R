@@ -531,6 +531,30 @@ def test_even_odd():
     assert rr2 == Terminal(0)
 
 
+def test_even_odd_parser():
+    from dyna.syntax.normalizer import add_rules
+
+    c = """
+    even_list_p([]).
+    even_list_p([X,Y|Z]) :- even_list_p(Z).
+    odd_list_p([X|Y]) :- even_list_p(Y).
+    even_odd_list_p(X) :- even_list_p(X), odd_list_p(X).
+    """
+    for l in c.split('\n'):
+        add_rules(l)
+
+    #dyna_system._optimize_term(('even_odd_list_p', 1))
+    dyna_system.optimize_system()
+    dyna_system.run_agenda()
+
+    call = dyna_system.call_term('even_odd_list_p', 1)
+    frame = Frame()
+    rr = saturate(call, frame)
+
+    assert rr == Terminal(0)
+
+
+
 def test_mapl_neural_network():
     ret_variable = interpreter.ret_variable
 
