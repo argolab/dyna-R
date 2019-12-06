@@ -1,11 +1,12 @@
 from copy import deepcopy
+import textwrap
 
 from dyna.syntax.generic import Term, FVar, Rule
 from dyna.syntax.aggregators import AGG
 from dyna.syntax.syntax import term, run_parser
 from dyna.syntax.util import colors, fib_check
 
-from dyna.interpreter import VariableId, constant, ConstantVariable, intersect
+from dyna.interpreter import VariableId, constant, ConstantVariable, intersect, InvalidValue
 from dyna.context import dyna_system
 
 from dyna import Frame, Terminal, Aggregator, Unify, interpreter, \
@@ -208,8 +209,19 @@ def user_query(x):
 
     results = []
     def callback(rr, ff):
-        print(colors.yellow % 'result:', {str(v): v.getValue(ff) for v in user_vars},
-              colors.yellow % '@', rr)
+        values = []
+        for v in user_vars:
+            r = v.getValue(ff)
+            if r is InvalidValue:
+                values.append(f"'{v}': ---")
+            else:
+                values.append(f"'{v}': {r}")
+        values = colors.yellow % 'result:' + '{'+', '.join(values)+'} ' + colors.yellow % '@'
+        rexpr = textwrap.indent(str(rr), ' '*(len(values) - 2*len(colors.yellow)+5)).strip()
+        print(values, rexpr)
+
+        # print(colors.yellow % 'result:', '{'+', '.join(values)+'}',
+        #       colors.yellow % '@', rr)
 
         results.append(deepcopy([rr, ff]))
 

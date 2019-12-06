@@ -280,6 +280,10 @@ class SystemContext:
         # want to optimize all of the rules in the program, which will then
         # require that expressions are handled if they are later invalidated?
 
+        def push(t):
+            self.agenda.push(lambda: self._optimize_term(t))
+
+
         for term, rexpr in self.terms_as_defined.items():
             # this should call optimize on everything?
 
@@ -287,7 +291,7 @@ class SystemContext:
             if b != 3:
                 # then we want to try and improve this expression as there is
                 # something that we can try and optimize.
-                self.agenda.push(lambda: self._optimize_term(term))
+                push(term)
 
     def create_merged_expression(self, expr :RBaseType, exposed_vars: Set[Variable]):
         # if there are some terms that are combiend, then we want to be made
@@ -319,6 +323,7 @@ class SystemContext:
     def _optimize_term(self, term):
         popt = self.terms_as_optimized.get(term)  # get the current optimized version of the code
         assumpt = self.term_assumption(term)
+        assumpt_d = self.term_as_defined_assumption(term)
         if isinstance(term, MergedExpression):
             # then we are going to determine which variables are
             r = term.expression
@@ -329,7 +334,10 @@ class SystemContext:
             exposed = (ret_variable, *variables_named(*range(arity)))
         rr, assumptions = run_optimizer(r, exposed)
 
-        assumptions.add(assumpt)
+        assumptions.add(assumpt_d)
+        #assumptions.add(assumpt)
+        assumptions.discard(assumpt)  # don't want this assumption contained as it could cause a cycle
+        #assert assumpt not in assumptions
 
         bc = check_basecases(rr, stack=(term,))
         if bc == 0:
@@ -339,6 +347,8 @@ class SystemContext:
         # if the assumption used for optimizing is invalidated, then push work to the agenda to
         # redo the optimization
         assumption_response = AssumptionResponse(lambda: self.agenda.push(lambda: self._optimize_term(term)))
+        #assumption_response = AssumptionResponse(lambda: 1/0) #self.agenda.push(lambda: self._optimize_term(term)))
+
         invalidate = False
 
         if popt is None or not rr.possibly_equal(popt):
@@ -350,21 +360,13 @@ class SystemContext:
             self.terms_as_optimized[term] = rr
 
         if invalidate:
-            assumptions.remove(assumpt)
             assert all(a.isValid() for a in assumptions)
-            print(assumptions)
-            assumptions.add(self.invalidate_term_assumption(term))
-            print('post', assumptions)
+            #print(assumptions)
+            self.invalidate_term_assumption(term)
+            #print('post', assumptions)
 
         for a in assumptions:
-            #if a.isValid():
             a.track(assumption_response)
-            # else:
-            #     # will push to the agenda to redo this again
-            #     assert False
-            #     assumption_response.invalidate()
-            #     break
-
 
     def _compile_term(self, term, ground_vars :Set[Variable]):
         # always use the lookup as this can get optimized versions

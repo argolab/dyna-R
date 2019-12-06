@@ -53,7 +53,7 @@ class MemoContainer:
             # then we need to init the table as this is a null guess for all of
             # the entries, which means that we are likely inconsistent with the guess
 
-            push_work(lambda: refresh_whole_table(self))
+            push_work(refresh_whole_table, self)
 
     def lookup(self, values):
         assert len(values) == len(self.variables)
@@ -156,7 +156,7 @@ class MemoContainer:
         # if null, with a new empty table, we need to recompute all of the
         # initial values
         if self.is_null_memo:
-            push_work(lambda: refresh_whole_table(self))
+            push_work(refresh_whole_table, self)
 
 
     def signal(self, msg):
@@ -222,7 +222,7 @@ class MemoContainer:
 
         for k in refresh_keys:
             msg = AgendaMessage(table=self, key=k)
-            push_work(lambda: process_agenda_message(msg))
+            push_work(process_agenda_message, msg)
 
 
 class RMemo(RBaseType):
