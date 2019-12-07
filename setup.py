@@ -2,11 +2,10 @@
 
 import os
 from setuptools import setup
+from Cython.Build import cythonize
 
-
-# this is only going to work in the csae that nothing is install directly from git etc
-requirements = open(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'requirements.txt')).read().split('\n')
-requirements = [r.strip() for r in requirements if not r.strip().startswith('#') and r]
+# requirements = open(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'requirements.txt')).read().split('\n')
+# requirements = [r.strip() for r in requirements if not r.strip().startswith('#') and r]
 
 setup(
     name='dyna',
@@ -16,6 +15,7 @@ setup(
     entry_points = {
         'console_scripts': ['dyna=dyna.repl:main'],
     },
-    install_requires= requirements + [
-    ]
+    install_requires=[
+    ],
+    ext_modules = cythonize(['**/*.pyx'], compiler_directives={'language_level' : "3"}),
 )

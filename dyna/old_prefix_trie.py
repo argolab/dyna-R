@@ -1,5 +1,7 @@
+# TODO: this should become cythonized.  Or rewritten as this is an important structure which
+# is getting access at lot of times
+
 _NOT_FOUND = object()
-#_EMPTY_FILTER = slice(None)
 
 setdefault = dict.setdefault
 
@@ -163,6 +165,15 @@ class PrefixTrie:
 
     def map_values(self, mapper):
         def r(l, a):
+            if self._filter[-l] is not None:
+                # due to the filter there is only a single entry. so ignore the things that do not match
+                k = self._filter[-l]
+                v = a.get(k, _NOT_FOUND)
+                if v is _NOT_FOUND:
+                    return {}
+                else:
+                    a = {k: v}
+
             if l == 0:
                 return {k: mapper(v) for k,v in a.items()}
             else:

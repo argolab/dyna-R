@@ -13,6 +13,7 @@ class Agenda:
 
     def run(self):
         while self._agenda:
+            # this should identify where
             r = self.pop()
             r()  # run the task.
 

@@ -43,6 +43,9 @@ class MemoContainer:
         # will be triggered.
         self._full_body = None
 
+        # cache for the methods used during forward propagation
+        self._propagate_cache = {}
+
         # for identifying things we are currently computing via backchaining in
         # the case of a cycle that can only be forward chained.
         self._error_cycle = set()
@@ -130,6 +133,7 @@ class MemoContainer:
         self.assumption = Assumption('memo container')
         self.assumption_listener = AssumptionListener(self)
         self._full_body = inline_all_calls(self.body, set())
+        self._propagate_cache = {}
 
         all_assumptions = set(get_all_assumptions(self._full_body))
 
@@ -177,7 +181,12 @@ class MemoContainer:
         propagators = []
 
         # these rewrite to propagates should be cached so that they can be reused
-        for rp, variables in rewrite_to_propagate(self._full_body, msg.table, ForwardMemoHole):
+        #import ipdb; ipdb.set_trace()
+        propagator = self._propagate_cache.get(msg.table)
+        if propagator is None:
+            propagator = list(rewrite_to_propagate(self._full_body, msg.table, ForwardMemoHole))
+            self._propagate_cache[msg.table] = propagator
+        for rp, variables in propagator:
             r = True
             m = {}
             for var, val, av in zip(variables, msg.key, argument_variables):
@@ -281,6 +290,9 @@ def simplify_memo(self, frame):
     # rename the variables and make new spaces for things that were not
     # referenced
     vmap = dict(zip(self.memos.variables, self.variables))
+
+    if len(str(res)) > 150:
+        import ipdb; ipdb.set_trace()
     res2 = res.rename_vars_unique(vmap.get)
 
     # run the new result once

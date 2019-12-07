@@ -1,3 +1,6 @@
 a.out
 *.egg*
 __pycache__
+dyna/prefix_trie.c
+*.so
+build/

@@ -223,7 +223,7 @@ def user_query(x):
         # print(colors.yellow % 'result:', '{'+', '.join(values)+'}',
         #       colors.yellow % '@', rr)
 
-        results.append(deepcopy([rr, ff]))
+        results.append([rr, deepcopy(ff)])
 
     frame = Frame()
 

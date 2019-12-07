@@ -662,6 +662,8 @@ def simplify_intersect(self :Intersect, frame: Frame):
     return intersect(*vs)
 
 
+
+#pcfc = 0
 class Partition(RBaseType):
     """
     This class is /very/ overloaded in that we are going to be using the same representation for memoized entries as well as the partitions
@@ -673,9 +675,8 @@ class Partition(RBaseType):
         # though we are going to construct this class via
 
         assert isinstance(children, PrefixTrie)
-        assert all(all(isinstance(v, RBaseType) for v in vv) for vv in children.values())
-        #assert len(unioned_vars) == children.nvars
-        #assert all(n is None for n in children._filter)
+        if False:  # this check is "expensive"
+            assert all(all(isinstance(v, RBaseType) for v in vv) for vv in children.values())
 
         self._children = children  # this should be treated as "immutable"
 
@@ -687,7 +688,13 @@ class Partition(RBaseType):
         return tuple(c for v in self._children.values() for c in v)
 
     def rename_vars(self, remap):
+        # global pcfc
+        # pcfc += 1
+        # if pcfc == 1000:
+        #     import ipdb; ipdb.set_trace()
         r = tuple(remap(u) for u in self._unioned_vars)
+        # if r == self._unioned_vars:
+        #     return self  # there is no renaming here?
         fr = tuple(z.getValue(None) if isinstance(z, ConstantVariable) else None for z in r)
         #nr = tuple(z for z in r if not isinstance(z, ConstantVariable))
         #assert not any(isinstance(v, ConstantVariable) for v in r)  # TODO: handle deleting a variable from the map..

@@ -3,6 +3,7 @@ numpy
 pybind11
 lark-parser
 networkx
+cython
 
 pytest
 
