@@ -48,3 +48,17 @@ optimize
 
 even_odd(X)
 ```
+
+
+```
+deleteone([X|Xs], Xs, X).
+deleteone([X|Xs], [X|Ys], Z) :- deleteone(Xs, Ys, Z).
+permute([], []).
+permute(As, [Z|Bs]) :- deleteone(As, Rs, Z), permute(Rs, Bs).
+
+
+# permute works in both modes due to R-exprs
+permute([1,2,3], X)
+
+permute(X, [1,2,3])
+```

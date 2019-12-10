@@ -215,15 +215,22 @@ def user_query(x):
             if r is InvalidValue:
                 values.append(f"'{v}': ---")
             else:
+                # try to print this as a list
+                try:
+                    rl = r.aslist()
+                    if rl is not None:
+                        r = rl
+                except:
+                    pass
                 values.append(f"'{v}': {r}")
-        values = colors.yellow % 'result:' + '{'+', '.join(values)+'} ' + colors.yellow % '@'
+        values = colors.yellow % 'result: ' + '{'+', '.join(values)+'} ' + colors.yellow % '@'
         rexpr = textwrap.indent(str(rr), ' '*(len(values) - 2*len(colors.yellow)+5)).strip()
         print(values, rexpr)
 
         # print(colors.yellow % 'result:', '{'+', '.join(values)+'}',
         #       colors.yellow % '@', rr)
 
-        results.append(deepcopy([rr, ff]))
+        results.append([rr, deepcopy(ff)])
 
     frame = Frame()
 

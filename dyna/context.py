@@ -386,6 +386,18 @@ class SystemContext:
         # the compiler will have
 
 
+    def watch_term_changes(self, term, callback):
+        # in the case that a term changes value, then this can get a callback
+        # this should just be a null epression which watches the term?  And then
+        # would notify the callback in the case that something changes
+
+        name, arity = term
+        variables = variables_named(*range(arity))
+
+        R = self.call_term(term)
+        memos = MemoContainer((True,)*arity+(False,), variables+(ret_variable,), R, is_null_memo=True)
+
+        assert False  # todo, finish
 
 
 # where we will define the builtins etc the base dyna base, for now there will

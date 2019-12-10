@@ -5,6 +5,7 @@ import pprint
 import networkx as nx
 
 from .prefix_trie import PrefixTrie
+from .exceptions import *
 
 
 class RBaseType:
@@ -582,6 +583,7 @@ def loop(R, frame, callback, till_terminal=False, best_effort=False, partition=N
         parts = getPartitions(R, frame)
         for p in parts:  # just choose something, and ensure that we can iterate this whole list without a problem
             partition = p
+            break
 
     if partition is None:
         # try 2
@@ -589,9 +591,11 @@ def loop(R, frame, callback, till_terminal=False, best_effort=False, partition=N
         parts = getPartitions(R, frame)
         for p in parts:  # just choose something, and ensure that we can iterate this whole list without a problem
             partition = p
+            break
 
     if not best_effort:
-        assert isinstance(partition, Iterator)
+        if not isinstance(partition, Iterator):
+            raise DynaSolverUnLoopable(R)
     else:
         if partition is None:
             # then we couldn't find something to iterate, so we are going to just callback

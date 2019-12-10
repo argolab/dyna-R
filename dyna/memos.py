@@ -431,7 +431,11 @@ def process_agenda_message(msg: AgendaMessage):
             # and then also notify anything that is downstream that might depend on this
 
             # this was a fully recompute, so we are going to replace everything for this key rather than just update
-            t.memos._children[key] = value
+            #ssert value is not None
+            if value is None:
+                del t.memos._children[key]
+            else:
+                t.memos._children[key] = value
 
             mm = AgendaMessage(table=t, key=key)  # make a new message, as this might be more fine grained than before
             t.assumption.signal(mm)

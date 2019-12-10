@@ -66,6 +66,13 @@ sub = add(ret_variable,1,ret=0)
 dyna_system.define_term('sub', 2, sub)  # The pattern matching is happing on the ModedOp, so this should still pattern match with the add op
 dyna_system.define_term('-', 2, sub)
 
+# unary_minus = moded_op('unary_-', {
+#     (True, True): lambda a,b: (-b, b),
+#     (False, True): lambda a,b: (-b, b),
+#     (True, False): lambda a,b: (a, -a),
+# })
+dyna_system.define_term('-', 1, sub(constant(0), 0, ret=ret_variable))
+
 mul = moded_op('mul', {
     (True, True, True):  lambda a,b,c: (b*c, b, c) ,
     (True, True, False): lambda a,b,c: (a, b, a/b) if b != 0 else error ,  # use the error state in div by 0
@@ -76,12 +83,12 @@ dyna_system.define_term('mul', 2, mul)
 dyna_system.define_term('*', 2, mul)
 
 
-#div = lambda a,b,c: mul(b,a,c)
 div = mul(ret_variable,1,ret=0)
 dyna_system.define_term('div', 2, div)
 dyna_system.define_term('/', 2, div)
 
 
+# defined for tim's parser
 dyna_system.define_term(
     ',', 2,
     intersect(Unify(VariableId(0), constant(True)),

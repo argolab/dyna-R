@@ -1,5 +1,5 @@
 class DynaSolverError(RuntimeError):
-    def __init__(self, msg):
+    def __init__(self, msg=None):
         super().__init__(msg)
 
 
@@ -8,3 +8,26 @@ class DynaSolverErrorSuggestPrompt(DynaSolverError):
     def __init__(self, msg, suggest):
         super().__init__(msg)
         self.suggest = suggest
+
+
+class DynaSolverUnLoopable(DynaSolverError):
+    """In the case that the program can not run the aggregator even though all of
+    the arguments are ground This should suggest that something is memoized.
+    Though telling exactly what can be a bit complicated.
+
+    Might want to suggest the different calls that are present in the expresion
+    that is being looped over.  In the case that something is recursive, then it would
+
+    """
+
+    def __init__(self, R):
+        super().__init__()
+        self.Rexpr = R
+
+class DynaSolverGussed(DynaSolverError):
+    """
+    In the case that the solver needs to make a guess and start forward chaining in the case of a cycle
+    """
+    def __init__(self):
+        super().__init__()
+        pass

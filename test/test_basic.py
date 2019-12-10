@@ -915,3 +915,22 @@ def test_aggregator_saturates():
     assert rr == Terminal(1)
 
     assert interpreter.ret_variable.getValue(frame) == True
+
+
+def test_geometric_series():
+    from dyna.syntax.normalizer import add_rules
+
+    add_rules("""
+    geometric += 1.
+    geometric += geometric / 2.
+    """)
+
+    dyna_system.memoize_term(('geometric', 0), 'null')
+
+    dyna_system.run_agenda()
+
+    geo = dyna_system.call_term('geometric', 0)
+    frame = Frame()
+    rr = saturate(geo, frame)
+
+    assert interpreter.ret_variable.getValue(frame) == 2.0
