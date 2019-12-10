@@ -99,7 +99,7 @@ class PrefixTrie:
         # delete everything that matches the current filter
         def r(prefix, f, a):
             z = f[len(prefix)]
-            if len(f) == len(prefix) - 1:
+            if len(f) - 1 == len(prefix):
                 if z is None:
                     a.clear()
                 else:

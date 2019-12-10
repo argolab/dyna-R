@@ -45,7 +45,7 @@ class MemoContainer:
 
         # for identifying things we are currently computing via backchaining in
         # the case of a cycle that can only be forward chained.
-        self._error_cycle = set()
+        self._computing_cycle = set()
 
         self._setup_assumptions()
 
@@ -68,15 +68,30 @@ class MemoContainer:
         # then we are going to compute the value for this and then return the result
 
         # TODO: this should use the same storage as the object, with this as an external object this is annoying...
-        assert values not in self._error_cycle
+        #assert values not in self._error_cycle
 
-        self._error_cycle.add(values)
+        if values in self._computing_cycle:
+            # in this case, we can just guess that the value is null, and then
+            # push to the agenda that we want to refresh this entry
+            assert not self.is_null_memo
+
+            # set the entry to the memo table that this is null for this particular key
+            self.memos._children.setdefault(values, []).append(terminal(0))
+
+            # push a recompute entry for this to the memo table
+            msg = AgendaMessage(table=self, key=values, is_null_memo=True)
+            push_work(process_agenda_message, msg)
+
+            # return that the value is zero
+            return terminal(0)
+
+        self._computing_cycle.add(values)
         try:
             nR = self.compute(values)
 
             #assert not nR.isEmpty()
         finally:
-            self._error_cycle.remove(values)
+            self._computing_cycle.remove(values)
 
         # modify the data structure in place, so we are assuming that we own
         # this (which better be the case), though it breaks the "ideal" that
@@ -221,8 +236,14 @@ class MemoContainer:
         # now we are going to push invalidations/notifications to ourselves to recompute these keys
 
         for k in refresh_keys:
-            msg = AgendaMessage(table=self, key=k)
+            msg = AgendaMessage(table=self, key=k, is_null_memo=(msg.is_null_memo and msg.table is self))
             push_work(process_agenda_message, msg)
+
+    def __hash__(self):
+        return id(self)
+
+    def __eq__(self, other):
+        return self is other
 
 
 class RMemo(RBaseType):
@@ -380,6 +401,9 @@ class AgendaMessage(NamedTuple):
     # so we are going to have to invalidate something and the perform a recomputation
     invalidation : bool = True  # just always going to be true for the moment...
 
+    # for the case that a table is unk defaulted, if something new is added as a null memo, then we want to
+    # identify that this is now a null memo
+    is_null_memo : bool = False
 
 def process_agenda_message(msg: AgendaMessage):
     # the msg contains a pointer to the table and which key needs to be
@@ -404,7 +428,7 @@ def process_agenda_message(msg: AgendaMessage):
 
     t = msg.table
 
-    if t.is_null_memo:
+    if t.is_null_memo or msg.is_null_memo:
         frame = Frame()
         for var, val in zip(t.variables, msg.key):
             if val is not None:
@@ -437,7 +461,7 @@ def process_agenda_message(msg: AgendaMessage):
             else:
                 t.memos._children[key] = value
 
-            mm = AgendaMessage(table=t, key=key)  # make a new message, as this might be more fine grained than before
+            mm = AgendaMessage(table=t, key=key, is_null_memo=msg.is_null_memo)  # make a new message, as this might be more fine grained than before
             t.assumption.signal(mm)
 
     else:
