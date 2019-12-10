@@ -162,7 +162,16 @@ class PrefixTrie:
             self[k] = v
 
     def map_values(self, mapper):
-        def r(l, a):
+        def r(l, aa):
+            f = self._filter[-l]
+            if f is None:
+                a = aa
+            else:
+                a = {}
+                if f in aa:
+                    a[f] = aa[f]
+                if None in aa:
+                    a[None] = aa[None]
             if l == 0:
                 return {k: mapper(v) for k,v in a.items()}
             else:

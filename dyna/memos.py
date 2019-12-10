@@ -52,7 +52,6 @@ class MemoContainer:
         if self.is_null_memo:
             # then we need to init the table as this is a null guess for all of
             # the entries, which means that we are likely inconsistent with the guess
-
             push_work(refresh_whole_table, self)
 
     def lookup(self, values):
@@ -67,9 +66,6 @@ class MemoContainer:
             return r
         # then we are going to compute the value for this and then return the result
 
-        # TODO: this should use the same storage as the object, with this as an external object this is annoying...
-        #assert values not in self._error_cycle
-
         if values in self._computing_cycle:
             # in this case, we can just guess that the value is null, and then
             # push to the agenda that we want to refresh this entry
@@ -78,7 +74,7 @@ class MemoContainer:
             # set the entry to the memo table that this is null for this particular key
             self.memos._children.setdefault(values, []).append(terminal(0))
 
-            # push a recompute entry for this to the memo table
+            # push a recompute operation for this entry given that we have just guessed
             msg = AgendaMessage(table=self, key=values, is_null_memo=True)
             push_work(process_agenda_message, msg)
 
@@ -88,8 +84,6 @@ class MemoContainer:
         self._computing_cycle.add(values)
         try:
             nR = self.compute(values)
-
-            #assert not nR.isEmpty()
         finally:
             self._computing_cycle.remove(values)
 
