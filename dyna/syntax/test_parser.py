@@ -8,3 +8,6 @@ def test_user_query():
     """)
 
     user_query('fff(1)')
+
+
+# from normalizer import test_mapl_neural_network

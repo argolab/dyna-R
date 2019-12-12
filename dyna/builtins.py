@@ -51,6 +51,7 @@ def check_op(name, arity, op):
 
 from .context import dyna_system
 
+
 add = moded_op('add', {
     (True, True, True):  lambda a,b,c: (b+c, b, c) ,
     (True, True, False): lambda a,b,c: (a, b, a-b) ,
@@ -142,6 +143,120 @@ dyna_system.define_term('>', 2, gt)
 dyna_system.define_term('gteq', 2, gteq)
 dyna_system.define_term('>=', 2, gteq)
 
+
+
+unary_not = moded_op('not', {
+    (False, True): lambda a,b: (not b, bool(b)),
+    (True, False): lambda a,b: (bool(a), not a)
+})
+
+dyna_system.define_term('!', 1, unary_not)
+
+binary_eq = check_op('==', 2, lambda a,b: a == b)
+dyna_system.define_term('==', 2, binary_eq)
+
+binary_neq = check_op('!=', 2, lambda a,b: a != b)
+dyna_system.define_term('!=', 2, binary_neq)
+
+#dyna_system.define_term('=', 2, Unify(VariableId(0), VariableId(1)))
+
+
+class AndOperator(RBaseType):
+    def __init__(self, ret, a, b):
+        super().__init__()
+        self.ret = ret
+        self.a = a
+        self.b = b
+    @property
+    def vars(self):
+        return self.ret, self.a, self.b
+    def rename_vars(self, remap):
+        a = remap(self.a)
+        b = remap(self.b)
+        if a == b:
+            return unify(remap(self.ret), a)
+        return AndOperator(remap(self.ret), a,b)
+
+@simplify.define(AndOperator)
+def simplify_andoperator(self, frame):
+    ret = self.ret.getValue(frame)
+    a = self.a.getValue(frame)
+    b = self.b.getValue(frame)
+    if ret is True:
+        self.a.setValue(frame, True)
+        self.b.setValue(frame, True)
+        return terminal(1)
+    if a is True and b is True:
+        self.ret.setValue(frame, True)
+        return terminal(1)
+    if (a is not InvalidValue and not a) or (b is not InvalidValue and not b):
+        self.ret.setValue(frame, False)
+        return terminal(1)
+    if a is True:
+        return Unify(self.ret, self.b)
+    if b is True:
+        return Unify(self.ret, self.a)
+    return self
+
+dyna_system.define_term('&', 2, AndOperator(ret_variable, VariableId(0), VariableId(1)))
+dyna_system.define_term('&&', 2, AndOperator(ret_variable, VariableId(0), VariableId(1)))
+
+
+class OrOperator(RBaseType):
+    def __init__(self, ret, a, b):
+        super().__init__()
+        self.ret = ret
+        self.a = a
+        self.b = b
+    @property
+    def vars(self):
+        return self.ret, self.a, self.b
+    def rename_vars(self, remap):
+        a = remap(self.a)
+        b = remap(self.b)
+        if a == b:
+            return unify(remap(self.ret), a)
+        return OrOperator(remap(self.ret), a,b)
+
+@simplify.define(OrOperator)
+def simplify_oroperator(self, frame):
+    ret = self.ret.getValue(frame)
+    a = self.a.getValue(frame)
+    b = self.b.getValue(frame)
+    if ret is False:
+        self.a.setValue(frame, False)
+        self.b.setValue(frame, False)
+        return terminal(1)
+    if a is False and b is False:
+        self.ret.setValue(frame, False)
+        return terminal(1)
+    if (a is not InvalidValue and a) or (b is not InvalidValue and b):
+        self.ret.setValue(frame, True)
+        return terminal(1)
+    if a is False:
+        return Unify(self.ret, self.b)
+    if b is False:
+        return Unify(self.ret, self.a)
+    return self
+
+dyna_system.define_term('|', 2, OrOperator(ret_variable, VariableId(0), VariableId(1)))
+dyna_system.define_term('||', 2, OrOperator(ret_variable, VariableId(0), VariableId(1)))
+
+
+import random
+random_seed = random.randint(0, 2**63)
+
+def random_value(element, low, high):
+    e = hash(element) ^ random_seed
+    r = random.Random()
+    r.seed(e)
+    return r.uniform(low, high)
+
+random_r = moded_op('random', {
+    (False, True, True, True): lambda a,b,c,d: (random_value(b,c,d), b,c,d)
+})
+
+dyna_system.define_term('random', 3, random_r)
 
 
 
@@ -392,6 +507,16 @@ append = intersect(Unify(constant(True), ret_variable),
                                          dyna_system.call_term('append', 3)(VariableId('Y'), VariableId(1), VariableId('B')))
                               )))
 dyna_system.define_term('append', 3, append)
+
+
+# this isn't going to quite make sense.  These more realistically would perform unification between these expressions
+# though then that makes it so that unification can be overwritten such that terms which are not equal are unifable together...
+# if this was just used by the aggregators, then maybe that would be ok?  It would allow for aggregators to combine a value
+
+# `a` should already be a term, as it would have to indirected through the term object to get to this point already
+dyna_system.define_term('__builtin_term_compare_<', 2, check_op('__builtin_term_compare_<', 2, lambda a, b: a.builtin_lt(b)))
+#dyna_system.define_term('__builtin_term_compare_==', 2, check_op('__builtin_term_compare_==', 2, lambda a, b: a.builtin_eq(b)))
+
 
 
 # additional methods required to make tim's parser list processing work

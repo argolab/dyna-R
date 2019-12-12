@@ -11,6 +11,13 @@ def _term_op(op):
         return dyna_system.raw_call('op_'+op, args)
     return oper
 
+def _builtin_eq(a,b):
+    if isinstance(a, Term):
+        return a.builtin_eq(b)
+    elif isinstance(b, Term):
+        return False
+    return a == b
+
 class Term:
     # This should probably be renamed from "term" to "named tuple" or something
     # "term" is just overused in the system and there are other values that we
@@ -32,27 +39,50 @@ class Term:
     def arguments(self):
         return self.__arguments
 
-    def __eq__(self, other):
+    def builtin_eq(self, other):
+        # perform an equal operation using only builtin compares
         return self is other or \
             (isinstance(other, Term) and
              hash(self) == hash(other) and
              self.name == other.name and
              len(self.arguments) == len(other.arguments) and
-             all(a == b for a,b in zip(self.arguments, other.arguments)))
+             all(_builtin_eq(a,b) for a,b in zip(self.arguments, other.arguments)))
 
-    def __lt__(self, other):
+    def builtin_lt(self, other):
         if not isinstance(other, Term):
             return False
-        return self.__hashcache < other.__hashcache  # we just need some order on these
+        a = self.__hashcache
+        b = other.__hashcache
+        if a == b and self != other:
+            # there needs to be some order on these element
+            if self.name != other.name:
+                return self.name < other.name
+            if len(self.arguments) != len(other.arguments):
+                return len(self.arguments) < len(self.arguments)
+            for a,b in zip(self.arguments, other.arguments):
+                if a != b:
+                    return a < b
+            assert False  # these are not equal, but could not identify where these are not equal
+        return a < b  # we just need some order on these
+
+    def __eq__(self, other):
+        # maybe just make it so equal is not overrideable?
+        # this is just term equality comparing between the values
+        return self.builtin_eq(other)
+
+    # def __lt__(self, other):
+    #     assert False
+    #     return self.builtin_lt(other)
+
+    # these should be automatically defined by python
+    # def __ne__(self, other):
+    #     return not (self == other)
+
+    # def __gt__(self, other):
+    #     return other < self
 
     def __hash__(self):
         return self.__hashcache
-
-    def __str__(self):
-        return f'{self.__name}({", ".join(map(str, self.__arguments))})'
-
-    def __repr__(self):
-        return str(self)
 
     # convert between the dyna linked list version of a list and python's list
     def aslist(self):
@@ -74,6 +104,20 @@ class Term:
     __mul__ = _term_op('*')
     __div__ = _term_op('/')
     __truediv__ = _term_op('/')
+
+    _dyna_eq = _term_op('==')
+    __lt__ = _term_op('<')
+
+    # does this need an equals and <, <= operator which are exposed to dyna?  If
+    # this was to be used with an aggregator like min/max, then it would be nice
+    # if those operators were able to expose those operations?
+
+
+    def __str__(self):
+        return f'{self.__name}({", ".join(map(str, self.__arguments))})'
+
+    def __repr__(self):
+        return str(self)
 
 
 

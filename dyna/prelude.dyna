@@ -1,0 +1,4 @@
+'op_<'(X, Y) := '__builtin_term_compare_<'(X, Y).
+%'op_=='(X, Y) := '__builtin_term_compare_=='(X, Y).
+
+% there is also op_{+,-,*./}

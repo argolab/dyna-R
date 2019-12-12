@@ -38,3 +38,12 @@ class M(object):
             return r(*args, ret=ret), ret
         return f
 M = M()
+
+
+
+
+# load the prelude file
+import os as _os
+with open(_os.path.join(_os.path.dirname(__file__), 'prelude.dyna'), 'r') as _f:
+    from dyna.syntax.normalizer import add_rules as _add_rules
+    _add_rules(_f.read())
