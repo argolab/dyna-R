@@ -483,30 +483,30 @@ from .terms import BuildStructure, Term
 
 # list_length(0, []).
 # list_length(L+1, [X|Xs]) :- list_length(L, Xs), L >= 0.
-list_length = intersect(Unify(constant(True), ret_variable),  # set the "returned" variable as just always true, might not have this with :-???
-                        partition(variables_named(0,1),
-                                  (intersect(Unify(constant(0), VariableId(0)), BuildStructure('nil', VariableId(1), ())),
-                                   intersect(add(constant(1), VariableId('len1'), ret=VariableId(0)),
-                                             BuildStructure('.', VariableId(1), (VariableId('X'), VariableId('Xs'))),
-                                             gteq(VariableId(0), constant(1)),
-                                             # this is the recursive call
-                                             # TODO: this should not have to reference the system? so there should be some placeholder here instead....
-                                             dyna_system.call_term('list_length', 2)(VariableId('len1'), VariableId('Xs'), ret=constant(True))
-                                   ))))
+# list_length = intersect(Unify(constant(True), ret_variable),  # set the "returned" variable as just always true, might not have this with :-???
+#                         partition(variables_named(0,1),
+#                                   (intersect(Unify(constant(0), VariableId(0)), BuildStructure('nil', VariableId(1), ())),
+#                                    intersect(add(constant(1), VariableId('len1'), ret=VariableId(0)),
+#                                              BuildStructure('.', VariableId(1), (VariableId('X'), VariableId('Xs'))),
+#                                              gteq(VariableId(0), constant(1)),
+#                                              # this is the recursive call
+#                                              # TODO: this should not have to reference the system? so there should be some placeholder here instead....
+#                                              dyna_system.call_term('list_length', 2)(VariableId('len1'), VariableId('Xs'), ret=constant(True))
+#                                    ))))
 
-dyna_system.define_term('list_length', 2, list_length)
+# dyna_system.define_term('list_length', 2, list_length)
 
 
 # prepend([], A, A).
 # prepend([X|Y], A, [X|B]) :- prepend(Y, A, B).
-append = intersect(Unify(constant(True), ret_variable),
-                    partition(variables_named(0,1,2),
-                              (intersect(Unify(constant(Term('nil', ())), VariableId(0)), Unify(VariableId(1), VariableId(2))),
-                               intersect(BuildStructure('.', VariableId(0), [VariableId('X'), VariableId('Y')]),
-                                         BuildStructure('.', VariableId(2), [VariableId('X'), VariableId('B')]),
-                                         dyna_system.call_term('append', 3)(VariableId('Y'), VariableId(1), VariableId('B')))
-                              )))
-dyna_system.define_term('append', 3, append)
+# append = intersect(Unify(constant(True), ret_variable),
+#                     partition(variables_named(0,1,2),
+#                               (intersect(Unify(constant(Term('nil', ())), VariableId(0)), Unify(VariableId(1), VariableId(2))),
+#                                intersect(BuildStructure('.', VariableId(0), [VariableId('X'), VariableId('Y')]),
+#                                          BuildStructure('.', VariableId(2), [VariableId('X'), VariableId('B')]),
+#                                          dyna_system.call_term('append', 3)(VariableId('Y'), VariableId(1), VariableId('B')))
+#                               )))
+# dyna_system.define_term('append', 3, append)
 
 
 # this isn't going to quite make sense.  These more realistically would perform unification between these expressions

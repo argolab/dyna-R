@@ -343,11 +343,14 @@ class DynaTransformer(Transformer):
 
         # Special handling for `X in [1,2,3].`
         if ((fn == '$cons' and len(args) == 2) or (fn == '$nil' and len(args) == 0)):
-            return Term('in_list', a, b)
+            return Term('in_list', b, a)
 
-        return self.question_mark(Term(fn, a, *args))
+        # the contains argument should be
+        return Term(fn, *args, a)
+        # return self.question_mark(Term(fn, a, *args))
 
     def question_mark(self, x):
+        assert False  # this is being using erroneously
 #        return Term('?', Term('&', x))   # suppress for now, but will be evaluated in the builin method
         return Term('?', x)
 

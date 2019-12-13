@@ -1,4 +1,23 @@
+
+% there is also op_{+,-,*./}
+
 'op_<'(X, Y) := '__builtin_term_compare_<'(X, Y).
 %'op_=='(X, Y) := '__builtin_term_compare_=='(X, Y).
 
-% there is also op_{+,-,*./}
+
+% builtin types representing the primitive values
+
+list(Type, []).
+list(Type, [X|Xs]) :- $call(Type, X), list(Type, Xs).
+
+list_length(0, []).
+list_length(L+1, [X|Xs]) :- list_length(L, Xs), L >= 0.
+
+append([], A, A).
+append([X|Y], A, [X|B]) :- append(Y, A, B).
+
+'?'(X) := false.
+'?'(X) := true for _ is $call(X).
+
+in_list([X|_], X).
+in_list([_|Xs], X) :- in_list(Xs, X).
