@@ -163,9 +163,9 @@ class PrefixTrie:
 
     def map_values(self, mapper):
         def r(l, aa):
-            f = self._filter[-l]
+            f = self._filter[-l-1]
             if f is None:
-                a = aa
+                a = aa  # should just take all of the values
             else:
                 a = {}
                 if f in aa:

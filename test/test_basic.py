@@ -934,3 +934,34 @@ def test_geometric_series():
     rr = saturate(geo, frame)
 
     assert interpreter.ret_variable.getValue(frame) == 2.0
+
+
+
+def test_quicksort_optimize():
+    from dyna.syntax.normalizer import add_rules
+
+    add_rules("""
+    quicksort([X|Xs],Ys) :-
+    partition(Xs,X,Left,Right),
+    quicksort(Left,Ls),
+    quicksort(Right,Rs),
+    append(Ls,[X|Rs],Ys).
+    quicksort([],[]).
+
+    partition([X|Xs],Y,[X|Ls],Rs) :-
+    X <= Y, partition(Xs,Y,Ls,Rs).
+    partition([X|Xs],Y,Ls,[X|Rs]) :-
+    X > Y, partition(Xs,Y,Ls,Rs).
+    partition([],Y,[],[]).
+    """)
+
+    #dyna_system._optimize_term(('partition', 4))
+    dyna_system._optimize_term(('quicksort', 2))
+    dyna_system.run_agenda()
+
+    qs = dyna_system.call_term('quicksort', 2)
+    frame = Frame()
+    frame[0] = Term.fromlist([3,1,2])
+    rr = saturate(qs, frame)
+
+    assert rr == Terminal(1)

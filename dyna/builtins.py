@@ -100,6 +100,7 @@ dyna_system.define_term(
 
 # if this is allowed to unify with false, then this isn't quite right for the non-det version?
 # that should really mark the first variable as being required as true, otherwise we are unable to unify?
+# TODO: the order of arguments needs to be changed to match the colon operator
 range_v = moded_op('range', {
     (False, True, True, True, True):  lambda x,a,b,c,d: (a in range(b,c,d), a, b, c, d) ,
 }, nondet={

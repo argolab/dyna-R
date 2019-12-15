@@ -7,6 +7,7 @@
 
 % builtin types representing the primitive values
 
+% can be used as `[1,2,3] : list(&int)` to make a type of integer list`
 list(Type, []).
 list(Type, [X|Xs]) :- $call(Type, X), list(Type, Xs).
 
@@ -16,6 +17,8 @@ list_length(L+1, [X|Xs]) :- list_length(L, Xs), L >= 0.
 append([], A, A).
 append([X|Y], A, [X|B]) :- append(Y, A, B).
 
+% this might be better represented as an R-expr where it can identify if the return value is true and then can eleminate
+% Otherwise we can not use X to perform any looping if requested.
 '?'(X) := false.
 '?'(X) := true for _ is $call(X).
 

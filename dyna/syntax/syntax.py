@@ -350,9 +350,8 @@ class DynaTransformer(Transformer):
         # return self.question_mark(Term(fn, a, *args))
 
     def question_mark(self, x):
-        assert False  # this is being using erroneously
-#        return Term('?', Term('&', x))   # suppress for now, but will be evaluated in the builin method
-        return Term('?', x)
+        return Term('?', Term('&', x))   # suppress for now, but will be evaluated in the builin method
+        #return Term('?', x)
 
     def chained_compare(self, x):
         if len(x) == 1:

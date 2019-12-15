@@ -473,7 +473,7 @@ def check_basecases(R, stack=()):
     # return:
     #   0 then it does not hit a basecase for sure, and we should report an error or just mark this as terminal(0) as it would never be able to terminate
     #   1 unsure as it uses evaluate on all branches so it could go anywhere
-    #   2 this is definitly uses idirectly or directly recursion but that thing has base cases
+    #   2 this is definitly uses indirectly or directly recursion but that thing has base cases
     #   3 there is no detected recursion
 
     if isinstance(R, (Evaluate, Evaluate_reflect)):
