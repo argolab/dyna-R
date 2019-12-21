@@ -13,12 +13,17 @@ class MemoContainer:
     body : RBaseType
     memos : Partition  # which is also an RBaseType
 
-    def __init__(self, supported_mode: Tuple[bool], variables: Tuple[Variable], body: RBaseType, is_null_memo=False):
-        # parameterization so of the memo table that _should not change_
-        self.supported_mode = supported_mode
+    def __init__(self, argument_mode: Tuple[bool], supported_mode : Tuple[bool],
+                 variables: Tuple[Variable], body: RBaseType, is_null_memo=False,
+                 assumption_always_listen=None):
+        # parameterization of the memo table that _should not change_
+        self.argument_mode = argument_mode  # these are the variables which are passed as arguments to the computation
+        self.supported_mode = supported_mode  # which variables must be bound first before we can query this
+
         self.variables = variables
         self.body = body
         self.is_null_memo = is_null_memo
+        self.assumption_always_listen = assumption_always_listen or ()
         # if this is null, then when an update comes in, we have to recompute rather than being able to just delete
         # this is a property of the table, rather than where we are choosing to use it
         # TODO: the UnkMemo and the NullMemo should probably just be merged and then this should be the trigger between the two
@@ -53,6 +58,12 @@ class MemoContainer:
             # then we need to init the table as this is a null guess for all of
             # the entries, which means that we are likely inconsistent with the guess
             push_work(refresh_whole_table, self)
+
+            assert self.supported_mode == (False,)*len(self.supported_mode)
+            #assert self.argument_mode == (True,)*(len(self.argument_mode)-1) + (False,)
+
+        for a,b in zip(self.argument_mode, self.supported_mode):
+            if b: assert a
 
     def lookup(self, values):
         assert len(values) == len(self.variables)
@@ -99,7 +110,7 @@ class MemoContainer:
         # is this requires constructing a new sub interpreter and using that to
         # set the values etc
         frame = Frame()
-        for var, imode, val in zip(self.variables, self.supported_mode, values):
+        for var, imode, val in zip(self.variables, self.argument_mode, values):
             if imode:
                 var.setValue(frame, val)
 
@@ -111,7 +122,7 @@ class MemoContainer:
         # determine the new body and frame
         nR = saturate(self._full_body, frame)
         nR = [nR]
-        for var, imode in zip(self.variables, self.supported_mode):
+        for var, imode in zip(self.variables, self.argument_mode):
             if not imode and var.isBound(frame):
                 # then we need /somewhere/ to store the value of this /ground/ variable
                 # so we are just going to add in unification with a constant for now
@@ -144,6 +155,9 @@ class MemoContainer:
 
         for a in all_assumptions:
             a.track(self.assumption_listener)
+
+        for a in self.assumption_always_listen:
+            self.assumption.track(a)  # ensure that these always get notified
 
     def invalidate(self):
         # In the case of an invalidation, then the assumption has changed in
@@ -304,14 +318,30 @@ def simplify_memo(self, frame):
 
 @getPartitions.define(RMemo)
 def getPartition_memos(self, frame):
-    if not self.memos.is_null_memo or not frame.memo_reads:
-        # then we can not use this table to iterate as we do not know all of the non-null values
+    # this should become a generalization of the current null_memo expression.
+    # This should instead identify if there are enough values bound such that
+    # this expression is already memoized.  This is basically depending on which
+    # values are already known.  Though this will have to perform a read if the
+    # values is not already present.  So may need to perform a computation for
+    # the memoized values.
+
+    if not frame.memo_reads:
+        # then the memoized values are disabled (for optimization)
         return
 
+    # if not self.memos.is_null_memo or not frame.memo_reads:
+    #     # then we can not use this table to iterate as we do not know all of the non-null values
+    #     return
+
     f = Frame()
-    for va, vb in zip(self.variables, self.memos.variables):
+    for va, vb, imode in zip(self.variables, self.memos.variables, self.memos.supported_mode):
         if va.isBound(frame):
             vb.setValue(f, va.getValue(frame))
+        elif imode:
+            #assert False
+            # then this variable needs to be set for this to make a query against this
+            # so we are just going to stop
+            return
     vmap = dict(zip(self.memos.variables, self.variables))
     for it in getPartitions(self.memos.memos, f):
         yield RemapVarIterator(vmap, it, vmap[it.variable])
@@ -354,6 +384,7 @@ def refresh_whole_table(table):
     # Eg, in the case of fib, this is going to identify that fib(0) = 0 and
     # fib(1) = 1 are inconsistent with the guess that the whole table is null
 
+    #import ipdb; ipdb.set_trace()
     nR = simplify(table._full_body, Frame(), flatten_keys=True, reduce_to_single=False)
 
     if table.memos != nR:
@@ -483,11 +514,16 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
         # that is going to be the most efficient way of using the prefix trie, otherwise it is having to look through more
         # values.
         if mem_variables is None:
-            mode = (True,)*len(R.head_vars)+(False,)
+            argument_mode = (True,)*len(R.head_vars)+(False,)
         else:
-            mode = tuple(v in mem_variables for v in (*R.head_vars, R.body_res))
+            argument_mode = tuple(v in mem_variables for v in (*R.head_vars, R.body_res))
 
-        memos = MemoContainer(mode, variables, R.body, is_null_memo=is_null_memo)
+        if is_null_memo:
+            supported_mode = (False,)*len(argument_mode)
+        else:
+            supported_mode = (True,)*len(R.head_vars)+(False,)
+
+        memos = MemoContainer(argument_mode, supported_mode, variables, R.body, is_null_memo=is_null_memo)
         return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, RMemo(variables, memos))
 
     elif isinstance(R, Partition):
@@ -495,7 +531,13 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
 
         assert mem_variables is not None  # we need to know which variables are going to need to be present to perform queries (aka don't want to query on the result variables as we likely can't easily compute on them)
 
-        mode = tuple(v in mem_variables for v in variables)
+        argument_mode = tuple(v in mem_variables for v in variables)
+
+        if is_null_memo:
+            supported_mode = (False,)*len(argument_mode)
+        else:
+            supported_mode = (True,)*len(R.head_vars)+(False,)
+
         memos = MemoContainer(mode, variables, R, is_null_memo=is_null_memo)
         return RMemo(variables, memos)
     else:

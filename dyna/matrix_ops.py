@@ -72,7 +72,7 @@ class NDArrayAccess(RBaseType):
         self.array_ref = array_ref
     @property
     def vars(self):
-        return *self.args, self.ret, self.array_ref
+        return (*self.args, self.ret, self.array_ref)
     def rename_vars(self, remap):
         return NDArrayAccess(tuple(remap(v) for v in self.args), remap(self,ret), remap(self.array_ref))
 
@@ -130,7 +130,7 @@ class MakeNDArrayAccess(RBaseType):
 
     @property
     def vars(self):
-        return *self.args, self.ret, self.array_ref
+        return (*self.args, self.ret, self.array_ref)
     @property
     def children(self):
         return (self.wrapped,)

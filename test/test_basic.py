@@ -965,3 +965,23 @@ def test_quicksort_optimize():
     rr = saturate(qs, frame)
 
     assert rr == Terminal(1)
+
+
+def test_watching_terms():
+    counter = 0
+    def cb(keys):
+        nonlocal counter
+        print(keys)
+        counter += 1
+
+    w = dyna_system.watch_term_changes(('test_term_watch', 1), cb)
+
+    from dyna.syntax.normalizer import add_rules
+    dyna_system.run_agenda()
+
+    add_rules("""
+    test_term_watch(123) = 456.
+    """)
+    dyna_system.run_agenda()
+
+    assert counter == 1

@@ -10,7 +10,7 @@ from .guards import Assumption, AssumptionWrapper, AssumptionResponse
 from .agenda import Agenda
 from .optimize import run_optimizer
 from .compiler import run_compiler, EnterCompiledCode
-from .memos import rewrite_to_memoize, RMemo, AgendaMessage, process_agenda_message
+from .memos import rewrite_to_memoize, RMemo, AgendaMessage, process_agenda_message, MemoContainer
 from .safety_planner import SafetyPlanner
 
 from functools import reduce
@@ -198,7 +198,6 @@ class SystemContext:
                 if isinstance(child, RMemo):
                     # single to anything that was depending on this memo table that it no longer exists
                     child.memos.assumption.invalidate()
-
 
     def define_infered(self, required :RBaseType, added :RBaseType):
         z = (required, added)
@@ -392,12 +391,19 @@ class SystemContext:
         # would notify the callback in the case that something changes
 
         name, arity = term
-        variables = variables_named(*range(arity))
+        variables = variables_named(*range(arity))+(ret_variable,)
 
-        R = self.call_term(term)
-        memos = MemoContainer((True,)*arity+(False,), variables+(ret_variable,), R, is_null_memo=True)
+        class AL(Assumption):
+            def signal(self, msg):
+                callback(msg)
 
-        assert False  # todo, finish
+        R = self.call_term(name, arity)
+        R = partition(variables, [R])
+        argument_mode = (True,)*arity+(False,)
+        supported_mode = (False,)*len(argument_mode)
+        memos = MemoContainer(argument_mode, supported_mode, variables, R, is_null_memo=True, assumption_always_listen=(AL(),))
+
+        return memos
 
 
 # where we will define the builtins etc the base dyna base, for now there will
