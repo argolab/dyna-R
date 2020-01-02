@@ -122,8 +122,8 @@ class SystemContext:
         # maybe if we have fully overwritten something, then we are going to
         # track that?
 
-    def define_term(self, name, arity, rexpr):
-        assert (name, arity) not in self.terms_as_defined
+    def define_term(self, name, arity, rexpr, *, redefine=False):
+        assert (name, arity) not in self.terms_as_defined or redefine
         self.terms_as_defined[(name, arity)] = rexpr
         self.invalidate_term_assumption((name, arity))
 

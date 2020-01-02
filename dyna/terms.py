@@ -350,6 +350,13 @@ def optimzier_reflectstructure(self, info):
             self.num_args.setValue(info.frame, len(c.arguments))
             return reflect_buildMatch(self, c.name, len(c.arguments))
 
+    # if the result or all of the argument variables are only referneced once, then
+    # this should just delete like the build arguments also do
+    if len(info.all_constraints[self.result]) == 1 and not self.result.isBound(info.frame) and self.result not in info.exposed_variables:
+        assert info.all_constraints[self.result] is self
+        return Terminal(1)
+
+
     # we might also want to do something about the arguments list lengths in this case?
 
     return self

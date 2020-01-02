@@ -159,7 +159,12 @@ dyna_system.define_term('==', 2, binary_eq)
 binary_neq = check_op('!=', 2, lambda a,b: a != b)
 dyna_system.define_term('!=', 2, binary_neq)
 
-#dyna_system.define_term('=', 2, Unify(VariableId(0), VariableId(1)))
+dyna_system.define_term(
+    '=', 2,
+    intersect(
+        Unify(ret_variable, constant(True)),
+        Unify(VariableId(0), VariableId(1)))
+)
 
 
 class AndOperator(RBaseType):
@@ -258,6 +263,7 @@ random_r = moded_op('random', {
 })
 
 dyna_system.define_term('random', 3, random_r)
+dyna_system.define_term('random', 1, random_r(VariableId(0), constant(0.0), constant(1.0), ret=ret_variable))
 
 
 
