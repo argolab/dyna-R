@@ -24,3 +24,6 @@ append([X|Y], A, [X|B]) :- append(Y, A, B).
 
 in_list([X|_], X).
 in_list([_|Xs], X) :- in_list(Xs, X).
+
+% priority for the agenda
+'$priority'(X) := 0.

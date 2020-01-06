@@ -1,0 +1,14 @@
+fib(X) = fib(X - 1) + fib(X - 2) for X > 1.
+fib(0) = 0.
+fib(1) = 1.
+
+even([]).
+even([X,Y|Z]) :- even(Z).
+odd([X|Y]) :- even(Y).
+even_odd(X) :- even(X), odd(X).
+
+
+deleteone([X|Xs], Xs, X).
+deleteone([X|Xs], [X|Ys], Z) :- deleteone(Xs, Ys, Z).
+permute([], []).
+permute(As, [Z|Bs]) :- deleteone(As, Rs, Z), permute(Rs, Bs).

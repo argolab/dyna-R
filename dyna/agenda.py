@@ -20,6 +20,7 @@ class Agenda:
     def run(self):
         while self._agenda:
             r = self.pop()
+            #print(r)
             r()  # run the task.
 
     def __bool__(self):
@@ -37,6 +38,9 @@ class AgendaWork(Callable):
         return hash(self.func) ^ hash(self.work)
     def __eq__(self, other):
         return isinstance(other, AgendaWork) and self.func == other.func and self.work == other.work
+    def __str__(self):
+        return f'{self.func}({self.work})'
+    __repr__ = __str__
 
 
 def push_work(func, work):

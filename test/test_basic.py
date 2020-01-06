@@ -969,9 +969,10 @@ def test_quicksort_optimize():
 
 def test_watching_terms():
     counter = 0
-    def cb(keys):
+    def cb(msg):
         nonlocal counter
-        print(keys)
+        assert msg.key == (123,456)
+        print(msg)
         counter += 1
 
     w = dyna_system.watch_term_changes(('test_term_watch', 1), cb)
@@ -985,3 +986,48 @@ def test_watching_terms():
     dyna_system.run_agenda()
 
     assert counter == 1
+
+
+def test_memo_defaults():
+    from dyna.syntax.normalizer import add_rules
+
+    add_rules("""
+    fib_defaulting(X) += fib_defaulting(X - 1) + fib_defaulting(X - 2) for X > 1, X < 6.
+    fib_defaulting(0) += 0.
+    fib_defaulting(1) += 1.
+
+    fib_defaulting(X) += 1.  % make this use a default with adding a value
+    """)
+
+    def check():
+        w = dyna_system.call_term('fib_defaulting', 1)
+        frame = Frame()
+        frame[0] = 5
+
+        rr = simplify(w, frame)
+        assert rr == Terminal(1)
+        assert interpreter.ret_variable.getValue(frame) == 20
+    check()
+
+    # make this memoized
+
+    # this does not work as a null memo, as it just keeps embedding the R-expr
+    # one more level and this means that it just keeps growing without haivng
+    # any meaningful result.
+    #
+    # So in this case, it could instead identify that the size of the R-expr is
+    # continuing to grow and ask if it should just killl the memoized result.
+    #  - I suppose that the depth of a R-expr could be a good indicator of something, as well as the depth.
+    #    simply having a lot of keys in a memo table would be a large width, though that might be a fine singal in most cases
+    #
+    # In the case that there is a msg for a null memo table which contains NULL
+    # for one of the keys, it should just drop that value as null readable.  As
+    # in that case, there is something which is code and not able to partisipate
+    # in a join operation.  This might make it so that it would
+
+
+
+    # dyna_system.memoize_term(('fib_defaulting', 1), kind='null')
+    # dyna_system.run_agenda()
+
+    # check()

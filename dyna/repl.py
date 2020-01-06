@@ -558,15 +558,15 @@ class REPL:
         [cmd, args] = self.parse_cmd(text)
         cmd = getattr(self, 'do_' + cmd, self.default)
 
-        a = cmd.__annotations__
-        if len(a) == 1:
-            [(_,a)] = a.items()
-            try:
-                if a is Term:
-                    args = term(args) if args.strip() else None
-            except DynaParserException as e:
-                print('Parser error:', e)
-                return
+        # a = cmd.__annotations__
+        # if len(a) == 1:
+        #     [(_,a)] = a.items()
+        #     try:
+        #         if a is Term:
+        #             args = term(args) if args.strip() else None
+        #     except DynaParserException as e:
+        #         print('Parser error:', e)
+        #         return
 
         return cmd(args)
 
@@ -589,12 +589,12 @@ class REPL:
         "Load rules from a dyna source file."
         line = str(line)
         with open(line.strip()) as f:
-            self.add_src(f.read())
+            add_rules(f.read())
+            #self.add_src(f.read())
 
     def do_quit(self, *a):
-        import sys
         sys.exit(0)
-
+    do_exit = do_quit
 
 
 def main():

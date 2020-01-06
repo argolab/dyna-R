@@ -248,6 +248,8 @@ class MemoContainer:
             push_work(process_agenda_message, msg)
 
     def __hash__(self):
+        # I suppose that this could use the hash & eq of the R-expr along with the mode which is memoized?
+        # even if the current value is not saved, then it would still get
         return id(self)
 
     def __eq__(self, other):
