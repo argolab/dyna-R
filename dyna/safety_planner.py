@@ -239,7 +239,7 @@ class SafetyPlanner:
         while True:
             out_mode, has_delayed, basic_is_finite = self._compute_R(R, exposed_vars, in_mode, None)
             if not self._agenda:
-                break  # meaning that nothing was pushed to work on in the processe
+                break  # meaning that nothing was pushed to work on in the processes of computing
             self._process_agenda()
         return out_mode, has_delayed, basic_is_finite
 

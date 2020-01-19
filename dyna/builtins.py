@@ -117,7 +117,7 @@ abs_v = moded_op('abs', {
 }, nondet={
     (True,False): lambda a,b: (a, [a,-a]) if a > 0 else ((a, 0) if a == 0 else error) ,
 })
-dyna_system.define_term('abs', 2, abs_v)
+dyna_system.define_term('abs', 1, abs_v)
 
 
 lt = check_op('lt', 2, lambda a,b: a < b)
@@ -363,6 +363,10 @@ int_div = moded_op('int_div', {
     (True,False,True): lambda a,b,c: (a,range(a*c, (a+1)*c), c) if a >= 0 else (a,range((a-1)*c, a*c), c)
 })
 
+mod_v = moded_op('mod', {
+    (False,True,True): lambda a,b,c: (b%c,b,c)
+})
+dyna_system.define_term('mod', 2, mod_v)
 
 import numpy as np
 matrix_v = check_op('matrix', 1, lambda x: isinstance(x, np.ndarray))
@@ -530,6 +534,8 @@ dyna_system.define_term('__builtin_term_compare_<', 2, check_op('__builtin_term_
 dyna_system.define_term('$cons', 2, BuildStructure('.', ret_variable, (VariableId(0), VariableId(1))))
 dyna_system.define_term('$nil', 0, BuildStructure('nil', ret_variable, ()))
 
+
+dyna_system.define_term('$null', 0, BuildStructure('$null', ret_variable, ()))
 
 
 from .terms import Evaluate, ReflectStructure

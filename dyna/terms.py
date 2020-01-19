@@ -174,6 +174,12 @@ def simplify_buildStructure(self, frame):
     return self
 
 
+@getPartitions.define(BuildStructure)
+def getPartitions_buildStructure(self, frame, include_structure=False):
+    if include_structure:
+        yield self
+
+
 @optimizer.define(BuildStructure)
 def optimizer_buildStructure(self, info):
 
@@ -352,7 +358,9 @@ def optimzier_reflectstructure(self, info):
 
     # if the result or all of the argument variables are only referneced once, then
     # this should just delete like the build arguments also do
-    if len(info.all_constraints[self.result]) == 1 and not self.result.isBound(info.frame) and self.result not in info.exposed_variables:
+    if (len(info.all_constraints[self.result]) == 1 and
+        not self.result.isBound(info.frame) and
+        self.result not in info.exposed_variables):
         assert info.all_constraints[self.result] is self
         return Terminal(1)
 

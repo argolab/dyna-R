@@ -587,6 +587,8 @@ def loop(R, frame, callback, till_terminal=False, best_effort=False, partition=N
 
     if partition is None:
         # try 2
+        print('making aggregator loopable', R)
+        #import ipdb; ipdb.set_trace()
         R = make_aggregator_loopable(R, frame=frame)
         parts = getPartitions(R, frame)
         for p in parts:  # just choose something, and ensure that we can iterate this whole list without a problem
@@ -932,11 +934,19 @@ def getPartitions_partition(self :Partition, frame):
         for child in Rexprs:
             vm = list(vm_)
 
+            # TODO: this needs to handle looking through BuildStructure
+            #       operations atm, in the case that there is some partition
+            #       over a term like Z=g(X) where X is iterable, then it does
+            #       not know that and it ends up having to get handled by
+            #       make_aggregator_loopable.  Instead, it should be able to
+            #       make a /cross product/ iterator over the arguments of the
+            #       structured term.
+
             for it in getPartitions(child, frame):
                 if isinstance(it, Partition):  # if this is not consolidated, then we are going to want to bind a variable
                    citers.append(it)  # these are just partitions, so buffer these I suppose
                 else:
-                    # then this is going to be some variable that
+                    # then this is going to be some variable that we are looking for
                     if it.variable in vmap:
                         if vm[vmap[it.variable]] is None:  # this should potentially take more than 1 iterator rather than the first
                             vm[vmap[it.variable]] = it

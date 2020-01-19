@@ -24,12 +24,13 @@ class AggregatorSaturate(AggregatorOpBase):
             raise AggregatorSaturated(r)
         return r
 
+null_term = Term('$null', ())
 class AggregatorColonEquals(AggregatorOpBase):
     def lift(self, x): return x
     def lower(self, x):
         assert x.name == '$colon_line_tracking'
         r = x.arguments[1]
-        if r == Term('$null', ()):
+        if r == null_term:
             return None
         return r
     def combine(self, a,b):

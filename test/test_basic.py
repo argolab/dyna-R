@@ -642,6 +642,8 @@ def test_safety_planning1():
     factorial(N, F) :- F is N*Q, factorial(N-1, Q).
 
     goal_delayed :- X > 7.  % these delayed constraints can't be processed
+
+    sp_fib(X) = 0.
     """)
 
     # check what mode we could enumerate these variables.
@@ -666,6 +668,14 @@ def test_safety_planning1():
     assert out_delayed == ()
     assert has_delayed
     assert is_finite
+
+    # call_sp_fib = dyna_system.call_term('sp_fib', 1)
+    # out_fib, has_delayed, is_finite = sp(call_sp_fib,
+    #                                      variables_named(0, interpreter.ret_variable), (True, False))
+    # assert out_fib == (True, True)
+    # assert has_delayed
+    # assert is_finite
+
 
     # call_deleteone = dyna_system.call_term('deleteone', 3)
     # out_delayed, has_delayed = sp(call_deleteone, variables_named(0,1,2), (False,False,False))
@@ -800,7 +810,7 @@ def test_compiler5():
 
 
 def test_compiler6():
-    return  # TODO: need to handle recursive methods
+    #preturn  # TODO: need to handle recursive methods
 
     # test compiling the recursive definition of fib
     rrv = variables_named('RR')[0]
@@ -826,6 +836,17 @@ def test_compiler7():
     # test reading memoized values.  For now will not allow for the memoized
     # values to return delayed R-exprs, rather this will
     pass
+
+
+def test_compiler8_structure():
+    return
+
+    from dyna.syntax.normalizer import add_rules
+
+    add_rules("""
+
+    """)
+
 
 
 def test_counting_custom_int():

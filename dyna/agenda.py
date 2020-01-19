@@ -2,9 +2,11 @@ from typing import *
 from collections import deque
 
 class Agenda:
+
     def __init__(self):
         self._agenda = deque()
         self._contains = set()
+
     def push(self, task: Callable):
         # first check if the work is already added to the agenda.  In which case this should not be processed
         if task not in self._contains:

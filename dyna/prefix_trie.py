@@ -71,8 +71,7 @@ class PrefixTrie:
         a = self._root
         for i in key[:-1]:
             a = setdefault(a, i, {})
-        return a.setdefault(key[-1], default)
-
+        return setdefault(a, key[-1], default)
 
     def filter_extend(self, key):
         # this extends a given filter that might already be applied to the prefix trie
@@ -137,11 +136,11 @@ class PrefixTrie:
                 for k, v in a.items():
                     yield from r(prefix+(k,), f, v)
             else:
-                if None in a:
-                    yield from r(prefix+(None,), f, a[None])
                 w = a.get(z)
                 if w is not None:
                     yield from r(prefix+(z,), f, w)
+                if None in a:
+                    yield from r(prefix+(None,), f, a[None])
         yield from r((), self._filter, self._root)
 
     def items(self):
