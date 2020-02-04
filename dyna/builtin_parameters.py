@@ -6,6 +6,7 @@
 from .interpreter import *
 from .builtins import moded_op
 from .terms import BuildStructure
+from .memos import MemoContainer, RMemo
 
 PARAMETERS_NAME_FORMAT = '$__parameters_values_{name}/{arity}'
 PARAMETERS_NEXT_FORMAT = '$__parameters_next_{name}/{arity}'
@@ -45,23 +46,33 @@ class SteppableParamters(object):
     def ensure_collection(self, name, arity):
         if (name, arity) not in self.collections:
             self.collections[(name, arity)] = None
+            args = [VariableId(i) for i in range(arity)]
+            memo_args = args + [ret_variable]
+
+            dest_memos = MemoContainer((True,)*arity+(False,), (False,)*(arity+1), memo_args,
+                                       Partition(tuple(memo_args), PrefixTrie(arity+1)),
+                                       is_null_memo=True, dyna_system=self.dyna_system)
 
             # this needs to define a new term which will be updated with the values later
             # the later invalidated value will be with a memoization container which
-            self.dyna_system.define_term(PARAMETERS_NAME_FORMAT.format(name=name,arity=arity), arity, Terminal(0))
+            self.dyna_system.define_term(PARAMETERS_NAME_FORMAT.format(name=name,arity=arity), arity, RMemo(memo_args, dest_memos))
 
             # define direct access to $__parameters_next so that we directly access this value
-            args = [VariableId(i) for i in range(arity)]
-            key_var = VariableId()
 
+            key_var = VariableId()
             next_parameters = self.dyna_system.call_term('$__parameters_next', 3)
             next_parameters = next_parameters(constant(name), constant(arity), key_var, ret=ret_variable)
-
             r = intersect(next_parameters, BuildStructure(name, key_var, args))
             self.dyna_system.define_term(PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity, r)
-
             self.dyna_system.optimize_term((PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity))
+            # make this memoized, so that we can just copy the memo table later
+            #self.dyna_system.memoize_term((PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity), kind='null')
 
+            source_memos = MemoContainer((True,)*arity+(False,), (False,)*(arity+1), memo_args,
+                                         self.dyna_system.call_term(PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity),
+                                         is_null_memo=True, dyna_system=self.dyna_system)
+
+            self.collections[(name,arity)] = (source_memos, dest_memos)
 
     def get_collection(self, name, arity):
         assert False

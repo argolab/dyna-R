@@ -1125,6 +1125,11 @@ def simplify_aggregator(self, frame):
             loop(body, frame, loop_cb)
         except AggregatorSaturated as s:
             agg_result = s.value
+        except DynaSolverUnLoopable as ex:
+            if frame.memo_reads:
+                raise
+            # can not run this, probably happening from the optimizer where we are not reading from the memo tables
+            return Aggregator(self.result, self.head_vars, self.body_res, self.aggregator, body)
 
         if agg_result is None:
             return terminal(0)  # nothing from the aggregator
