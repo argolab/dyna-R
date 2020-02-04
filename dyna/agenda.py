@@ -6,6 +6,7 @@ class Agenda:
     def __init__(self):
         self._agenda = deque()
         self._contains = set()
+        self._agenda_empty_notfies = []  # list of Callable
 
     def push(self, task: Callable):
         # first check if the work is already added to the agenda.  In which case this should not be processed
@@ -24,6 +25,9 @@ class Agenda:
             r = self.pop()
             #print(r)
             r()  # run the task.
+        # when the agenda is drained, then we want to notify these other systems
+        for n in self._agenda_empty_notfies:
+            n()
 
     def __bool__(self):
         return bool(self._agenda)
@@ -45,9 +49,11 @@ class AgendaWork(Callable):
     __repr__ = __str__
 
 
-def push_work(func, work):
+def push_work(func, work, dyna_system=None):
     # I suppose that there should be some "global" accessable function which can
     # do the agenda pushes, which is either going to be pushing to some local
     # task context or directly to the system's agenda?
-    from .context import dyna_system
+    #import ipdb; ipdb.set_trace()
+    if dyna_system is None:
+        from . import dyna_system
     dyna_system.agenda.push(AgendaWork(func, work))

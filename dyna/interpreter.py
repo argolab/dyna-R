@@ -486,12 +486,11 @@ class RefinedVisitor(Visitor):
     def lookup(self, R):
         # don't make this virtual in C++....
         typ = type(R)
-        if self._refined_methods:
-            z = self._refined_methods.get(typ)
-            if z is not None:
-                rf = z.get(R.weak_equiv()[0])
-                if rf is not None:
-                    return rf
+        z = self._refined_methods.get(typ)
+        if z is not None:
+            rf = z.get(R.weak_equiv()[0])
+            if rf is not None:
+                return rf
         return self._methods.get(typ, self._default)
 
 

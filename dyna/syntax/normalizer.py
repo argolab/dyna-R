@@ -7,7 +7,7 @@ from dyna.syntax.syntax import term, run_parser
 from dyna.syntax.util import colors, fib_check
 
 from dyna.interpreter import VariableId, constant, ConstantVariable, intersect, InvalidValue
-from dyna.context import dyna_system
+#from dyna.context import dyna_system
 
 from dyna import Frame, Terminal, Aggregator, Unify, interpreter, \
     Partition, loop, saturate, AggregatorOpImpl, \
@@ -18,7 +18,7 @@ from dyna.terms import CallTerm
 DEBUG = False
 
 
-def normalize(x):
+def normalize(x, dyna_system):
     """
     Normalize `x` into a form where all intermediate queries have a value slot.
     """
@@ -110,14 +110,19 @@ from dyna.aggregators import AGGREGATORS as AGGR
 colon_line_tracking = 0
 
 
-def add_rule(x):
+def add_rule(x, dyna_system=None):
+    if dyna_system is None:
+        # use a global references if not defined
+        from dyna import dyna_system as _dyna_system
+        dyna_system = _dyna_system
+
     if DEBUG: print()
     if DEBUG: print(colors.green % 'parsed:', x)
 
     # The "direct" translation of Dyna into R-exprs will create named calls
     # for each distinct functor/arity
 
-    r = normalize(x)
+    r = normalize(x, dyna_system)
 
     # patch-in my return variable with the expected return variable
     head = None
@@ -181,16 +186,21 @@ def add_rule(x):
     dyna_system.add_to_term(head.name, arity, rule)
 
 
-def add_rules(rules):
+def add_rules(rules, system=None):
     for x in run_parser(rules):
-        add_rule(x)
+        add_rule(x, system)
 
 
-def user_query_to_rexpr(x):
+def user_query_to_rexpr(x, dyna_system=None):
     "Map a user's textual query to an R-expression."
+    if dyna_system is None:
+        # use a global references if not defined
+        from dyna import dyna_system as _dyna_system
+        dyna_system = _dyna_system
+
     q = run_parser(f'{x} ?')
     if DEBUG: print(colors.green % 'parsed:', q)
-    q = normalize(q)
+    q = normalize(q, dyna_system)
     if DEBUG: print(colors.green % 'normed:', q)
     q = intersect(*q)
     if DEBUG: print(colors.green % 'rexped:', q)

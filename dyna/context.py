@@ -47,10 +47,18 @@ class SystemContext:
         self.infered_constraints = []  # the constraints with generic versions that can be quickly matched to identify when something new can be infered
         self.infered_constraints_index = {}
 
-        # where we fallback for other defined expressions
-        self.parent = None
+        self.parent = parent
 
         self.safety_planner = SafetyPlanner(lambda term: self.lookup_term(term, ignore=('memos', 'compile')))
+
+        if parent is None:
+            # then we load the builtin operators
+            from dyna.builtins import define_builtins
+            define_builtins(self)
+            # where we fallback for other defined expressions
+        else:
+            assert False
+
 
     # @property
     # def safety_planner(self):
@@ -186,7 +194,7 @@ class SystemContext:
             # this really needs to call, but avoid hitting the memo wrapper that we
             # are going to add.  As in the case that the assumption is blown then we
             # are going to want to get a new version of the code.
-            Rm = rewrite_to_memoize(R, mem_variables=mem_variables, is_null_memo=(kind == 'null'))
+            Rm = rewrite_to_memoize(R, mem_variables=mem_variables, is_null_memo=(kind == 'null'), dyna_system=self)
             self.terms_as_memoized[name] = Rm
         else:
             self.terms_as_memoized.pop(name)
@@ -254,7 +262,8 @@ class SystemContext:
         else:
             assert not isinstance(name, (MergedExpression,CompiledExpression))  # this should get handled at some point along the chain. So it should not get to this undefiend point
             r = Terminal(0)  # this should probably be an error or something so that we can identify that this method doesn't exit
-            print('[warn] failed lookup', name)
+            if 'not_found' not in ignore:
+                print('[warn] failed lookup', name)
 
         if 'assumption' not in ignore:
             # this assumption tracks if the code changes at all and the result
@@ -401,16 +410,20 @@ class SystemContext:
         R = partition(variables, [R])
         argument_mode = (True,)*arity+(False,)
         supported_mode = (False,)*len(argument_mode)
-        memos = MemoContainer(argument_mode, supported_mode, variables, R, is_null_memo=True, assumption_always_listen=(AL(),))
+        memos = MemoContainer(argument_mode, supported_mode, variables, R, is_null_memo=True, assumption_always_listen=(AL(),), dyna_system=self)
 
         return memos
+
+    def add_rules(self, string):
+        from dyna.syntax.normalizer import add_rules
+        add_rules(string, self)
 
 
 # where we will define the builtins etc the base dyna base, for now there will
 # just be a single one of these that is global however we should not use the
 # global reference whenever possible, as will want to turn this into the
 # dynabase references
-dyna_system = SystemContext()
+#dyna_system = SystemContext()
 
 
 

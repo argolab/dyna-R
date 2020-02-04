@@ -31,3 +31,13 @@ class DynaSolverGussed(DynaSolverError):
     def __init__(self):
         super().__init__()
         pass
+
+
+
+class DivergedValue(object):
+    """Represent an infinite aggregation where the result would diverge or be
+    illdefined?  Multiplication by zero could return zero, otherwise this should
+    just return itself.  Basically like a version of inf?
+    """
+
+    pass

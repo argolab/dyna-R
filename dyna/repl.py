@@ -28,7 +28,7 @@ from dyna.syntax.pygments_lexer import DynaLexer
 from dyna.syntax.syntax import DynaParserException, Cmd, term, run_parser
 from dyna.syntax.normalizer import add_rules, user_query
 
-from dyna.context import dyna_system
+from dyna import dyna_system
 from dyna import DynaSolverError
 
 from dyna.syntax.util import colors
@@ -604,6 +604,7 @@ def main():
     sys.setrecursionlimit(20_000)
 
     repl = REPL(dyna_system)
+    dyna_system.run_agenda()  # stuff pushed from the initial load
     repl.cmdloop()
 
 if __name__ == '__main__':

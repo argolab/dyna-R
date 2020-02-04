@@ -1,5 +1,21 @@
 from dyna import *
 
+
+
+# This is a shortcut for writing code quickly where we are going to lookup a method
+# so we can write something like `M.add(1,2,3)`
+class M(object):
+    # TODO?: maybe shouldn't have this return the resulting variable, it feels
+    # that from unit tests that it is easier to specify the return variable.
+    def __getattribute__(self, n):
+        def f(*args):
+            ret = interpreter.VariableId(('Ret', object()))
+            r = dyna_system.lookup_term((n, len(args)))
+            return r(*args, ret=ret), ret
+        return f
+M = M()
+
+
 def test_most_basic():
     # X+Y
     rexpr, ret = M.add(1,2)
@@ -138,7 +154,7 @@ def test_basic_term():
 
 
 def test_basic_method_call():
-    add_call = context.dyna_system.call_term('add', 2)
+    add_call = dyna_system.call_term('add', 2)
 
     frame = Frame()
     frame[0] = 1
@@ -150,7 +166,7 @@ def test_basic_method_call():
 
 
 def test_list_length():
-    list_len = context.dyna_system.call_term('list_length', 2)
+    list_len = dyna_system.call_term('list_length', 2)
 
     lst = Term.fromlist([1,2,3,4])
 
@@ -164,7 +180,7 @@ def test_list_length():
 
 
 from dyna.interpreter import VariableId
-from dyna.context import dyna_system
+#from dyna import dyna_system
 
 # deleteone([Z|Zs], Zs, Z).
 # deleteone([X|Xs], [X|Ys], Z) :- deleteone(Xs, Ys, Z).

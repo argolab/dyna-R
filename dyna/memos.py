@@ -15,7 +15,7 @@ class MemoContainer:
 
     def __init__(self, argument_mode: Tuple[bool], supported_mode : Tuple[bool],
                  variables: Tuple[Variable], body: RBaseType, is_null_memo=False,
-                 assumption_always_listen=None):
+                 assumption_always_listen=None, dyna_system=None):
         # parameterization of the memo table that _should not change_
         self.argument_mode = argument_mode  # these are the variables which are passed as arguments to the computation
         self.supported_mode = supported_mode  # which variables must be bound first before we can query this
@@ -24,6 +24,8 @@ class MemoContainer:
         self.body = body
         self.is_null_memo = is_null_memo
         self.assumption_always_listen = assumption_always_listen or ()
+        self.dyna_system = dyna_system  # this should also be referenced by the R-expr
+
         # if this is null, then when an update comes in, we have to recompute rather than being able to just delete
         # this is a property of the table, rather than where we are choosing to use it
         # TODO: the UnkMemo and the NullMemo should probably just be merged and then this should be the trigger between the two
@@ -57,7 +59,7 @@ class MemoContainer:
         if self.is_null_memo:
             # then we need to init the table as this is a null guess for all of
             # the entries, which means that we are likely inconsistent with the guess
-            push_work(refresh_whole_table, self)
+            push_work(refresh_whole_table, self, dyna_system=self.dyna_system)
 
             assert self.supported_mode == (False,)*len(self.supported_mode)
             #assert self.argument_mode == (True,)*(len(self.argument_mode)-1) + (False,)
@@ -87,7 +89,7 @@ class MemoContainer:
 
             # push a recompute operation for this entry given that we have just guessed
             msg = AgendaMessage(table=self, key=values, is_null_memo=True)
-            push_work(process_agenda_message, msg)
+            push_work(process_agenda_message, msg, dyna_system=self.dyna_system)
 
             # return that the value is zero
             return terminal(0)
@@ -179,7 +181,7 @@ class MemoContainer:
         # if null, with a new empty table, we need to recompute all of the
         # initial values
         if self.is_null_memo:
-            push_work(refresh_whole_table, self)
+            push_work(refresh_whole_table, self, dyna_system=self.dyna_system)
 
 
     def signal(self, msg):
@@ -245,7 +247,7 @@ class MemoContainer:
 
         for k in refresh_keys:
             msg = AgendaMessage(table=self, key=k, is_null_memo=(msg.is_null_memo and msg.table is self))
-            push_work(process_agenda_message, msg)
+            push_work(process_agenda_message, msg, dyna_system=self.dyna_system)
 
     def __hash__(self):
         # I suppose that this could use the hash & eq of the R-expr along with the mode which is memoized?
@@ -503,7 +505,7 @@ def process_agenda_message(msg: AgendaMessage):
         t.assumption.signal(msg)
 
 
-def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
+def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False, dyna_system=None):
     if isinstance(R, Aggregator):
         # then we are going mark that we require the keys for now I suppose?
         # that should let us memoize anything that is fully determined, but if
@@ -525,7 +527,7 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
         else:
             supported_mode = (True,)*len(R.head_vars)+(False,)
 
-        memos = MemoContainer(argument_mode, supported_mode, variables, R.body, is_null_memo=is_null_memo)
+        memos = MemoContainer(argument_mode, supported_mode, variables, R.body, is_null_memo=is_null_memo, dyna_system=dyna_system)
         return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, RMemo(variables, memos))
 
     elif isinstance(R, Partition):
@@ -540,11 +542,11 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False):
         else:
             supported_mode = (True,)*len(R.head_vars)+(False,)
 
-        memos = MemoContainer(mode, variables, R, is_null_memo=is_null_memo)
+        memos = MemoContainer(mode, variables, R, is_null_memo=is_null_memo, dyna_system=dyna_system)
         return RMemo(variables, memos)
     else:
         if len(R.children) == 1:
-            return R.rewrite(lambda x: rewrite_to_memoize(x, mem_variables=mem_variables, is_null_memo=is_null_memo))
+            return R.rewrite(lambda x: rewrite_to_memoize(x, mem_variables=mem_variables, is_null_memo=is_null_memo, dyna_system=dyna_system))
 
         raise RuntimeError("""
         Did not find an aggregator or partition to rewrite to memoize.

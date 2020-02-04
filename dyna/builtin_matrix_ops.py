@@ -4,7 +4,7 @@ import numpy as np
 
 from .interpreter import *
 from .builtins import moded_op, check_op, mul as builtin_multiply
-from .context import dyna_system
+#from .context import dyna_system
 from .optimize import optimizer
 from .aggregators import AGGREGATORS
 
@@ -219,6 +219,13 @@ def NDArrayAccess_optimize(self, info):
 
 
     return self
+
+
+def define_matrix_operations(dyna_system):
+
+    # this needs to define terms which represent the matrix operations
+    assert False
+
 
 
 # this needs to be able to scan all of the defined terms and identify is

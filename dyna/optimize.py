@@ -280,7 +280,7 @@ def optimizer_aliased_vars(R, info):
 
     return R
 
-class OptimizeVisitor(Visitor):
+class OptimizeVisitor(RefinedVisitor):
     def __call__(self, R, info, *args, **kwargs):
         rr = super().__call__(R, info, *args, **kwargs)
         info.replace(R, rr)

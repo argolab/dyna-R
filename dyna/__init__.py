@@ -6,6 +6,8 @@ from . import context
 from . import guards
 from . import aggregators
 
+# dyna_system = context.dyna_system # this will get moved into this file as the default
+
 from .interpreter import (
     RBaseType, FinalState, Terminal, Variable, variables_named, constant, Frame,
     simplify, getPartitions, saturate, loop,
@@ -23,23 +25,10 @@ from .optimize import run_optimizer
 from . import compiler
 
 # extra optimizations
-from . import matrix_ops
+from . import builtin_matrix_ops
 
 
-# This is a shortcut for writing code quickly where we are going to lookup a method
-# so we can write something like `M.add(1,2,3)`
-class M(object):
-    # TODO?: maybe shouldn't have this return the resulting variable, it feels
-    # that from unit tests that it is easier to specify the return variable.
-    def __getattribute__(self, n):
-        def f(*args):
-            ret = interpreter.VariableId(('Ret', object()))
-            r = context.dyna_system.lookup_term((n, len(args)))
-            return r(*args, ret=ret), ret
-        return f
-M = M()
-
-
+dyna_system = context.SystemContext()
 
 
 # load the prelude file

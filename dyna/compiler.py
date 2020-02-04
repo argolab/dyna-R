@@ -174,6 +174,7 @@ class CompilerSingleIteratorInfo(CompilerIteratorInfo):
         manager._operation_add(('iterator_load', (self.iterator, iter_slot)))
         return iter_slot
 
+
 class CompilerUnionIteratorInfo(CompilerIteratorInfo):
 
     def __init__(self, variable, iterators :List[CompilerIteratorInfo]):
@@ -514,13 +515,15 @@ class CompiledInstance:
     Wrap a compile task so that everything has access to the right operators
     """
 
-    def __init__(self, R, incoming_mode):
+    def __init__(self, R, incoming_mode, collected_assumptions):
         self.operations = []  # List[Tuple[RBaseType,EvalFunction (if any)]]
         self.R = R
         self.origional_R = R
 
         self.returned_R = Terminal(1)
-        self.returned_R_assumption = Assumption()
+        self.returned_R_assumption = Assumption()  # if the return type is not Terminal(1) then the assumption fails
+
+        self.collected_assumptions = collected_assumptions
 
         # TODO: the variables should just be those that we actually set at some
         # point in time.  It is possible that there are extra variables that are
@@ -531,7 +534,8 @@ class CompiledInstance:
         #self.exposed_vars = exposed_vars
 
         self.incoming_mode = incoming_mode
-        self.outgoing_mode = None
+        self.outgoing_mode = (True,)*len(incoming_mode)
+
         self.outgoing_additional_variables = [] # list of variables that will be added to the frame, these are appended to the list of the result
         for i, imode in enumerate(incoming_mode):
             #v = VariableId(i)  # the names of the exposed variables should be normalized to just 0,...,N
@@ -930,6 +934,35 @@ class CompiledInstance:
         # the mode of the variables that we are going to currently call these expressions
         mode = tuple(R.var_map[v].isBound(self) for v in R.compiled_ref.variable_order)
 
+        # check what mode this is going to return in.  this could use the safety
+        # planner to identify the mode given the incoming mode to the arguments.
+        # We could also just lookup the mode and if we don't find it assume that
+        # the mode is going to come back with everything ground?  Then we just
+        # build in that assumption into the compiled bit of code
+
+        comp_expr = R.compiled_ref.compiled_expressions.get(mode)
+        if comp_expr is None:
+            # then this can't run?  Or this needs to push to the agenda that this can run
+            # return the call so that this will defer calling this until later
+            return R
+
+        # we might also want to defer calling this in the case that there is something better that we can call
+        # this is something that needs to be controlled somehow
+
+        return_mode = comp_expr.outgoing_mode
+        for var, in_mode, out_mode in zip(R.compiled_ref.variable_order, mode, return_mode):
+            if out_mode:
+                self.bound_variables[var._compiler_name] = True
+
+        # this also needs to handle if there are new variables which are mapped into the expression
+
+        assert isinstance(comp_expr.returned_R, Terminal)  # otherwise this needs to get handled
+
+        self.collected_assumptions.add(comp_expr.returned_R_assumption)
+
+        #return comp_expr.returned_R
+
+        import ipdb; ipdb.set_trace()
         raise NotImplementedError()
 
     def compile_saturate(self, R):
@@ -1161,7 +1194,7 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
     # future I would suspect that the thing that does the generation of code and
     # the that compiles would be two different classes with the later generating
     # the first.
-    manager = CompiledInstance(R, incoming_mode)
+    manager = CompiledInstance(R, incoming_mode, assumptions)
     try:
         # this needs to handle cases where this is reaching the end of the
         ce.compiled_expressions[incoming_mode] = manager
@@ -1170,6 +1203,8 @@ def run_compiler(dyna_system, ce, R, incoming_mode):
         # if this fails, then it should delete compiled expression, otherwise this is not complete
         del ce.compiled_expressions[incoming_mode]
         raise
+
+    #
 
     # there needs to be some handling in the case that we are not successful
 
