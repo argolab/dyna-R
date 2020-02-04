@@ -562,11 +562,15 @@ def define_builtins(dyna_system):
     ##
     ## somewhat of a hack as this will allow for files which are not already defined to
 
+    loaded_files = {0}  # the zero value so that something will be defined
+
     def watch_load_callback(msg):
+        nonlocal loaded_files
         file_name, value = msg.key
-        if file_name == 0:
-            return
         assert value == True  # otherwise someone defined this strangely
+        if file_name in loaded_files:
+            return
+        loaded_files.add(file_name)
         if file_name == 'parameters':
             from .builtin_parameters import define_parameter_operations
             define_parameter_operations(dyna_system)

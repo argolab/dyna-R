@@ -3,26 +3,64 @@
 # stepping
 
 
-
-from .context import dyna_system
+from .interpreter import *
 from .builtins import moded_op
-from .interpreter import simplify, Frame
+from .terms import BuildStructure
 
+PARAMETERS_NAME_FORMAT = '$__parameters_values_{name}/{arity}'
+PARAMETERS_NEXT_FORMAT = '$__parameters_next_{name}/{arity}'
 
 class SteppableParamters(object):
 
-    def __init__(self):
+    def __init__(self, dyna_system):
         self.collections = {}  # map of (Name, arity) -> memo tables which contain what expressions should be returned
+        self.dyna_system = dyna_system
+        self.stepping_enabled = True
 
-        self.parameters = None  # this should be some RMemo table representation
-        self.updates = None
+    def watch_do_step_callback(self, msg):
+        self.stepping_enabled ,  = msg.key
 
     def step(self):
         # this should take any values which are present in the updates and then
         # apply them to the parameters.  In the case that there are new values which are present
 
         # this needs to be moded as a partition, otherwise this is not going to work well?
-        nP = simplify(self.parameters, Frame(), flatten_keys=True)
+        #nP = simplify(self.parameters, Frame(), flatten_keys=True)
+
+        if not self.stepping_enabled:
+            # do nothing in this case
+            return
+
+        for (name, arity), memos in self.collections.items():
+            # get a referneces to the current next parameters
+            ref = self.dyna_system.call_term(PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity),arity)
+
+
+
+
+        import ipdb; ipdb.set_trace()
+
+        raise NotImplementedError()
+
+    def ensure_collection(self, name, arity):
+        if (name, arity) not in self.collections:
+            self.collections[(name, arity)] = None
+
+            # this needs to define a new term which will be updated with the values later
+            # the later invalidated value will be with a memoization container which
+            self.dyna_system.define_term(PARAMETERS_NAME_FORMAT.format(name=name,arity=arity), arity, Terminal(0))
+
+            # define direct access to $__parameters_next so that we directly access this value
+            args = [VariableId(i) for i in range(arity)]
+            key_var = VariableId()
+
+            next_parameters = self.dyna_system.call_term('$__parameters_next', 3)
+            next_parameters = next_parameters(constant(name), constant(arity), key_var, ret=ret_variable)
+
+            r = intersect(next_parameters, BuildStructure(name, key_var, args))
+            self.dyna_system.define_term(PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity, r)
+
+            self.dyna_system.optimize_term((PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity))
 
 
     def get_collection(self, name, arity):
@@ -53,28 +91,50 @@ def simplify_parameters_acess(self, frame):
 
         # if there is nothing in the collection, then it should identify that it wants to
 
-        assert False
+        name = self.name_var.getValue(frame)
+        arity = self.arity_var.getValue(frame)
+
+        if not isinstance(name, str) or not isinstance(arity, int):
+            return Terminal(0)
+
+        self.parameter_collection.ensure_collection(name, arity)
+
+        arg_vars = [VariableId() for _ in range(arity)]
+        match_structure = BuildStructure(name, self.arg_var, arg_vars)
+
+        call = self.parameter_collection.dyna_system.call_term(PARAMETERS_NAME_FORMAT.format(name=name, arity=arity), arity)
+        call = call(*arg_vars, ret=self.result_var)
+
+        return intersect(match_structure, call)
+
     return self  # can not load the parameters yet
-
-
-
-# def get_parameters(name, key, default):
-#     # this needs to provide some lookup operation where it can return a R-expr
-#     # which performs access operations.  Once the updates have been applied,
-#     # this should push new agenda entries.
-#     pass
-
 
 
 def define_parameter_operations(dyna_system):
 
-    parameter_collection = SteppableParamters()
+    parameter_collection = SteppableParamters(dyna_system)
 
     dyna_system.define_term('$__parameters_current', 3,
                             SteppableParametersAccess(parameter_collection,
-                                                      VariableId(0), VariableId(1), VariableId(2), interpreter.ret_variable))
+                                                      VariableId(0), VariableId(1), VariableId(2), ret_variable))
 
     dyna_system.agenda._agenda_empty_notfies.append(parameter_collection.step)
+
+    dyna_system.add_rules("""
+    $parameters(X) = $reflect(X, Name, Arity, _), '$__parameters_current'(Name, Arity, X).
+    '$__parameters_next'(Name, Arity, X) = $reflect(X, Name, Arity, _), $parameters_next(X).
+
+    % not using := here as the order in which this rule loads in comparision to
+    % the other code in the program is not 100% clear at times....
+    $parameters_step &= true.
+    """)
+
+    # push the optimizer to run on this expression so that it will remove the reflect from
+    # the expression which makes it easier to processes
+    dyna_system.optimize_term(('$__parameters_next', 3))
+
+    dyna_system.watch_term_changes(('$parameters_step', 0), parameter_collection.watch_do_step_callback)
+
 
 # the update should be applied only in the case that the agenda has complete drained.
 # which can then fire off more updates downstream to other operations

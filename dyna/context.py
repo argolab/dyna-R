@@ -59,6 +59,8 @@ class SystemContext:
         else:
             assert False
 
+        self.run_agenda()
+
 
     # @property
     # def safety_planner(self):
@@ -288,10 +290,6 @@ class SystemContext:
         # want to optimize all of the rules in the program, which will then
         # require that expressions are handled if they are later invalidated?
 
-        def push(t):
-            self.agenda.push(lambda: self._optimize_term(t))
-
-
         for term, rexpr in self.terms_as_defined.items():
             # this should call optimize on everything?
 
@@ -299,7 +297,7 @@ class SystemContext:
             if b != 3:
                 # then we want to try and improve this expression as there is
                 # something that we can try and optimize.
-                push(term)
+                self.optimize_term(term)
 
     def create_merged_expression(self, expr :RBaseType, exposed_vars: Set[Variable]):
         # if there are some terms that are combiend, then we want to be made
@@ -327,6 +325,9 @@ class SystemContext:
             r = CompiledExpression(term_ref, exposed_vars)
             self.terms_as_compiled[term_ref] = r
         return r
+
+    def optimize_term(self, term):
+        self.agenda.push(lambda: self._optimize_term(term))
 
     def _optimize_term(self, term):
         popt = self.terms_as_optimized.get(term)  # get the current optimized version of the code
