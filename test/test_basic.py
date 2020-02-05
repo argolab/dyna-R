@@ -1,5 +1,6 @@
 from dyna import *
 
+import pytest
 
 
 # This is a shortcut for writing code quickly where we are going to lookup a method
@@ -825,8 +826,9 @@ def test_compiler5():
     assert interpreter.ret_variable.getValue(frame) == sum(range(3,8)) + sum(range(6,15))
 
 
+@pytest.mark.xfail
 def test_compiler6():
-    #preturn  # TODO: need to handle recursive methods
+    #return  # TODO: need to handle recursive methods
 
     # test compiling the recursive definition of fib
     rrv = variables_named('RR')[0]
@@ -864,9 +866,8 @@ def test_compiler8_structure():
     """)
 
 
-
+@pytest.mark.xfail
 def test_counting_custom_int():
-    return
     # this test doesn't work as it can't get an iterator over the X variable at
     # the start.  The backchaining that is required would construct an infinite
     # iterator, and the current backchaining rules are preventing this from
@@ -890,9 +891,6 @@ def test_counting_custom_int():
     positive_int(X+1) :- X >= 1, positive_int(X).  % parser bug, the last expression is not unified with True when with :-, and thus the X>=1 can't be the last expression
 
     count_positive_int(Y) += positive_int(X), X < Y, 1.
-
-
-
     """)
 
     count_call = dyna_system.call_term('count_positive_int', 1)
