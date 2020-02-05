@@ -17,7 +17,7 @@ def test_basic_sgd():
 
     alpha = 0.05.
 
-    $parameters_next(&x) := x + gf * alpha.
+    $parameters_next(&x) := x - gf * alpha.
     """)
 
     # when running the agenda, this should identify that
@@ -28,4 +28,4 @@ def test_basic_sgd():
     r = simplify(dyna.call_term('x', 0), frame)
     assert r == Terminal(1)
 
-    assert interpreter.ret_variable.getValue(frame) == 1.0
+    assert abs(interpreter.ret_variable.getValue(frame) - 1.0) < .001

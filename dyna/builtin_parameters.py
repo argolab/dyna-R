@@ -6,7 +6,8 @@
 from .interpreter import *
 from .builtins import moded_op
 from .terms import BuildStructure
-from .memos import MemoContainer, RMemo
+from .memos import MemoContainer, RMemo, AgendaMessage
+from .prefix_trie import zip_tries
 
 PARAMETERS_NAME_FORMAT = '$__parameters_values_{name}/{arity}'
 PARAMETERS_NEXT_FORMAT = '$__parameters_next_{name}/{arity}'
@@ -32,16 +33,27 @@ class SteppableParamters(object):
             # do nothing in this case
             return
 
-        for (name, arity), memos in self.collections.items():
-            # get a referneces to the current next parameters
-            ref = self.dyna_system.call_term(PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity),arity)
+        for (name, arity), (source, dest) in self.collections.items():
+            # identify differences in the source and destination memo
+            # this is modeled after refresh_whole_table
 
+            dm = dest.memos._children
+            dassum = dest.assumption
 
+            changes = []
+            for key, a, b in zip_tries(dm, source.memos._children):
+                if a != b:
+                    changes.append((key, b))
 
+            for key, value in changes:
+                if value is None:
+                    del dm[key]
+                else:
+                    dm[key] = value
 
-        import ipdb; ipdb.set_trace()
+                mm = AgendaMessage(table=dest, key=key, is_null_memo=True)
+                dassum.signal(mm)
 
-        raise NotImplementedError()
 
     def ensure_collection(self, name, arity):
         if (name, arity) not in self.collections:
@@ -67,16 +79,12 @@ class SteppableParamters(object):
             self.dyna_system.optimize_term((PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity))
             # make this memoized, so that we can just copy the memo table later
             #self.dyna_system.memoize_term((PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity), kind='null')
+            source_R = partition(tuple(memo_args), [self.dyna_system.call_term(PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity)])
 
             source_memos = MemoContainer((True,)*arity+(False,), (False,)*(arity+1), memo_args,
-                                         self.dyna_system.call_term(PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity),
-                                         is_null_memo=True, dyna_system=self.dyna_system)
+                                         source_R, is_null_memo=True, dyna_system=self.dyna_system)
 
             self.collections[(name,arity)] = (source_memos, dest_memos)
-
-    def get_collection(self, name, arity):
-        assert False
-
 
 
 class SteppableParametersAccess(RBaseType):
@@ -96,7 +104,7 @@ class SteppableParametersAccess(RBaseType):
         return SteppableParametersAccess(self.parameter_collection, remap(self.name_var), remap(self.arity_var), remap(self.arg_var), remap(self.result_var))
 
 @simplify.define(SteppableParametersAccess)
-def simplify_parameters_acess(self, frame):
+def simplify_parameters_access(self, frame):
     if self.name_var.isBound(frame) and self.arity_var.isBound(frame):
         # then we should look up the corresponding memoized expression and
 
@@ -110,7 +118,7 @@ def simplify_parameters_acess(self, frame):
 
         self.parameter_collection.ensure_collection(name, arity)
 
-        arg_vars = [VariableId() for _ in range(arity)]
+        arg_vars = tuple(VariableId() for _ in range(arity))
         match_structure = BuildStructure(name, self.arg_var, arg_vars)
 
         call = self.parameter_collection.dyna_system.call_term(PARAMETERS_NAME_FORMAT.format(name=name, arity=arity), arity)

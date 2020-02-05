@@ -14,11 +14,13 @@ class MemoContainer:
     memos : Partition  # which is also an RBaseType
 
     def __init__(self, argument_mode: Tuple[bool], supported_mode : Tuple[bool],
-                 variables: Tuple[Variable], body: RBaseType, is_null_memo=False,
+                 variables: Tuple[Variable], body: Partition, is_null_memo=False,
                  assumption_always_listen=None, dyna_system=None):
         # parameterization of the memo table that _should not change_
         self.argument_mode = argument_mode  # these are the variables which are passed as arguments to the computation
         self.supported_mode = supported_mode  # which variables must be bound first before we can query this
+
+        assert isinstance(body, Partition)
 
         self.variables = variables
         self.body = body
@@ -526,6 +528,8 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False, dyna_system=No
             supported_mode = (False,)*len(argument_mode)
         else:
             supported_mode = (True,)*len(R.head_vars)+(False,)
+
+        assert isinstance(R.body, Partition)
 
         memos = MemoContainer(argument_mode, supported_mode, variables, R.body, is_null_memo=is_null_memo, dyna_system=dyna_system)
         return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, RMemo(variables, memos))

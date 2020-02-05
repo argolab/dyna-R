@@ -22,12 +22,14 @@ class Agenda:
 
     def run(self):
         while self._agenda:
-            r = self.pop()
-            #print(r)
-            r()  # run the task.
-        # when the agenda is drained, then we want to notify these other systems
-        for n in self._agenda_empty_notfies:
-            n()
+            while self._agenda:
+                r = self.pop()
+                #print(r)
+                r()  # run the task.
+            # when the agenda is drained, then we want to notify these other systems
+            # these might push more agenda operations, which is why we loop around again
+            for n in self._agenda_empty_notfies:
+                n()
 
     def __bool__(self):
         return bool(self._agenda)

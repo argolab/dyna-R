@@ -5,7 +5,7 @@
 
 # maybe these should be imported later or not at all?
 from .interpreter import *
-from .terms import CallTerm, Evaluate, Evaluate_reflect
+from .terms import CallTerm, Evaluate, Evaluate_reflect, ReflectStructure
 from .guards import Assumption, AssumptionWrapper, AssumptionResponse
 from .agenda import Agenda
 from .optimize import run_optimizer
@@ -366,6 +366,15 @@ class SystemContext:
                 # to use the assumption to notify anything that might want to
                 # read from this expression.
                 invalidate = True
+            elif self.term_assumption(('$reflect', 3)) in assumptions or self.term_assumption(('$reflect', 4)) in assumptions:
+                # if we have managed to remove the reflection operation from the code, then we should also invalidate
+                # as something else might benifit from this
+                for child in rr.all_children():
+                    if isinstance(child, CallTerm) and (child.term_ref == ('$reflect', 3) or child.term_ref == ('$reflect', 4)):
+                        break
+                else:
+                    invalidate = True
+
             self.terms_as_optimized[term] = rr
 
         if invalidate:

@@ -586,7 +586,7 @@ def loop(R, frame, callback, till_terminal=False, best_effort=False, partition=N
 
     if partition is None:
         # try 2
-        print('making aggregator loopable', R)
+        #print('making aggregator loopable', R)
         #import ipdb; ipdb.set_trace()
         R = make_aggregator_loopable(R, frame=frame)
         parts = getPartitions(R, frame)
