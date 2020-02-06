@@ -5,7 +5,7 @@
 
 # maybe these should be imported later or not at all?
 from .interpreter import *
-from .terms import CallTerm, Evaluate, Evaluate_reflect, ReflectStructure
+from .terms import CallTerm, Evaluate, Evaluate_reflect, ReflectStructure, BuildStructure
 from .guards import Assumption, AssumptionWrapper, AssumptionResponse
 from .agenda import Agenda
 from .optimize import run_optimizer
@@ -244,7 +244,10 @@ class SystemContext:
         # included tracking with the assumption, so if it later defined, we are
         # able to change the expression.
 
-        if name in self.terms_as_memoized and 'memo' not in ignore:
+        if isinstance(name, tuple) and len(name) == 2 and name[0] == '$':
+            # make is so that $(1,2,3,4,5) can be used as a tuple type, regardless of the size
+            return BuildStructure('$', ret_variable, tuple(VariableId(i) for i in range(name[1])))
+        elif name in self.terms_as_memoized and 'memo' not in ignore:
             # do not include additional assumptions as the assumptions are "broken" by the memo table
             # which includes its own assumptions
             return self.terms_as_memoized[name]  # should contain an RMemo type which will perform reads from a memo table

@@ -74,6 +74,7 @@ list: "[" expr3 [ "," expr3 ]* "|" expr3 "]" -> list_pattern_rest
     | "[" "]"                                -> list_pattern_empty
 
 functor: FUNCTOR1 -> functor
+       | "$" -> functor_tuple
        | FUNCTOR2 -> single_quote_functor
 
 db_literal: "{" [ rule ]* "}"
@@ -432,6 +433,9 @@ class DynaTransformer(Transformer):
     def functor(self, x):
         [token] = x
         return str(token.value)
+
+    def functor_tuple(self, _):
+        return '$'
 
     def single_quote_functor(self, x):
         [token] = x

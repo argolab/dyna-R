@@ -2,7 +2,7 @@ from collections import defaultdict
 
 from .interpreter import *
 from .builtins import *
-from .terms import CallTerm
+from .terms import CallTerm, BuildStructure
 from .guards import Assumption, get_all_assumptions
 from .aggregators import AGGREGATORS
 
@@ -40,7 +40,7 @@ modedop_gradients = {
 
 
 def get_body(R):
-    if isinstance(R, (Partition, ModedOp, FinalState, Aggregator)):
+    if isinstance(R, (Partition, ModedOp, FinalState, Aggregator, BuildStructure)):
         return R
     elif len(R.children) == 1:
         return get_body(R.children[0])
@@ -83,13 +83,28 @@ class GradientCircuit(object):
 
             body = get_body(func)
 
-            import ipdb; ipdb.set_trace()
+            #import ipdb; ipdb.set_trace()
             if body is None:
                 assert False  # this should hopefully not happen
-            elif isinstance(body, (ModedOp, FinalState)):
+            elif isinstance(body, ModedOp):
+                which_op = None
+                for mops, name in modedop_gradients.items():
+                    if mops.possibly_equal(body):
+                        which_op = name
+                        break
+                assert which_op  # otherwise there is something else we need to add for what the gradient is defined as
+
+            elif isinstance(body, (ModedOp, FinalState, BuildStructure)):
                 # this is a base case, which is not something that we are going
                 continue
             elif isinstance(body, Aggregator):
+                # determine the name of the aggregator?
+                is_selective = body.aggregator.selective
+
+
+
+                import ipdb; ipdb.set_trace()
+
                 pass
             elif isinstance(body, Partition):
                 # thisi s odd?  Not sure that we are actually going to get this
@@ -110,11 +125,30 @@ def define_gradient_operations(dyna_system):
     dyna_system.add_rules("""
     $loss += 0.  % this is the loss that the entire program is differenated against
 
-    $gradient_inputs(&'+'(A, B), InGrad) = &x(InGrad, InGrad).
+    %$gradient_inputs(&'+'(A, B), InGrad) = x(InGrad, InGrad).
     %$gradient_self(&'+'(A, B), Out,
 
     % the system will start by looking here though, rather than at the defintion of loss, do not override
     '$__true_loss' = '$loss'().
+
+
+    $gradient(X) =
+      $reflect(X, Name, Arity, Args), GName = "$__gradient_"+Name+"/"+cast_str(Arity),
+      $reflect(COp, GName, Arity, Args), $call(COp).
+
+    % gradients for builtin moded operations.  These have to support all of the
+    % same modes, so the gradient may come in from /any/ argument, and need to
+    % go out on any other argument
+
+    $gradient_add($(A+B, G),      $(A, G), $(B, G)).
+    $gradient_mul($(A*B, G),      $(A, G/B), $(B, G/A)).
+    $gradient_abs($(abs(A), G),   $(A, sign(A)*G)).  % TODO: define sign
+    $gradient_sin($(sin(X), G),   $(X, cos(G))).
+    $gradient_cos($(cos(X), G),   $(X, sin(G))).
+    $gradient_tan($(tan(X), G),   $(X, 1/(cos(G)^2))).
+
+    $gradient_exp($(exp(X), G),   $(X,exp(G))).
+    $gradient_pow($(X^Y, G),      $(X, Y*(G^(Y-1))), $(Y,  [todo()])).  % TODO: gradient for exponent
     """)
 
     dyna_system.agenda.push(gradient.generate_gradient)

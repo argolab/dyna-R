@@ -20,8 +20,6 @@ def test_basic_sgd():
     $parameters_next(&x) := x - gf * alpha.
     """)
 
-    # when running the agenda, this should identify that
-    #import ipdb; ipdb.set_trace()
     dyna.run_agenda()
 
     frame = Frame()
