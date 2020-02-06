@@ -48,22 +48,36 @@ def make_graph(R):  # not used atm
     return G
 
 
-def is_known_semidet(R):
-    from .terms import BuildStructure
+# def is_known_semidet(R):
+#     from .terms import BuildStructure
 
-    if isinstance(R, ModedOp):
-        return not R.nondet  # if there is no non-det opereators, then it is semi-det, and we can duplicate it
+#     if isinstance(R, ModedOp):
+#         return not R.nondet  # if there is no non-det opereators, then it is semi-det, and we can duplicate it
 
-    if isinstance(R, BuildStructure):
+#     if isinstance(R, BuildStructure):
+#         return True
+
+#     # if it is an aggregator, then it is semi-det, but it might involve loops
+#     # internally (expensive stuff), so we are going to avoid duplicating them
+#     # for now.  But idk how this will work out with aggregators, given that we
+#     # are removing partitions from the consideration of splitting atm
+
+#     # if isinstance(R, Aggregator):
+#     #     return True  # then this returns 0 or 1... but
+#     return False
+
+def is_expression_semidet(R):
+    from .terms import BuildStructure, ReflectStructure
+
+    if isinstance(R, Intersect):
+        return all(is_expression_semidet(c) for c in R.children)
+    elif isinstance(R, ModedOp):
+        return not R.nondet
+    elif isinstance(R, (BuildStructure, Aggregator, Unify, ReflectStructure)):
+        return True
+    elif isinstance(R, Terminal) and R.multiplicity <= 1:
         return True
 
-    # if it is an aggregator, then it is semi-det, but it might involve loops
-    # internally (expensive stuff), so we are going to avoid duplicating them
-    # for now.  But idk how this will work out with aggregators, given that we
-    # are removing partitions from the consideration of splitting atm
-
-    # if isinstance(R, Aggregator):
-    #     return True  # then this returns 0 or 1... but
     return False
 
 
@@ -335,9 +349,46 @@ def optimzier_partition(partition, info):
     # matching.  But I suppose that this tracks that there are
     res = simplify(partition, info.frame, map_function=opt_mapper)
 
-
     return res
 
+@optimizer.define(Aggregator)
+def optimize_aggregator(R, info):
+    from .aggregators import AGGREGATORS, null_term
+    from .builtins import binary_neq
+    from .terms import BuildStructure
+    body = optimizer(R.body, info)
+
+    # if there is only a single body and everything is semidet?  Though if this
+    # is :=, then we need to handle that case specially.  That will include
+    # checking if the result is null?  Though if there are not semi-det
+    # operations
+    #
+    # I suppose that we could also check if there is some semiring between
+    # different aggregators, though that would require checking that we have the builtins also defined?
+
+    if isinstance(body, Intersect) and is_expression_semidet(body):
+        # then all of the branches of the partition have been removed, so there
+        # is only a single branch left.  We can try and determine if the
+        # expression is semi-deterministic, so we can remove the operation
+        is_colon_eq = R.aggregator is AGGREGATORS[':=']
+
+        if not is_colon_eq:
+            return intersect(unify(R.result, R.body_res), body)
+        else:
+            # handle :=
+            if R.body_res.isBound(info.frame):
+                val = R.body_res.getValue(info.frame)
+                if val.arguments[1] == null_term:
+                    return Terminal(0)
+                else:
+                    R.result.setValue(info.frame, val.arguments[0])
+                    return body
+            else:
+                return intersect(BuildStructure('$colon_line_tracking', R.body_res, (VariableId(), R.result)),
+                                 binary_neq(R.result, constant(null_term), ret=constant(True)),
+                                 body)
+
+    return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, body)
 
 @optimizer.define(Unify)
 def optimizer_unify(R, info):

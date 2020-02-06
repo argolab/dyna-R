@@ -495,6 +495,26 @@ def test_optimizer4():
     assert rr == Terminal(0)
 
 
+def test_optimizer5():
+    dyna_system.add_rules("""
+    f_bar(X) = &bar(X).
+    f_dbaz(&baz(X)) = X.
+    f_barbaz(X) = f_dbaz(f_bar(X)).
+    """)
+
+    #dyna_system.optimize_term(('f_barbaz', 1))
+    dyna_system.optimize_term(('f_barbaz', 1))
+    dyna_system.run_agenda()
+
+    # this should get that the result is empty, as the intersection of the two different build structures does not work
+    # though we have to remove the aggregator to be able to figure this out
+
+    r = dyna_system.call_term('f_barbaz', 1)
+    r = simplify(r, Frame())
+
+    assert r == Terminal(0)
+
+
 def test_even_odd():
     even = Intersect(Unify(interpreter.ret_variable, constant(True)),
                            Partition(variables_named(0),

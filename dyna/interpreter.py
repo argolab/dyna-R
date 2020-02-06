@@ -441,6 +441,7 @@ class Visitor:
         self._track_source = track_source
     def define(self, typ):
         def f(method):
+            assert typ not in self._methods
             self._methods[typ] = method
             return method
         return f
