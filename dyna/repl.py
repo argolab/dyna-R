@@ -144,7 +144,7 @@ class REPL:
         Development tool. Jump into an interactive python shell.
         """
 
-        from dyna.context import dyna_system
+        from dyna import dyna_system
         from IPython import embed; embed()
 
         # from arsenal import colors

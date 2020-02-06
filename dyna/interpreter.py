@@ -1023,6 +1023,7 @@ def simplify_unify(self, frame):
 # together.  So they really shouldn't be referenced on this object.  Maybe only
 # combine and combine_multiplicity.
 class AggregatorOpBase:
+    selective = False  # if the aggregator takes some combination of all branches or just one
     def lift(self, x): raise NotImplementedError()
     def lower(self, x): raise NotImplementedError()
     def combine(self, x, y): raise NotImplementedError()
@@ -1034,7 +1035,9 @@ class AggregatorOpBase:
 
 
 class AggregatorOpImpl(AggregatorOpBase):
-    def __init__(self, op): self.op = op
+    def __init__(self, op, selective=False):
+        self.op = op
+        self.selective = selective
     def lift(self, x): return x
     def lower(self, x): return x
     def combine(self, x, y): return self.op(x,y)
@@ -1047,7 +1050,8 @@ class AggregatorSaturated(Exception):
 
 class Aggregator(RBaseType):
 
-    def __init__(self, result: Variable, head_vars: Tuple[Variable], body_res: Variable, aggregator :AggregatorOpBase, body :RBaseType):
+    def __init__(self, result: Variable, head_vars: Tuple[Variable], body_res: Variable,
+                 aggregator :AggregatorOpBase, body :RBaseType):
         super().__init__()
         self.result = result
         self.body_res = body_res

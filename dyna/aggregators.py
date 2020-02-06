@@ -2,12 +2,14 @@ from .interpreter import *
 from .terms import Term
 
 class AggregatorEqual(AggregatorOpBase):
+    selective = True
     def lift(self, x): return x
     def lower(self, x): return x
     def combine(self, a,b):
         return Term('$error', ("Aggregator `=` should not have more than two values",))
 
 class AggregatorSaturate(AggregatorOpBase):
+    selective = True
     def __init__(self, op, saturated):
         self.op = op
         self.saturated = saturated
@@ -26,6 +28,7 @@ class AggregatorSaturate(AggregatorOpBase):
 
 null_term = Term('$null', ())
 class AggregatorColonEquals(AggregatorOpBase):
+    selective = True
     def lift(self, x): return x
     def lower(self, x):
         assert x.name == '$colon_line_tracking'
@@ -56,8 +59,8 @@ AGGREGATORS = {
     '=': AggregatorEqual(),
     '+=': AggregatorOpImpl(lambda a,b: a+b),
     '*=': AggregatorOpImpl(lambda a,b: a*b),
-    'max=': AggregatorOpImpl(max),
-    'min=': AggregatorOpImpl(min),
+    'max=': AggregatorOpImpl(max, True),
+    'min=': AggregatorOpImpl(min, True),
     ':-': AggregatorSaturate(lambda a,b: a or b, True),
     '|=': AggregatorSaturate(lambda a,b: a or b, True),
     '&=': AggregatorSaturate(lambda a,b: a and b, False),

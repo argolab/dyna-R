@@ -29,3 +29,26 @@ def test_basic_sgd():
     assert r == Terminal(1)
 
     assert abs(interpreter.ret_variable.getValue(frame) - 1.0) < .001
+
+
+def test_auto_diff():
+    dyna = context.SystemContext()
+
+    dyna.add_rules("""
+    $load("gradient").
+
+    x := 0.
+
+    f = (x - 1)^2.
+
+    gx = $gradient(&x).
+
+    $loss += f.
+    """)
+    dyna.run_agenda()
+
+    frame = Frame()
+    r = simplify(dyna.call_term('gx', 0), frame)
+    assert r == Terminal(1)
+
+    assert interpreter.ret_variable.getValue(frame) == 2.0

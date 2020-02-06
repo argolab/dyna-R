@@ -95,89 +95,94 @@ unary_not = moded_op('not', {
 binary_eq = check_op('==', 2, lambda a,b: a == b)
 binary_neq = check_op('!=', 2, lambda a,b: a != b)
 
-class AndOperator(RBaseType):
-    def __init__(self, ret, a, b):
-        super().__init__()
-        self.ret = ret
-        self.a = a
-        self.b = b
-    @property
-    def vars(self):
-        return self.ret, self.a, self.b
-    def rename_vars(self, remap):
-        a = remap(self.a)
-        b = remap(self.b)
-        if a == b:
-            return unify(remap(self.ret), a)
-        return AndOperator(remap(self.ret), a,b)
+# class AndOperator(RBaseType):
+#     def __init__(self, ret, a, b):
+#         super().__init__()
+#         self.ret = ret
+#         self.a = a
+#         self.b = b
+#     @property
+#     def vars(self):
+#         return self.ret, self.a, self.b
+#     def rename_vars(self, remap):
+#         a = remap(self.a)
+#         b = remap(self.b)
+#         if a == b:
+#             return unify(remap(self.ret), a)
+#         return AndOperator(remap(self.ret), a,b)
 
-@simplify.define(AndOperator)
-def simplify_andoperator(self, frame):
-    ret = self.ret.getValue(frame)
-    a = self.a.getValue(frame)
-    b = self.b.getValue(frame)
-    if ret is True:
-        self.a.setValue(frame, True)
-        self.b.setValue(frame, True)
-        return terminal(1)
-    if a is True and b is True:
-        self.ret.setValue(frame, True)
-        return terminal(1)
-    if (a is not InvalidValue and not a) or (b is not InvalidValue and not b):
-        self.ret.setValue(frame, False)
-        return terminal(1)
-    if a is True:
-        return Unify(self.ret, self.b)
-    if b is True:
-        return Unify(self.ret, self.a)
-    return self
-
-
-class OrOperator(RBaseType):
-    def __init__(self, ret, a, b):
-        super().__init__()
-        self.ret = ret
-        self.a = a
-        self.b = b
-    @property
-    def vars(self):
-        return self.ret, self.a, self.b
-    def rename_vars(self, remap):
-        a = remap(self.a)
-        b = remap(self.b)
-        if a == b:
-            return unify(remap(self.ret), a)
-        return OrOperator(remap(self.ret), a,b)
-
-@simplify.define(OrOperator)
-def simplify_oroperator(self, frame):
-    ret = self.ret.getValue(frame)
-    a = self.a.getValue(frame)
-    b = self.b.getValue(frame)
-    if ret is False:
-        self.a.setValue(frame, False)
-        self.b.setValue(frame, False)
-        return terminal(1)
-    if a is False and b is False:
-        self.ret.setValue(frame, False)
-        return terminal(1)
-    if (a is not InvalidValue and a) or (b is not InvalidValue and b):
-        self.ret.setValue(frame, True)
-        return terminal(1)
-    if a is False:
-        return Unify(self.ret, self.b)
-    if b is False:
-        return Unify(self.ret, self.a)
-    return self
+# @simplify.define(AndOperator)
+# def simplify_andoperator(self, frame):
+#     ret = self.ret.getValue(frame)
+#     a = self.a.getValue(frame)
+#     b = self.b.getValue(frame)
+#     if ret is True:
+#         self.a.setValue(frame, True)
+#         self.b.setValue(frame, True)
+#         return terminal(1)
+#     if a is True and b is True:
+#         self.ret.setValue(frame, True)
+#         return terminal(1)
+#     if (a is not InvalidValue and not a) or (b is not InvalidValue and not b):
+#         self.ret.setValue(frame, False)
+#         return terminal(1)
+#     if a is True:
+#         return Unify(self.ret, self.b)
+#     if b is True:
+#         return Unify(self.ret, self.a)
+#     return self
 
 
-# these would not support conditional rewriting based of having a single argument bound.  But these
-# we can compile whereas other
+# class OrOperator(RBaseType):
+#     def __init__(self, ret, a, b):
+#         super().__init__()
+#         self.ret = ret
+#         self.a = a
+#         self.b = b
+#     @property
+#     def vars(self):
+#         return self.ret, self.a, self.b
+#     def rename_vars(self, remap):
+#         a = remap(self.a)
+#         b = remap(self.b)
+#         if a == b:
+#             return unify(remap(self.ret), a)
+#         return OrOperator(remap(self.ret), a,b)
+
+# @simplify.define(OrOperator)
+# def simplify_oroperator(self, frame):
+#     ret = self.ret.getValue(frame)
+#     a = self.a.getValue(frame)
+#     b = self.b.getValue(frame)
+#     if ret is False:
+#         self.a.setValue(frame, False)
+#         self.b.setValue(frame, False)
+#         return terminal(1)
+#     if a is False and b is False:
+#         self.ret.setValue(frame, False)
+#         return terminal(1)
+#     if (a is not InvalidValue and a) or (b is not InvalidValue and b):
+#         self.ret.setValue(frame, True)
+#         return terminal(1)
+#     if a is False:
+#         return Unify(self.ret, self.b)
+#     if b is False:
+#         return Unify(self.ret, self.a)
+#     return self
+
+
+# these would not support conditional rewriting based of having a single
+# argument bound.  But these we can compile whereas others have modes which are
+# conditioned on their arguments.  Going to use this version as (afaik) this is
+# not an important/needed optimization in the system given the types of problems
+# that we are working on.  These should really only be applied to boolean values
+# anyways, and will therefore not need the shortcutting of the arguments
+# (everythinmg is getting evaluated anyways)
 and_operator = moded_op('and', {
-    (False,True,True): lambda a,b,c: (b and c, b,c)
+    (False,True,True): lambda a,b,c: (bool(b and c), b,c)
 })
 or_operator = moded_op('or', {
-    (False,True,True): lambda a,b,c: (b or c, b,c)
+    (False,True,True): lambda a,b,c: (bool(b or c), b,c)
 })
 
 
@@ -208,10 +213,20 @@ bool_v = moded_op('bool', {
     (True, False): lambda a,b:  (True, [True, False]),
 })
 
+def cast_op(op):
+    return moded_op(f'cast_{op.__name__}', {
+        (False, True): lambda a,b: (op(b), b)
+    })
+
 
 # just a partition over the two different identifies for these expressions
 number_v = partition((VariableId(0), ret_variable), (int_v, float_v))
 primitive_v = partition((VariableId(0), ret_variable), (int_v, float_v, str_v, bool_v))
+
+cast_int = cast_op(int)
+cast_float = cast_op(float)
+cast_str = cast_op(str)
+cast_bool = cast_op(bool)
 
 
 def imath_op(name, op, inverse):
@@ -259,7 +274,11 @@ matrix_v = check_op('matrix', 1, lambda x: isinstance(x, np.ndarray))
 
 def define_builtins(dyna_system):
 
+    def define_alias(new_name, old_name, arity):
+        dyna_system.define_term(new_name, arity, dyna_system.call_term(old_name, arity))
+
     dyna_system.define_term('add', 2, add)  # there is the result variable that is always named ret, so this is still +/2
+    #efine_alias('+', 'add', 2)
     dyna_system.define_term('+', 2, add)
 
     dyna_system.define_term('sub', 2, sub)  # The pattern matching is happing on the ModedOp, so this should still pattern match with the add op
@@ -327,18 +346,17 @@ def define_builtins(dyna_system):
     )
 
 
+    # dyna_system.define_term('&', 2, AndOperator(ret_variable, VariableId(0), VariableId(1)))
+    # dyna_system.define_term('&&', 2, AndOperator(ret_variable, VariableId(0), VariableId(1)))
 
+    # dyna_system.define_term('|', 2, OrOperator(ret_variable, VariableId(0), VariableId(1)))
+    # dyna_system.define_term('||', 2, OrOperator(ret_variable, VariableId(0), VariableId(1)))
 
-    # @optimizer.define_refined(and_operator)
-    # def optimizer_and_operator(self, info):
-    #     return self
+    dyna_system.define_term('&&', 2, and_operator)
+    dyna_system.define_term('&', 2, and_operator)
 
-    dyna_system.define_term('&', 2, AndOperator(ret_variable, VariableId(0), VariableId(1)))
-    dyna_system.define_term('&&', 2, AndOperator(ret_variable, VariableId(0), VariableId(1)))
-
-    dyna_system.define_term('|', 2, OrOperator(ret_variable, VariableId(0), VariableId(1)))
-    dyna_system.define_term('||', 2, OrOperator(ret_variable, VariableId(0), VariableId(1)))
-
+    dyna_system.define_term('|', 2, or_operator)
+    dyna_system.define_term('||', 2, or_operator)
 
 
     dyna_system.define_term('random', 3, random_r)
@@ -373,6 +391,9 @@ def define_builtins(dyna_system):
     dyna_system.define_term('number', 1, number_v)
     dyna_system.define_term('primitive', 1, primitive_v)  # anything that is not a term
 
+    dyna_system.define_term('cast_int', 1, cast_int)
+    dyna_system.define_term('cast_float', 1, cast_float)
+    dyna_system.define_term('cast_str', 1, cast_str)
 
     def def_inverse(op, inv):
         r = dyna_system.call_term(op, 1)
@@ -579,7 +600,10 @@ def define_builtins(dyna_system):
             from .builtin_matrix_ops import define_matrix_operations
             define_matrix_operations(dyna_system)
             return
-
+        if file_name == 'gradient':
+            from .builtin_gradients import define_gradient_operations
+            define_gradient_operations(dyna_system)
+            return
         with open(file_name, 'r') as f:
             dyna_system.add_rules(f.read())
 
