@@ -15,6 +15,7 @@ from .safety_planner import SafetyPlanner
 
 from functools import reduce
 import operator
+import os
 
 class SystemContext:
     """
@@ -56,6 +57,10 @@ class SystemContext:
             from dyna.builtins import define_builtins
             define_builtins(self)
             # where we fallback for other defined expressions
+
+            # load the prelude file
+            with open(os.path.join(os.path.dirname(__file__), 'prelude.dyna'), 'r') as f:
+                self.add_rules(f.read())
         else:
             assert False
 

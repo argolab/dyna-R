@@ -113,8 +113,7 @@ colon_line_tracking = 0
 def add_rule(x, dyna_system=None):
     if dyna_system is None:
         # use a global references if not defined
-        from dyna import dyna_system as _dyna_system
-        dyna_system = _dyna_system
+        from dyna import dyna_system
 
     if DEBUG: print()
     if DEBUG: print(colors.green % 'parsed:', x)
@@ -195,8 +194,7 @@ def user_query_to_rexpr(x, dyna_system=None):
     "Map a user's textual query to an R-expression."
     if dyna_system is None:
         # use a global references if not defined
-        from dyna import dyna_system as _dyna_system
-        dyna_system = _dyna_system
+        from dyna import dyna_system
 
     q = run_parser(f'{x} ?')
     if DEBUG: print(colors.green % 'parsed:', q)
@@ -213,9 +211,9 @@ def user_query(x):
     r = user_query_to_rexpr(f'Result is ({x})')
 
     # extracts the user's variable names
-    user_vars = [v for v in r.all_vars()
+    user_vars = list(dict((v, 0) for v in r.all_vars()
                  if not str(v).startswith('$') and not isinstance(v, ConstantVariable)
-    ]
+    ).keys())
 
     results = []
     def callback(rr, ff):
@@ -233,8 +231,12 @@ def user_query(x):
                 except:
                     pass
                 values.append(f"'{v}': {r}")
+
+        # bind variables to their value in the frame for printing
+        rbf = rr.rename_vars(lambda v: constant(v.getValue(ff)) if v.isBound(ff) else v)
+
         values = colors.yellow % 'result: ' + '{'+', '.join(values)+'} ' + colors.yellow % '@'
-        rexpr = textwrap.indent(str(rr), ' '*(len(values) - 2*len(colors.yellow)+5)).strip()
+        rexpr = textwrap.indent(str(rbf), ' '*(len(values) - 2*len(colors.yellow)+5)).strip()
         print(values, rexpr)
 
         # print(colors.yellow % 'result:', '{'+', '.join(values)+'}',

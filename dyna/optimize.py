@@ -388,6 +388,13 @@ def optimize_aggregator(R, info):
                                  binary_neq(R.result, constant(null_term), ret=constant(True)),
                                  body)
 
+    # TODO: this should be able to consider if the resulting variable of
+    # aggregation is already set in which case, this could eleminate branches of
+    # the expression which would not match.  But in the case of something like
+    # :=, this might override the value with something that does not match?
+    # Also with something like max/min, then it would need to include all
+    # branches which might produce a higher value
+
     return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, body)
 
 @optimizer.define(Unify)

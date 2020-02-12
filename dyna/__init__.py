@@ -24,15 +24,5 @@ from .optimize import run_optimizer
 
 from . import compiler
 
-# extra optimizations
-from . import builtin_matrix_ops
-
 
 dyna_system = context.SystemContext()
-
-
-# load the prelude file
-import os as _os
-with open(_os.path.join(_os.path.dirname(__file__), 'prelude.dyna'), 'r') as _f:
-    from dyna.syntax.normalizer import add_rules as _add_rules
-    _add_rules(_f.read())

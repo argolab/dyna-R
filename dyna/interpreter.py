@@ -47,9 +47,9 @@ class RBaseType:
     def possibly_equal(self, other):
         # for help aligning constraints during optimization to perform rewriting
         # should consider everything except variables names
-        if type(self) is type(other) and len(self.vars) == len(other.vars) and len(self.children) == len(other.children):
-            return all(a.possibly_equal(b) for a,b in zip(self.children,other.children))
-        return False
+        return (type(self) is type(other) and len(self.vars) == len(other.vars) and
+                len(self.children) == len(other.children) and
+                all(a.possibly_equal(b) for a,b in zip(self.children,other.children)))
 
     def isEmpty(self):
         return False

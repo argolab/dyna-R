@@ -289,6 +289,7 @@ class DynaTransformer(Transformer):
     # dynabase literals
 
     def db_literal(self, x):
+        raise NotImplementedError()
         assert isinstance(x, list)
         from dyna.aggregators import AGG
         from dyna.answer import Result

@@ -394,6 +394,7 @@ def define_builtins(dyna_system):
     dyna_system.define_term('cast_int', 1, cast_int)
     dyna_system.define_term('cast_float', 1, cast_float)
     dyna_system.define_term('cast_str', 1, cast_str)
+    dyna_system.define_term('cast_bool', 1, cast_bool)
 
     def def_inverse(op, inv):
         r = dyna_system.call_term(op, 1)
@@ -611,7 +612,3 @@ def define_builtins(dyna_system):
     dyna_system.add_rules("$load(0).")
     # whenever $load("file_name"). is defined, it will load the file into the program
     dyna_system.watch_term_changes(('$load', 1), watch_load_callback)
-
-
-
-#define_builtins(dyna_system)
