@@ -1,0 +1,9 @@
+$load("gradient").
+
+x := 0.
+
+f = (x - 1)^2.
+
+gx = $gradient(&x).
+
+$loss += f.

@@ -187,7 +187,8 @@ def add_infix_op():
 
         BinOp(';', L, 0),
 
-        #Op('with_key', N, 4),
+        #BinOp('with_key', N, 4),
+        BinOp('arg', N, 4)
     ]
 
     # operators at the same precedence level must have the

@@ -1,9 +1,18 @@
 
 % there is also op_{+,-,*./}
 
-'op_<'(X, Y) := '__builtin_term_compare_<'(X, Y).
+'op_<'(X, Y) := '$__builtin_term_compare_<'(X, Y).
 %'op_=='(X, Y) := '__builtin_term_compare_=='(X, Y).
 
+'op_<'(&$with_key(Key1, Value1), &$with_key(Key2, Value2)) := Value1 < Value2.
+
+% this should get applied to values which invoke calls to arg, but those might not return the arg (if not present amoung all branches)
+$value(X) := X.
+$value(&$with_key(Key, Value)) := Value.
+
+$arg(&$with_key(Key, Value)) = Key.  % this needs to get attached to the key value case
+
+arg(Value, Argument) = &$with_key(Argument, Value).
 
 % builtin types representing the primitive values
 

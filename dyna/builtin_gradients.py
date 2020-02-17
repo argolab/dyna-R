@@ -42,7 +42,7 @@ modedop_gradients = {
 GRADIENT_FUNC = '$__gradient_func_{name}/{arity}'
 GRADIENT_ACCUMULATOR = '$__gradient_accumulator_{name}/{arity}'
 
-#GRADIEN_RES = VariableId('$__gradient_source')
+GRADIENT_RES = VariableId('$__gradient_source')
 
 def get_body(R):
     if isinstance(R, (Partition, ModedOp, FinalState, Aggregator, BuildStructure)):
@@ -83,8 +83,8 @@ class GradientCircuit(object):
 
         builtin_only = set()
 
-        def call_gfunc(name, arity):
-            return self.dyna_system.call_term(GRADIENT_FUNC.format(name=name,arity=arity), arity)
+        # def call_gfunc(name, arity):
+        #     return self.dyna_system.call_term(GRADIENT_FUNC.format(name=name,arity=arity), arity)
 
         for name in predicate_set:
             func = self.dyna_system.lookup_term(name, ignore=('memo', 'compile', 'not_found'))
@@ -158,33 +158,16 @@ class GradientCircuit(object):
                 # does this need to handle the merged expressions?  This should
                 # just be able to operate on the named expressions directly
                 # gargs = [VariableId(f'$__gradient_arg_{i}') for i in range(name[1])]
-                source_gradient = self.dyna_system.call_term(source_gradient_name, name[1])#(*gargs, ret=GRADIEN_RES)
-
-
-                # if is_selective:
-                #     # then use the value from the branch that is selected to
-                #     # determine which element should be used.  Otherwise, we are
-                #     # going to have to
-
-                #     # want to identify which expression is in the head of the variables, and what the result variables will be
-                #     res_var = VariableId()
-                #     vmap = {x:x for x in variables_named(*range(name[1]))}
-                #     vmap[ret_variable] = res_var
-                #     # conceptually, this could expose other variables that are
-                #     # in the expression though that might not work in the case
-                #     # of memoization?
-                #     # this also needs to manage which are the source variables and what are the destination variables as those are no longer the same expression
-                #     selecting = intersect(self.dyna_system.call_term('==', 2)(res_var, body.body_res),
-                #                           CallTerm(vmap, self.dyna_system, name))
-                # else:
-                #     # this just selects everything, so this will just get this removed in the end
-                #     selecting = Terminal(1)
+                source_gradient = self.dyna_system.call_term(source_gradient_name, name[1])
 
                 children_branches = body.body._children  # this is from the partion branches
                 assert isinstance(children_branches, PrefixTrie)
                 uvars = body.body._unioned_vars
 
+                called_funcs = []
+
                 def transform_body(key, value):
+                    nonlocal called_funcs
                     # ensure that the values for every key are embedded in the expression (specalized)
                     # otherwise, this might incorrectly forget something?
 
@@ -197,7 +180,7 @@ class GradientCircuit(object):
 
                     gval = VariableId()
 
-                    cv = intersect(BuildStructure('$', gval, (fres, gres)), scf, sgf)
+                    cv = [BuildStructure('$', gval, (fres, gres)), scf, sgf]
 
                     # if is_selective:
                     #     cv = intersect(cv,
@@ -207,34 +190,75 @@ class GradientCircuit(object):
 
                     vr = value.rename_vars_unique(rename_map.get)
 
-                    called_funcs = []
-
                     def rename_func(R):
+                        nonlocal called_funcs
                         # rename the functions such that it calls the gradient equivalent functions
                         if isinstance(R, CallTerm):
-                            called_funcs.append(R)
                             # this just needs to change the term ref on the expression, the variable names should stay the same
                             oname, arity = R.term_ref
                             oname = GRADIENT_FUNC.format(name=oname, arity=arity)
-                            nr = CallTerm(R.var_map, R.dyna_system, (oname, arity))
-                            import ipdb; ipdb.set_trace()
+                            nvm = {}
+                            for va, vb in R.var_map.items():
+                                if isinstance(vb, ConstantVariable):
+                                    # then this needs to create a new dummy variable which can take the gradient value
+                                    nvb = VariableId()
+                                    cv.append(BuildStructure('$', nvb, (vb, VariableId())))
+                                    vb = nvb
+                                if va is ret_variable:
+                                    nvm[VariableId(0)] = vb
+                                else:
+                                    nvm[VariableId(va._compiler_name+1)] = vb
+                            nvm[ret_variable] = constant(True)
+                            nr = CallTerm(nvm, R.dyna_system, (oname, arity+1))
+                            called_funcs.append((R, nr))
                             return nr
                         return R.rewrite(rename_func)
 
                     vr = vr.rewrite(rename_func)
 
-                    for cf in called_funcs:
-                        pass
+                    return intersect(*cv, vr)
 
-                    # rvals.append(intersect(cv,
-                    #                        *(Unify(v, u) for v, u in zip(key, uvars) if v is not None), value))
-                    return intersect(cv, vr)
+                def transform_accum_gradient(call, body):
+                    # first remove the call from the body
+                    ocall, gcall = call
+                    def remove_c(R):
+                        if R is gcall:
+                            return Terminal(1)
+                        return R.rewrite(remove_c)
+                    b = body.rewrite(remove_c)
 
+                    additional_R = []
+
+                    # need to rename the variables so that
+                    rmap = {}
+                    for va, vb in ocall.var_map.items():
+                        assert not isinstance(va, ConstantVariable)
+                        if va is ret_variable:
+                            additional_R.append(BuildStructure('$', vb, (VariableId(), GRADIENT_RES)))
+                        elif isinstance(va._compiler_name, int):
+                            # this represents an argument to the method
+                            # this should just map the arguments to a given variable
+                            rmap[vb] = va
+
+                    rmap[GRADIENT_RES] = GRADIENT_RES
+                    b = intersect(b, *additional_R)
+
+                    b = b.rename_vars_unique(rmap.get)
+
+                    #import ipdb; ipdb.set_trace()
+                    return b
 
                 func_grad = []
                 for key, values in children_branches.items():
                     for value in values:
-                        func_grad.append(transform_body(key, value))
+                        called_funcs.clear()
+                        tb = transform_body(key, value)
+                        func_grad.append(tb)
+                        # for all of the called expressions, this should compute teh accumulated sum for a value
+                        # this will want to add something to the accumulated function
+                        for cf in called_funcs:
+                            gradient_sums[cf[0].term_ref].append(transform_accum_gradient(cf, tb))
+
 
                 # func_grad represents the different branches of the gradient
                 # that should be identified with
@@ -242,11 +266,8 @@ class GradientCircuit(object):
                 # for branch in children_branches.values():
                 #     # there are values
 
-                print(children_branches)
+                # print(children_branches)
 
-                import ipdb; ipdb.set_trace()
-
-                pass
             elif isinstance(body, Partition):
                 # thisi s odd?  Not sure that we are actually going to get this
                 # back from an expression which isn't folded or something.  The
@@ -260,18 +281,28 @@ class GradientCircuit(object):
             # limits the number of things that would change
             gradient_sums.pop(b, None)
 
-        import ipdb; ipdb.set_trace()
+        #import ipdb; ipdb.set_trace()
 
         for name, body in gradient_func.items():
             # if there is another expression here that is already equal to this expression, then we should avoid redefining the
             # expression, otherwise we could end in in a cycle
-            self.dyna_system.define_term(name[0], name[1], body)
+            self.dyna_system.define_term(GRADIENT_FUNC.format(name=name[0], arity=name[1]), name[1]+1, body)
+
+            self.dyna_system.optimize_term((GRADIENT_FUNC.format(name=name[0], arity=name[1]), name[1]+1))
 
         for name, body in gradient_sums.items():
             # this is going to construct a sum aggregator which accumulates from all of the different branches
             # then it will want to
 
-            pass
+            # get the arguments which go into this expression
+            head_vars = tuple(VariableId(i) for i in range(name[1]))
+            pt = partition(head_vars + (GRADIENT_RES,), body)
+
+            ag = Aggregator(ret_variable, head_vars, GRADIENT_RES, AGGREGATORS['+='], pt)
+
+            self.dyna_system.define_term(GRADIENT_ACCUMULATOR.format(name=name[0], arity=name[1]), name[1], ag)
+            self.dyna_system.optimize_term((GRADIENT_ACCUMULATOR.format(name=name[0], arity=name[1]), name[1]))
+
 
         # this needs to define the new functions.  If the functions are the
         # same, then they should probably not get redefined (I suppose).
@@ -305,30 +336,33 @@ def define_gradient_operations(dyna_system):
     % go out on any other argument
 
     $gradient_add($(A+B, G),      $(A, G), $(B, G)).
-    $gradient_mul($(A*B, G),      $(A, G/B), $(B, G/A)).
+    $gradient_mul($(A*B, G),      $(A, G*B), $(B, G*A)).
     $gradient_abs($(abs(A), G),   $(A, sign(A)*G)).
-    $gradient_sin($(sin(X), G),   $(X, cos(G))).
-    $gradient_cos($(cos(X), G),   $(X, sin(G))).
-    $gradient_tan($(tan(X), G),   $(X, 1/(cos(G)^2))).
+    $gradient_sin($(sin(X), G),   $(X, G*cos(X))).
+    $gradient_cos($(cos(X), G),   $(X, G*sin(X))).
+    $gradient_tan($(tan(X), G),   $(X, G/(cos(X)^2))).
 
-    $gradient_exp($(exp(X), G),   $(X,exp(G))).
-    $gradient_pow($(X^Y, G),      $(X, Y*(G^(Y-1))), $(Y,  [todo()])).  % TODO: gradient for exponent
+    $gradient_exp($(exp(X), G),   $(X,exp(X)*G)).
+    $gradient_pow($(X^Y, G),      $(X, G* Y*(X^(Y-1))), $(Y, log(X)*X^Y *G)).
     """)
 
     dyna_system.agenda.push(gradient.generate_gradient)
 
-    #import ipdb; ipdb.set_trace()
 
-    # dyna_system.watch_term_changes(('$loss', 0),)
 
-    # dyna_system.add_rules("""
-    # % gradient of an expression without its arguments that it might depend on
-    # $gradient(Of) =
-    #    $reflect(Of, Name, Arity, Args), GName = "$__gradient_"+Name+"/"+cast_str(Arity),
-    #    $reflect(COp, GName, Arity, Args), $call(COp).
 
-    # '$__gradient_+/2'(A, B) = &x(1, 1).
-    # '$__gradient_*/2'(A, B) = &x(B, A).
-
-    # $gradient(WRT, OfPredicate) = $reflect(OfPredicate, Name, Arity, _), GName = "$__gradient_"+Name+"/"+cast_str(Arity)
-    # """)
+# the gradient is the multiplication of the gradient for an operator (based off
+# its argument) then feedback.  This makes the gradient computed in the +/*
+# semiring.
+#
+# This code is simply replacing all method calls with $__gradient_func_name(...)
+# where the return value has been replaced as the first argument and all of the
+# other arguments additionally represent which values are returned.
+#
+# The gradient itself is represented using the tuple &'$'(Value, Gradient).
+# /Normally/ these tuples would not be "decomposed" as the variables in the
+# expressions would not represent which operation
+#
+# The gradient function does not necessarily need an aggregator?  It could just
+# represent the expression directly using a partition, then it would represent
+# that when computing the gradient, it would just sum over the different values.

@@ -7,7 +7,9 @@ from .optimize import optimizer
 
 def _term_op(op):
     def oper(*args):
-        from .context import dyna_system
+        # this does not have the current reference to the dyna_system
+        # this makes this somewhat brittle in the case that
+        from . import dyna_system
         return dyna_system.raw_call('op_'+op, args)
     return oper
 

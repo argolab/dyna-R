@@ -47,6 +47,7 @@ def test_auto_diff():
 
     frame = Frame()
     r = simplify(dyna.call_term('gx', 0), frame)
+    #r = simplify(dyna.call_term('$__true_loss', 0), frame)
     assert r == Terminal(1)
 
     assert interpreter.ret_variable.getValue(frame) == 2.0

@@ -554,7 +554,7 @@ def define_builtins(dyna_system):
     # if this was just used by the aggregators, then maybe that would be ok?  It would allow for aggregators to combine a value
 
     # `a` should already be a term, as it would have to indirected through the term object to get to this point already
-    dyna_system.define_term('__builtin_term_compare_<', 2, check_op('__builtin_term_compare_<', 2, lambda a, b: a.builtin_lt(b)))
+    dyna_system.define_term('$__builtin_term_compare_<', 2, check_op('__builtin_term_compare_<', 2, lambda a, b: a.builtin_lt(b)))
     #dyna_system.define_term('__builtin_term_compare_==', 2, check_op('__builtin_term_compare_==', 2, lambda a, b: a.builtin_eq(b)))
 
 
@@ -563,6 +563,7 @@ def define_builtins(dyna_system):
     dyna_system.define_term('$nil', 0, BuildStructure('nil', ret_variable, ()))
 
     dyna_system.define_term('$null', 0, BuildStructure('$null', ret_variable, ()))
+
 
 
     from .terms import Evaluate, ReflectStructure
