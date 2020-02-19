@@ -212,11 +212,15 @@ class GradientCircuit(object):
                             nr = CallTerm(nvm, R.dyna_system, (oname, arity+1))
                             called_funcs.append((R, nr))
                             return nr
+                        elif isinstance(R, ModedOp):
+                            # this needs to replace the operation with the definition of which builtin this is using
+                            # which means that it needs to run this though the same processes as the builtin expression
+                            assert False
                         return R.rewrite(rename_func)
 
                     vr = vr.rewrite(rename_func)
 
-                    return intersect(*cv, vr)
+                    return intersect(*cv, vr), (vr, (gval,) + gargv_vals)
 
                 def transform_accum_gradient(call, body):
                     # first remove the call from the body
@@ -252,13 +256,43 @@ class GradientCircuit(object):
                 for key, values in children_branches.items():
                     for value in values:
                         called_funcs.clear()
-                        tb = transform_body(key, value)
-                        func_grad.append(tb)
+                        tb, targs = transform_body(key, value)
+                        func_grad.append((tb, targs))
                         # for all of the called expressions, this should compute teh accumulated sum for a value
                         # this will want to add something to the accumulated function
                         for cf in called_funcs:
                             gradient_sums[cf[0].term_ref].append(transform_accum_gradient(cf, tb))
 
+                # this needs to compute the gradient according to all of the arguments
+                # in the case that there are differences for which expressions
+
+                # func_args = tuple(VariableId(i) for i in range(name[1]))
+
+                if name[1] == 0:
+                    # then there are no arguments to this method, so we are just going to create some dummy expression
+                    # which will be like: `func($(Value, _)) :- Value=func().`  The input to the function can
+                    gvalret = VariableId()
+                    gfunc = intersect(BuildStructure('$', VariableId(0), (gvalret, VariableId())),
+                                      func_call(ret=gvalret),
+                                      Unify(constant(True), ret_variable))
+
+                    gradient_func[name] = gfunc
+                else:
+                    # then there is at least one argument, so we need to identify what the gradient is for each of the input arguments
+                    assert len(func_grad) == 1  # TODO expand this
+                    # if there is only a single rule, then this must come from that rule, nd then it can identify that there are
+                    # values which represent a given value
+
+
+                    assert body.aggregator is not AGGREGATORS[':=']  # TODO: need to handle this
+
+
+                    ur = {v:VariableId(i) for i,v in enumerate(func_grad[0][1][1])}
+                    nb = func_grad[0][1][0].rename_vars_unique(ur.get)
+
+                    gradient_func[name] = nb
+
+                    #import ipdb; ipdb.set_trace()
 
                 # func_grad represents the different branches of the gradient
                 # that should be identified with
@@ -286,6 +320,9 @@ class GradientCircuit(object):
         for name, body in gradient_func.items():
             # if there is another expression here that is already equal to this expression, then we should avoid redefining the
             # expression, otherwise we could end in in a cycle
+            if name == ('$__true_loss', 0):
+                continue
+
             self.dyna_system.define_term(GRADIENT_FUNC.format(name=name[0], arity=name[1]), name[1]+1, body)
 
             self.dyna_system.optimize_term((GRADIENT_FUNC.format(name=name[0], arity=name[1]), name[1]+1))
@@ -316,9 +353,6 @@ def define_gradient_operations(dyna_system):
     dyna_system.add_rules("""
     $loss += 0.  % this is the loss that the entire program is differenated against
 
-    %$gradient_inputs(&'+'(A, B), InGrad) = x(InGrad, InGrad).
-    %$gradient_self(&'+'(A, B), Out,
-
     % the system will start by looking here though, rather than at the defintion of loss, do not override
     '$__true_loss' = '$loss'().
 
@@ -339,11 +373,11 @@ def define_gradient_operations(dyna_system):
     $gradient_mul($(A*B, G),      $(A, G*B), $(B, G*A)).
     $gradient_abs($(abs(A), G),   $(A, sign(A)*G)).
     $gradient_sin($(sin(X), G),   $(X, G*cos(X))).
-    $gradient_cos($(cos(X), G),   $(X, G*sin(X))).
+    $gradient_cos($(cos(X), G),   $(X, G*-sin(X))).
     $gradient_tan($(tan(X), G),   $(X, G/(cos(X)^2))).
 
-    $gradient_exp($(exp(X), G),   $(X,exp(X)*G)).
-    $gradient_pow($(X^Y, G),      $(X, G* Y*(X^(Y-1))), $(Y, log(X)*X^Y *G)).
+    $gradient_exp($(E, G),        $(X,E*G)) :- E=exp(X).
+    $gradient_pow($(X^Y, G),      $(X, G*Y*(X^(Y-1))), $(Y, log(X)*X^Y *G)).
     """)
 
     dyna_system.agenda.push(gradient.generate_gradient)

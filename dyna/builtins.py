@@ -272,6 +272,44 @@ matrix_v = check_op('matrix', 1, lambda x: isinstance(x, np.ndarray))
 
 
 
+class ModedAccessOp(RBaseType):
+
+    def __init__(self, res_var: Variable, m1: Variable, m2: Variable, s1: Variable, s2: Variable):
+        self.res_var = res_var
+        self.m1 = m1
+        self.m2 = m2
+        self.s1 = s1
+        self.s2 = s2
+
+    def rename_vars(self, remap):
+        m1 = remap(m1)
+        m2 = remap(m2)
+        if isinstance(m1, ConstantVariable):
+            return Unify(remap(self.res_var), remap(self.s1))
+        elif isinstance(m2, ConstantVariable):
+            return Unify(remap(self.res_var), remap(self.s2))
+        else:
+            s1 = remap(s1)
+            s2 = remap(s2)
+            if s1 == s2:
+                return Unify(remap(self.res_var), s1)
+            return ModedAccessOp(remap(self.res_var), m1, m2, s1, s2)
+
+    @property
+    def vars(self):
+        return self.res_var, self.m1, self.m2, self.s1, self.s2
+
+@simplify.define(ModedAccessOp)
+def modedaccessop_simplify(self, frame):
+    if self.m1.isBound(frame):
+        return Unify(self.res_var, self.s1)
+    elif self.m2.isBound(frame):
+        return Unify(self.res_var, self.s2)
+    else:
+        return self
+
+
+
 def define_builtins(dyna_system):
 
     def define_alias(new_name, old_name, arity):

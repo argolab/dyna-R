@@ -6,7 +6,8 @@ from dyna.syntax.aggregators import AGG
 from dyna.syntax.syntax import term, run_parser
 from dyna.syntax.util import colors, fib_check
 
-from dyna.interpreter import VariableId, constant, ConstantVariable, intersect, InvalidValue
+from dyna.interpreter import VariableId, constant, ConstantVariable, intersect, InvalidValue, FinalState
+from dyna.optimize import run_optimizer
 #from dyna.context import dyna_system
 
 from dyna import Frame, Terminal, Aggregator, Unify, interpreter, \
@@ -233,7 +234,11 @@ def user_query(x):
                 values.append(f"'{v}': {r}")
 
         # bind variables to their value in the frame for printing
-        rbf = rr.rename_vars(lambda v: constant(v.getValue(ff)) if v.isBound(ff) else v)
+        if isinstance(rr, FinalState):
+            rbf = rr
+        else:
+            rbf = rr.rename_vars(lambda v: constant(v.getValue(ff)) if v.isBound(ff) else v)
+            rbf, _ = run_optimizer(rbf, user_vars)
 
         values = colors.yellow % 'result: ' + '{'+', '.join(values)+'} ' + colors.yellow % '@'
         rexpr = textwrap.indent(str(rbf), ' '*(len(values) - 2*len(colors.yellow)+5)).strip()
@@ -247,7 +252,11 @@ def user_query(x):
     frame = Frame()
 
     #print(r)
-    rr = saturate(r, frame)
+    ro, _ = run_optimizer(r, user_vars)
+    rr = saturate(ro, frame)
+    # this could run the optimizer and rerun saturate on the user's query?
+    # though that does not necessarily result in something better?
+
     #print(rr)
     loop(rr,
          frame, callback, best_effort=True)
