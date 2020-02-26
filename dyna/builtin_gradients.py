@@ -36,7 +36,20 @@ modedop_gradients = {
     tanh_r: 'tanh',
     exp_r: 'exp',
     pow_v: 'pow',
-    mod_v: 'mod'
+    mod_v: 'mod',
+
+    # these operators have no gradient, as they are just filtering the expression
+    lt: 'none',
+    lteq: 'none',
+    binary_eq: 'none',
+    binary_neq: 'none',
+    random_r: 'none',
+    int_v: 'none',
+    float_v: 'none',
+    term_type: 'none',
+    str_v: 'none',
+    bool_v: 'none',
+    matrix_v: 'none',
 }
 
 GRADIENT_FUNC = '$__gradient_func_{name}/{arity}'
@@ -132,6 +145,12 @@ class GradientCircuit(object):
                 # unpack the tuples and their gradients and repack them back as
                 # two different operations?
 
+
+                assert False
+
+                # the build structure case needs to be handled, there are two different modes in this case.  Depending on which arguments are grounded
+                # though due to the optimizer, it may
+
                 vals, grads = [],[]
                 Rs = []
                 for arg in body.arguments:
@@ -171,6 +190,13 @@ class GradientCircuit(object):
                     # ensure that the values for every key are embedded in the expression (specalized)
                     # otherwise, this might incorrectly forget something?
 
+                    variable_usages = defaultdict(list)
+
+                    def get_var(v):
+                        x = VariableId()
+                        variable_usages[v].append(x)
+                        return x
+
                     gargv_vals = tuple(constant(k) if k is not None else VariableId() for k in key)
                     gres = VariableId()
                     fres = VariableId()
@@ -180,7 +206,8 @@ class GradientCircuit(object):
 
                     gval = VariableId()
 
-                    cv = [BuildStructure('$', gval, (fres, gres)), scf, sgf]
+                    # this is the output of the expression which represents
+                    cv = [BuildStructure('out', get_var(gval), (fres, gres)), scf, sgf]
 
                     # if is_selective:
                     #     cv = intersect(cv,
@@ -202,12 +229,13 @@ class GradientCircuit(object):
                                 if isinstance(vb, ConstantVariable):
                                     # then this needs to create a new dummy variable which can take the gradient value
                                     nvb = VariableId()
-                                    cv.append(BuildStructure('$', nvb, (vb, VariableId())))
+                                    #cv.append(BuildStructure('$', nvb, (vb, VariableId())))
+                                    cv.append(BuildStructure('in', nvb, (vb, VariableId())))
                                     vb = nvb
                                 if va is ret_variable:
-                                    nvm[VariableId(0)] = vb
+                                    nvm[VariableId(0)] = get_var(vb)
                                 else:
-                                    nvm[VariableId(va._compiler_name+1)] = vb
+                                    nvm[VariableId(va._compiler_name+1)] = get_var(vb)
                             nvm[ret_variable] = constant(True)
                             nr = CallTerm(nvm, R.dyna_system, (oname, arity+1))
                             called_funcs.append((R, nr))
@@ -216,9 +244,18 @@ class GradientCircuit(object):
                             # this needs to replace the operation with the definition of which builtin this is using
                             # which means that it needs to run this though the same processes as the builtin expression
                             assert False
+                        elif isinstance(R, Unify):
+                            return self.dyna_system.call_term('$gradient_unify', 2)(R.v1, R.v2, ret=constant(True))
+                            # assert False  # this needs to get replaced with an operator that changes the "in/out" flags on the variables
+                            # pass
+                        assert isinstance(R, (Intersect, Unify, FinalState))
                         return R.rewrite(rename_func)
 
                     vr = vr.rewrite(rename_func)
+
+                    for vn, groups in variable_usages.items():
+                        cv.append(self.dyna_system.call_term('$gradient_nway_split', len(groups))(*groups, ret=constant(True)))
+
 
                     return intersect(*cv, vr), (vr, (gval,) + gargv_vals)
 
@@ -350,7 +387,7 @@ def define_gradient_operations(dyna_system):
 
     gradient = GradientCircuit(dyna_system)
 
-    dyna_system.add_rules("""
+    gradient_code = ["""
     $loss += 0.  % this is the loss that the entire program is differenated against
 
     % the system will start by looking here though, rather than at the defintion of loss, do not override
@@ -369,16 +406,70 @@ def define_gradient_operations(dyna_system):
     % same modes, so the gradient may come in from /any/ argument, and need to
     % go out on any other argument
 
-    $gradient_add($(A+B, G),      $(A, G), $(B, G)).
-    $gradient_mul($(A*B, G),      $(A, G*B), $(B, G*A)).
-    $gradient_abs($(abs(A), G),   $(A, sign(A)*G)).
-    $gradient_sin($(sin(X), G),   $(X, G*cos(X))).
-    $gradient_cos($(cos(X), G),   $(X, G*-sin(X))).
-    $gradient_tan($(tan(X), G),   $(X, G/(cos(X)^2))).
 
-    $gradient_exp($(E, G),        $(X,E*G)) :- E=exp(X).
-    $gradient_pow($(X^Y, G),      $(X, G*Y*(X^(Y-1))), $(Y, log(X)*X^Y *G)).
-    """)
+
+    $gradient_add(&out(C, G), &in(A, G), &in(B, G)) :- C=A+B.
+    $gradient_add(&in(C, G), &out(A, G), &in(B, -G)) :- C=A+B.
+    $gradient_add(&in(C, G), &in(A, -G), &out(B, G)) :- C=A+B.
+    $gradient_add(&in(C, 0), &in(A, 0), &in(B, 0)) :- C == A+B.  % this does not assign the value to any of its arguments
+                                                                 % but rather checks that it is correct.  Though if this does not find a way to ground,
+                                                                 % then it should be forced to not select this branch?
+
+
+    $gradient_mul(&out(C, GC), &in(A, GA), &in(B, GB)) :- C=A*B, GA=GC*B, GB=GC*A.
+    $gradient_mul(&in(C, GC), &out(A, GA), &in(B, GB)) :- C/B=A, GC=GA/B, GB=-GA*C/B^2.
+    $gradient_mul(&in(C, GC), &in(A, GA), &out(B, GB)) :- C/A=B, GC=GB/A, GA=-GB*C/A^2.
+    $gradient_mul(&in(C, 0), &in(A, 0), &in(B, 0)) :- C == A*B.
+
+
+    $gradient_abs(&out(O, GO), &in(X, GX)) :- O=abs(X), GX=sign(X)*GO.
+    $gradient_abs(&in(O, 0), &in(X, 0)) :- O==abs(X).
+
+    $gradient_sin(&out(O, GO), &in(X, GX)) :- O=sin(X), GX=GO*cos(X).  % sin gradient
+    $gradient_sin(&in(O, GO), &out(X, GX)) :- O=sin(X), GO=GX/sqrt(1-O^2).  % arcsin gradient
+    $gradient_sin(&in(O, 0), &in(X, 0)) :- O==sin(X).
+
+    $gradinet_cos(&out(O, GO), &in(X, GX)) :- O=cos(X), GX=-GO*sin(X).
+    $gradient_cos(&in(O, GO), &out(X, GX)) :- O=cos(X), GO=-GX/sqrt(1-O^2).
+    $gradient_cos(&in(O, 0), &in(X, 0)) :- O == cos(X).
+
+    $gradient_tan(&out(O, GO), &in(X, GX)) :- O=tan(X), GX=GO/(cos(X)^2).
+    $gradient_tan(&in(O, GO), &out(X, GX)) :- O=tan(X), GO=GX/(1 - X^2).
+    $gradient_tan(&in(O, 0), &in(X, 0)) :- O == tan(X).
+
+    $gradient_exp(&out(O, GO), &in(X, GX)) :- O=exp(X), GX=GO*O.
+    $gradient_exp(&in(O, GO), &out(X, GX)) :- O=exp(X), GO=GX/O.
+    $gradient_exp(&in(O, 0), &in(X, 0)) :- O==exp(X).
+
+    % builtins which only /filter/ the accepted expressions rather than computing anything
+    % there is no gradient reported to any of the arguments in this case, so the expression is simply zero
+    $gradient_none(&in(_, 0)).
+    $gradient_none(&in(_, 0), &in(_, 0)).
+    $gradient_none(&in(_, 0), &in(_, 0), &in(_, 0)).
+    $gradient_none(&in(_, 0), &in(_, 0), &in(_, 0), &in(_, 0)).
+    $gradient_none(&in(_, 0), &in(_, 0), &in(_, 0), &in(_, 0), &in(_, 0)).
+    $gradient_none(&in(_, 0), &in(_, 0), &in(_, 0), &in(_, 0), &in(_, 0), &in(_, 0)).
+
+
+
+    $gradient_unify(&in(X, 0), &in(X, 0)).
+    $gradient_unify(&in(X, G), &out(X, G)).
+    $gradient_unify(&out(X, G), &in(X, G)).
+
+
+    % if a variable is only used in a single place, then that variable can not have any incoming gradient, so it must be zero at that inital point
+    $gradient_nway_split(&out(X, 0)).
+
+    """]
+
+    for width in range(2, 20):
+        for j in range(width):
+            c = '$gradient_nway_split(' + ', '.join([f'&in(X, G{i})' if i != j else f'&out(X, G{i})' for i in range(width)]) + ') :- '
+            c += f'G{j} = ' + ' + '.join([f'G{i}' for i in range(width) if i != j])
+            c += '.'
+            gradient_code.append(c)
+
+    dyna_system.add_rules('\n'.join(gradient_code))
 
     dyna_system.agenda.push(gradient.generate_gradient)
 
@@ -400,3 +491,71 @@ def define_gradient_operations(dyna_system):
 # The gradient function does not necessarily need an aggregator?  It could just
 # represent the expression directly using a partition, then it would represent
 # that when computing the gradient, it would just sum over the different values.
+
+
+
+"""
+    $gradient_add($(A+B, G1),     $(A, G2), $(B, G3)) :-
+       G2 <~ G1, G3 <~ G1,    % in the case that this has the gradient coming from G1, then it is representing an addition operator
+       -G1 <~ G2, G3 <~ G2,   % if the gradient comes from one of the other arguments, then it needs to negate
+       -G1 <~ G3, G2 <~ G3.
+
+    $gradient_sin($(V, G1),   $(X, G2)) :-
+       V=sin(X),
+       G2 <~ G1*cos(X),  % gradient in the forward mode
+       G1 <~ G2/sqrt(1 - V^2).  % gradient for arcsin in the backwards mode
+
+    %$gradient_exp($(E, G1),   $(X, G2)) :-
+    %   E=exp(X),
+    %   G2 <~ E*G1,     % forward gradient for exp
+    %   G1 <~ G2/E.      % backwards gradient for log
+
+    %$gradient_add($(A+B, G),      $(A, G), $(B, G)).
+    $gradient_mul($(A*B, G),      $(A, G*B), $(B, G*A)).
+    $gradient_abs($(abs(A), G),   $(A, sign(A)*G)).
+    $gradient_sin($(sin(X), G),   $(X, G*cos(X))).
+    $gradient_cos($(cos(X), G),   $(X, G*-sin(X))).
+    $gradient_tan($(tan(X), G),   $(X, G/(cos(X)^2))).
+
+    $gradient_exp($(E, G),        $(X,E*G)) :- E=exp(X).
+    $gradient_pow($(X^Y, G),      $(X, G*Y*(X^(Y-1))), $(Y, log(X)*X^Y *G)).
+
+
+    % if a single variable is used in a multiple places, there is one "source" which sets the variable
+    % and then all of users of a variable need to feedback into the origional location, summing the results
+    % it isn't sufficnelt to just use the same variable in all places
+    $gradient_nway_split(X, X).
+    $gradient_nway_split($(X, G1), $(X, G2), $(X, G3)) :-
+       G1 <~ G2 + G3,
+       G2 <~ G1 + G3,
+       G3 <~ G1 + G2.
+    $gradient_nway_split($(X, G1), $(X, G2), $(X, G3), $(X, G4)) :-
+       G1 <~ G2 + G3 + G4,
+       G2 <~ G1 + G3 + G4,
+       G3 <~ G1 + G2 + G4,
+       G4 <~ G1 + G2 + G3.
+    $gradient_nway_split($(X, G1), $(X, G2), $(X, G3), $(X, G4), $(X, G5)) :-
+       G1 <~ G2 + G3 + G4 + G5,
+       G2 <~ G1 + G3 + G4 + G5,
+       G3 <~ G1 + G2 + G4 + G5,
+       G4 <~ G1 + G2 + G3 + G5,
+       G5 <~ G1 + G2 + G3 + G4.
+    $gradient_nway_split($(X, G1), $(X, G2), $(X, G3), $(X, G4), $(X, G5), $(X, G6)) :-
+       G1 <~ G2 + G3 + G4 + G5 + G6,
+       G2 <~ G1 + G3 + G4 + G5 + G6,
+       G3 <~ G1 + G2 + G4 + G5 + G6,
+       G4 <~ G1 + G2 + G3 + G5 + G6,
+       G5 <~ G1 + G2 + G3 + G4 + G6,
+       G6 <~ G1 + G2 + G3 + G4 + G5.
+
+    % this would negate the outgoing edge?
+    $gradient_nway_split($(X, G1), $(X, G2), $(X, G3), $(X, G4), $(X, G5), $(X, G6)) :-
+       G1 + G2 + G3 + G4 + G5 + G6 = 0.
+
+    $gradient_add($(A+B, -G), $(A, G), $(B, G)).
+    $gradient_mul($(A*B, -G), $(A, G*B), $(B, G*A)).
+
+    %$gradient_mul($(A*B, G1), $(A, G2), $(A, G3)) :-
+    %   G1 +
+
+"""

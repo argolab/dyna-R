@@ -1,0 +1,40 @@
+
+pos_tags(Sentence, WordIdx) = $parameters(&sentence_tags(Sentence, WordIdx)).
+
+
+% a set of all tags which are allowed
+tags(X) :- X=pos_tags(_,_).
+
+rules(&prefix_replace(T0 :tags, T1 :tags, T2 :tags)).
+rules(&infix_replace(T0 :tags, T1 :tags, T2 :tags)).
+
+% the rewrite rules which rewrite a particular tag in the sentence based off matching the surounding context
+% default to using the tag from the last time that this expression ran, otherwise this is
+rewritten_pos_tags(_, Sentence, WordIdx) := pos_tags(Sentence, WordIdx).
+rewritten_pos_tags(&prefix_replace(T0, T1, T2), Sentence, WordIdx) := T2 for pos_tags(Sentence, WordIdx-2)=T0, pos_tags(Sentence, WordIdx-1)=T1.
+rewritten_pos_tags(&infix_replace(T0, T1, T2), Sentence, WordIdx) := T1 for pos_tags(Sentence, WordIdx-1)=T0, pos_tags(Sentence, WordIdx+1)=T2.
+
+
+rule_loss(Rule :rules) += 1 for rewritten_pos_tags(Rule, Sentence, WordIdx) != gold_tags(Sentence, WordIdx).
+
+best_rule min= rule_loss(R) arg R.
+selected_rule = $arg(best_rule).
+best_loss = $value(best_rule).
+last_loss = $parameters(&input_loss).
+
+
+word_tag_count(Word, Tag) += Word=sentence(Sentence, WordIdx), Tag=gold_tags(Sentence, WordIdx).
+
+word_initial_tag(Word) = $arg((max= word_tag_count(Word, Tag) arg Tag)).
+
+$parameters_next(&input_loss) := best_loss.
+
+$parameters_next(&sentence_tags(Sentence, WordIdx)) := word_inital_tag(sentences(Sentence, WordIdx)).
+$parameters_next(&sentence_tags(Sentence, WordIdx)) := rewritten_pos_tags(selected_rule, Sentence, WordIdx).
+
+$parameter_next(&action_sequence) := [].
+$parameter_next(&action_sequence) := [selected_rule | $parameter(&action_sequence)].
+
+
+% control if the parameters are updated
+$parameters_step &= best_loss < last_loss.

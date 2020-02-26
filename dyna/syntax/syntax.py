@@ -171,6 +171,8 @@ def add_infix_op():
         BinOp('in', N, 4, 'contains'),
         BinOp('∈', N, 4, 'contains'),
 
+        BinOp('<~', N, 4),
+
         BinOp('!',  L, 4, 'type_assertion'),   # left assoc just like :/2.
 
         ChainedCompare(5),
