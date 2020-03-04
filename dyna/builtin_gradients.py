@@ -145,26 +145,33 @@ class GradientCircuit(object):
                 # unpack the tuples and their gradients and repack them back as
                 # two different operations?
 
+                # the structured terms do not need to pack or unpackage the
+                # values, as we are only going to track the gradient for the
+                # primitive values, which might be contained as arguments,
+                # though we should be able to pack and unpack the gradients for
+                # those operators as well
 
-                assert False
+                gradient_func[name] = body
 
-                # the build structure case needs to be handled, there are two different modes in this case.  Depending on which arguments are grounded
-                # though due to the optimizer, it may
+                # assert False
 
-                vals, grads = [],[]
-                Rs = []
-                for arg in body.arguments:
-                    v = VariableId()
-                    g = VariableId()
-                    Rs.append(BuildStructure('$', arg, (v, g)))
+                # # the build structure case needs to be handled, there are two different modes in this case.  Depending on which arguments are grounded
+                # # though due to the optimizer, it may
 
-                v = VariableId()
-                g = VariableId()
-                Rs.append(BuildStructure(body.name, v, vals))
-                Rs.append(BuildStructure(body.name, g, grads))
-                Rs.append(BuildStructure(body.result, '$', (v,g)))
+                # vals, grads = [],[]
+                # Rs = []
+                # for arg in body.arguments:
+                #     v = VariableId()
+                #     g = VariableId()
+                #     Rs.append(BuildStructure('$', arg, (v, g)))
 
-                gradient_func[name] = intersect(*Rs)
+                # v = VariableId()
+                # g = VariableId()
+                # Rs.append(BuildStructure(body.name, v, vals))
+                # Rs.append(BuildStructure(body.name, g, grads))
+                # Rs.append(BuildStructure(body.result, '$', (v,g)))
+
+                # gradient_func[name] = intersect(*Rs)
 
             elif isinstance(body, Aggregator):
                 # determine the name of the aggregator?
@@ -248,6 +255,14 @@ class GradientCircuit(object):
                             return self.dyna_system.call_term('$gradient_unify', 2)(R.v1, R.v2, ret=constant(True))
                             # assert False  # this needs to get replaced with an operator that changes the "in/out" flags on the variables
                             # pass
+                        elif isinstance(R, BuildStructure):
+                            # there is no mode considered for a build structure operation, though we are going to rewrite all of its arguments
+                            return R.rename_vars(get_var)
+
+                            #assert False
+                            # TODO: this is going to need to identify that there is some /mode/ to this epression also, though this is
+
+
                         assert isinstance(R, (Intersect, Unify, FinalState))
                         return R.rewrite(rename_func)
 
@@ -270,11 +285,11 @@ class GradientCircuit(object):
 
                     additional_R = []
 
-                    # need to rename the variables so that
                     rmap = {}
                     for va, vb in ocall.var_map.items():
                         assert not isinstance(va, ConstantVariable)
                         if va is ret_variable:
+                            assert False
                             additional_R.append(BuildStructure('$', vb, (VariableId(), GRADIENT_RES)))
                         elif isinstance(va._compiler_name, int):
                             # this represents an argument to the method
@@ -309,6 +324,7 @@ class GradientCircuit(object):
                     # then there are no arguments to this method, so we are just going to create some dummy expression
                     # which will be like: `func($(Value, _)) :- Value=func().`  The input to the function can
                     gvalret = VariableId()
+                    assert False
                     gfunc = intersect(BuildStructure('$', VariableId(0), (gvalret, VariableId())),
                                       func_call(ret=gvalret),
                                       Unify(constant(True), ret_variable))
@@ -421,6 +437,15 @@ def define_gradient_operations(dyna_system):
     $gradient_mul(&in(C, GC), &in(A, GA), &out(B, GB)) :- C/A=B, GC=GB/A, GA=-GB*C/A^2.
     $gradient_mul(&in(C, 0), &in(A, 0), &in(B, 0)) :- C == A*B.
 
+    $gradient_exp(&out(B, GB), &in(A, GA)) :- B=exp(A), GA=GB*B.
+    $gradient_exp(&in(B, GB), &out(A, GA)) :- B=exp(A), GB=GA/B.
+    $gradient_exp(&in(B, 0), &in(A, 0)) :- B == exp(A).
+
+    $gradient_pow(&out(C, GC), &in(A, GA), &in(B, GB)) :- C=A^B, GA=GC*A^(B-1)*B, GB=A^B*log(A).
+    $gradinet_pow(&in(C, GC), &out(A, GA), &in(B, GB)) :- C=A^B, GC=GA*C^(1/B-1)/B, GB=-GA*C^(1/B)*log(C)/B^2.
+    $gradient_pow(&in(C, GC), &in(A, GA), &out(B, GB)) :- C=A^B, GA=GC*-log(C)/(A*log(A)^2), GC=GB/(C*log(A)).
+    $gradient_pow(&in(C, 0), &in(A, 0), &in(B, 0)) :- C == A^B.
+
 
     $gradient_abs(&out(O, GO), &in(X, GX)) :- O=abs(X), GX=sign(X)*GO.
     $gradient_abs(&in(O, 0), &in(X, 0)) :- O==abs(X).
@@ -452,13 +477,32 @@ def define_gradient_operations(dyna_system):
 
 
 
-    $gradient_unify(&in(X, 0), &in(X, 0)).
+    $gradient_unify(&in(X, 0), &in(Y, 0)) :- X == Y.
     $gradient_unify(&in(X, G), &out(X, G)).
     $gradient_unify(&out(X, G), &in(X, G)).
 
 
+    $gradient_unpack_value(X, &in(X, 0)).
+    $gradinet_unpack_value(X, &out(X, G)).  % In this case the gradient information is just lost, there is nothing here which this can backup the value into
+    $gradient_unpack_value(X, Y) :-
+      $gradient_not_moded(Y),
+      $reflect(Y, Name, Arity, Args), $reflect(X, Name, Arity, ArgsUnpack),
+      $gradient_unpack_args(ArgsUnpack, Args).
+    $gradient_unpack_args([], []).
+    $gradient_unpack_args([X|Xs], [Y|Ys]) :- $gradient_unpack_args(Xs, Ys), $gradient_unpack_value(X, Y).
+
     % if a variable is only used in a single place, then that variable can not have any incoming gradient, so it must be zero at that inital point
     $gradient_nway_split(&out(X, 0)).
+
+    % an expression like Z=&foo(A,B,C) should not be moded if we take the prolog approach
+    % this means that we are only attaching mode information to /primitive/ types which can be computed via some builtin operation
+    % this makes sense as we are only attaching gradient information to numerical values, while structured terms like &foo(A,B) have no gradient information directly.
+    $gradient_is_not_moded(_) &= true.
+    $gradient_is_not_moded(&in(_, _)) &= false.
+    $gradient_is_not_moded(&out(_,_)) &= false.
+
+    $gradient_nway_split(X) :- $gradient_is_not_moded(X).
+
 
     """]
 
@@ -468,8 +512,14 @@ def define_gradient_operations(dyna_system):
             c += f'G{j} = ' + ' + '.join([f'G{i}' for i in range(width) if i != j])
             c += '.'
             gradient_code.append(c)
+        c = '$gradient_nway_split(' + ', '.join(['X']*width) + ') :- $gradient_is_not_moded(X).'
+        gradient_code.append(c)
 
-    dyna_system.add_rules('\n'.join(gradient_code))
+
+    gradient_code = '\n'.join(gradient_code)
+    #gradient_code = gradient_code.replace('&in', '&$gradient_in').replace('&out', '&$gradient_out')
+
+    dyna_system.add_rules(gradient_code)
 
     dyna_system.agenda.push(gradient.generate_gradient)
 
@@ -492,6 +542,10 @@ def define_gradient_operations(dyna_system):
 # represent the expression directly using a partition, then it would represent
 # that when computing the gradient, it would just sum over the different values.
 
+
+# the gradient will need to track the modes of operations that we want to
+# backpropagate through.  This means that for operations such as unpacking a
+# tuple should just pass the gradient though.  Though the unpacking/repacking of an expression would be something
 
 
 """
@@ -517,7 +571,7 @@ def define_gradient_operations(dyna_system):
     $gradient_cos($(cos(X), G),   $(X, G*-sin(X))).
     $gradient_tan($(tan(X), G),   $(X, G/(cos(X)^2))).
 
-    $gradient_exp($(E, G),        $(X,E*G)) :- E=exp(X).
+s    $gradient_exp($(E, G),        $(X,E*G)) :- E=exp(X).
     $gradient_pow($(X^Y, G),      $(X, G*Y*(X^(Y-1))), $(Y, log(X)*X^Y *G)).
 
 
