@@ -500,7 +500,7 @@ def run_optimizer_local(R, exposed_variables):
 
     exposed_constants = []
     frame = Frame()
-    frame.memo_reads = False  # prevent memo tables from being read at this step so optimizations are not dependant
+    frame.in_optimizer = True  # prevent memo tables from being read at this step so optimizations are not dependant
     frame.assumption_tracker = assumptions.add
     while True:
         last_R = R

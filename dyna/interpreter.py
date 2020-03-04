@@ -245,6 +245,15 @@ class VariableId(Variable):
     def rawSetValue(self, frame, value):
         frame[self.__name] = value
 
+    def setType(self, frame, typ):
+        frame._frame_settype(self.__name, typ)
+
+    def getType(self, frame):
+        return frame._frame_gettype(self.__name)
+
+    def _unset_type(self, frame):
+        frame.variable_types.pop(self.__name, None)
+
     def __eq__(self, other):
         return (self is other) or (type(self) is type(other) and (self.__name == other.__name))
     def __hash__(self):
@@ -279,6 +288,12 @@ class ConstantVariable(Variable):
         if value != self.__value:  # otherwise we are going to have to make the result terminal with a value of zero
             raise UnificationFailure()
         return True
+
+    def setType(self, frame, value):
+        pass
+
+    def getType(self, frame):
+        return None
 
     def __lt__(self, other):
         assert isinstance(other, Variable)
@@ -320,19 +335,21 @@ def constant(v):
     return ConstantVariable(None, v)
 
 class Frame(dict):
-    __slots__ = ('call_stack', 'memo_reads', 'assumption_tracker')
+    __slots__ = ('call_stack', 'in_optimizer', 'assumption_tracker', 'variable_types')
 
     def __init__(self, f=None):
         if f is not None:
             super().__init__(f)
             self.call_stack = f.call_stack.copy()
-            self.memo_reads = f.memo_reads
+            self.in_optimizer = f.in_optimizer
             self.assumption_tracker = f.assumption_tracker
+            self.variable_types = f.variable_types.copy()
         else:
             super().__init__()
             self.call_stack = []
-            self.memo_reads = True  # if the memo tables are allowed to perform reads (making the results dependent on the values saved, otherwise just don't run)
+            self.in_optimizer = False  # if we are in the optimizer, meaning that we should avoid performing reads of the memo tables as we want a generic expression
             self.assumption_tracker = lambda x: None  # when we encounter an assumption during simplification, log that here
+            self.variable_types = {}
 
     def __repr__(self):
         nice = {str(k).split('\n')[0]: v for k,v in self.items()}
@@ -350,6 +367,17 @@ class Frame(dict):
     def _frame_isbound(self, varname):
         return varname in self
 
+    def _frame_settype(self, varname, typ):
+        if not self.in_optimizer:
+            ot = self.variable_types.get(varname)
+            if ot is None:
+                self.variable_types[varname] = typ
+            elif ot != typ:
+                # these are two different types
+                raise UnificationFailure()
+
+    def _frame_gettype(self, varname):
+        return self.variable_types.get(varname)
 
 ####################################################################################################
 # Iterators and other things
@@ -521,7 +549,7 @@ def simplify_terminal(self, frame):
     return self
 
 
-def saturate(R, frame, *, log=False):
+def saturate(R, frame, *, log=True):
     while True:
         # the frame is getting modified and the R is returning potentially new
         # things.  by saturating this, we are going to run until there is
@@ -757,6 +785,7 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
 
     incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
     incoming_values = [v.getValue(frame) for v in self._unioned_vars]
+    incoming_types = [v.getType(frame) for v in self._unioned_vars]
 
     #nc = defaultdict(list)
     nc = PrefixTrie(len(self._unioned_vars))
@@ -824,9 +853,11 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
                 if not imode and val is None:
                     var._unset(frame)
 
-        for var, imode in zip(self._unioned_vars, incoming_mode):
+        for var, imode, itype in zip(self._unioned_vars, incoming_mode, incoming_types):
             if not imode:
                 var._unset(frame)
+            if itype is not None:
+                var._unset_type(frame)
 
     if not nc:
         # then nothing matched, so just return that the partition is empty
@@ -1013,6 +1044,10 @@ def simplify_unify(self, frame):
     elif self.v2.isBound(frame):
         self.v1.setValue(frame, self.v2.getValue(frame))
         return terminal(1)
+    if self.v1.getType(frame) is not None:
+        self.v2.setType(frame, self.v1.getType(frame))
+    elif self.v2.getType(frame) is not None:
+        self.v1.setType(frame, self.v2.getType(frame))
     return self
 
 
@@ -1131,7 +1166,7 @@ def simplify_aggregator(self, frame):
         except AggregatorSaturated as s:
             agg_result = s.value
         except DynaSolverUnLoopable as ex:
-            if frame.memo_reads:
+            if not frame.in_optimizer:
                 raise
             # can not run this, probably happening from the optimizer where we are not reading from the memo tables
             return Aggregator(self.result, self.head_vars, self.body_res, self.aggregator, body)

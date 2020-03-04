@@ -292,7 +292,7 @@ class RMemo(RBaseType):
 def simplify_memo(self, frame):
     # the idea should be that if we are handling different modes
 
-    if not frame.memo_reads:
+    if frame.in_optimizer:
         # then we are not allowed to perform any reads of a memo table
         return self
 
@@ -331,13 +331,9 @@ def getPartition_memos(self, frame):
     # values is not already present.  So may need to perform a computation for
     # the memoized values.
 
-    if not frame.memo_reads:
+    if frame.in_optimizer:
         # then the memoized values are disabled (for optimization)
         return
-
-    # if not self.memos.is_null_memo or not frame.memo_reads:
-    #     # then we can not use this table to iterate as we do not know all of the non-null values
-    #     return
 
     f = Frame()
     for va, vb, imode in zip(self.variables, self.memos.variables, self.memos.supported_mode):

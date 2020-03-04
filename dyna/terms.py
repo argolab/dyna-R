@@ -172,6 +172,9 @@ def simplify_buildStructure(self, frame):
         res = Term(self.name, [v.getValue(frame) for v in self.arguments])
         self.result.setValue(frame, res)
         return Terminal(1)
+    else:
+        # set type information in the frame so that this can be tracked more easily
+        self.result.setType(frame, (self.name, len(self.arguments)))
 
     return self
 
@@ -230,7 +233,6 @@ def optimizer_buildStructure(self, info):
     if self.result in buildStructure_determine_constructed_from(self.result, info, {}):
         # the occurs check fails
         return Terminal(0)
-
 
     return self
 
@@ -315,10 +317,25 @@ def simplify_reflectStructure(self, frame):
         self.args_list.setValue(frame, Term.fromlist(res.arguments))
         self.num_args.setValue(frame, len(res.arguments))
         return Terminal(1)
-    elif self.name.isBound(frame) and self.args_list.isBound(frame):
+
+    typ = self.result.getType(frame)
+
+    if self.name.isBound(frame):
+        name = self.name.getValue(frame)
+    elif typ is not None:
+        name = typ[0]
+    else:
+        name = None
+    if self.num_args.isBound(frame):
+        nargs = self.num_args.getValue(frame)
+    elif typ is not None:
+        nargs = typ[1]
+    else:
+        nargs = None
+
+    if name is not None and self.args_list.isBound(frame):
         # then we are going to be able to construct this object.  so we are
         # going to have to walk the list and convert it back into something that we want?
-        name = self.name.getValue(frame)
         args = self.args_list.getValue(frame)
         if not isinstance(name, str) or not isinstance(args, Term):
             return Terminal(0)
@@ -332,12 +349,11 @@ def simplify_reflectStructure(self, frame):
         self.num_args.setValue(frame, len(res.arguments))
         self.result.setValue(frame, res)
         return Terminal(1)
-    elif self.name.isBound(frame) and self.num_args.isBound(frame):
-        assert not self.args_list.isBound(frame)
-        name = self.name.getValue(frame)
-        num_args = self.num_args.getValue(frame)
 
-        R = reflect_buildMatch(self, name, num_args)
+    if name is not None and nargs is not None:
+        assert not self.args_list.isBound(frame)
+
+        R = reflect_buildMatch(self, name, nargs)
         return simplify(R, frame)
 
     return self
@@ -396,7 +412,7 @@ class Evaluate_reflect(RBaseType):
         return self.ret, self.name, self.nargs, self.args_list
 
     def rename_vars(self, remap):
-        return Evaluate_reflect(self.dyna_system, remap(self.ret_var), remap(self.name_var), remap(self.nargs_var), remap(self.args_list))
+        return Evaluate_reflect(self.dyna_system, remap(self.ret), remap(self.name), remap(self.nargs), remap(self.args_list))
 
     def _tuple_rep(self):
         return self.__class__.__name__, self.ret, self.name, self.nargs, self.args_list

@@ -1086,3 +1086,19 @@ def test_memo_defaults():
     # dyna_system.run_agenda()
 
     # check()
+
+
+def test_type_information_passing():
+    from dyna.syntax.normalizer import add_rules
+
+    add_rules("""
+    type_r1(&foo(X, Y)).
+    type_r2(&bar(Q, R)).
+
+    type_z :- type_r1(X), type_r2(X).
+    """)
+
+    z = dyna_system.call_term('type_z', 0)
+    frame = Frame()
+    rr = saturate(z, frame)
+    assert rr == Terminal(0)
