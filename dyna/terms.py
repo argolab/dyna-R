@@ -573,15 +573,16 @@ def simplify_call(self, frame):
     # sanitity check for now
     # in the case this fails, then it is likely that the python program would get a stack overflow exception without this block
 
-    if len(self.parent_calls_blocker) >= 10:
-        err = 'Dyna backchaining stack depth has exceeded 10 recurisve frames'
-        suggested_prompt = None
+    if len(self.parent_calls_blocker) >= self.dyna_system.stack_recursion_limit:
+        err = f'Dyna backchaining stack depth has exceeded {self.dyna_system.stack_depth_limit} recurisve frames'
+        suggested_prompt = suggest_api = None
         if isinstance(self.term_ref, tuple) and len(self.term_ref) == 2:
             name, arity = self.term_ref
             if isinstance(name, str) and isinstance(arity, int):
                 err += '\nPossible fix is to memoize the intermeidate results and limit the stack depth, Eg:'
                 suggested_prompt = f'memoize_unk {name}/{arity}'
-        raise DynaSolverErrorSuggestPrompt(err, suggested_prompt)
+                suggest_api = f'set the expression be memoized `api.make_call("{name}/{arity}").set_memoized("unk")`\n or increase the stack limit with `api.stack_limit = 100`'
+        raise DynaSolverErrorSuggestPrompt(err, suggested_prompt, suggest_api)
 
     # assert len(self.parent_calls_blocker) < 10
 

@@ -549,7 +549,7 @@ def simplify_terminal(self, frame):
     return self
 
 
-def saturate(R, frame, *, log=True):
+def saturate(R, frame, *, log=False):
     while True:
         # the frame is getting modified and the R is returning potentially new
         # things.  by saturating this, we are going to run until there is

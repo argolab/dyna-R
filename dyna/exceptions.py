@@ -5,9 +5,13 @@ class DynaSolverError(RuntimeError):
 
 class DynaSolverErrorSuggestPrompt(DynaSolverError):
 
-    def __init__(self, msg, suggest):
+    def __init__(self, msg, suggest_prompt, suggest_api):
         super().__init__(msg)
         self.suggest = suggest
+        self.suggest_api = suggest_api
+
+    def __repr__(self):
+        return f'{self.msg}\n{self.suggest_api}'
 
 
 class DynaSolverUnLoopable(DynaSolverError):

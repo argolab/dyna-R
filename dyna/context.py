@@ -52,6 +52,8 @@ class SystemContext:
 
         self.safety_planner = SafetyPlanner(lambda term: self.lookup_term(term, ignore=('memos', 'compile')))
 
+        self.stack_recursion_limit = 10
+
         if parent is None:
             # then we load the builtin operators
             from dyna.builtins import define_builtins
