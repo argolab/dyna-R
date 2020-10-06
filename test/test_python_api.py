@@ -1,0 +1,41 @@
+from dyna.api import DynaAPI
+
+import pytest
+
+def test_python_api():
+    api = DynaAPI()
+
+    @api.define_function()
+    def my_function(arg1):
+        return arg1 * 7
+
+    api.add_rules("""
+    fib(X) = fib(X-1) + fib(X-2) for X > 1.
+    fib(1) = 1.
+    fib(0) = 0.
+
+    table(0) = 1.
+    table(1) = 2.
+    table(2) = 3.
+    table(3) = 4.
+    """)
+
+    fib = api.make_call('fib/1')
+    assert fib(10) == 55
+
+    table = api.make_call('table(%)')
+    assert table(1) == 2
+    assert table[2] == 3
+
+    vals = {key: val for ((key,), val) in table}
+    assert vals == {0:1, 1:2, 2:3, 3:4}
+
+    table2 = api.make_table('table2', 1)
+    table2[7] = 123
+    table2[8] = {'python opaque dict': 999}  # any value that we do not know how to deal with will essentially be opaque, but is still passed around
+
+    api.add_rules("""
+    cnt_table2 += 1 for X is table2(Y).
+    """)
+
+    assert api.call('cnt_table2') == 2

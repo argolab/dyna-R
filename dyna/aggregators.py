@@ -6,7 +6,7 @@ class AggregatorEqual(AggregatorOpBase):
     def lift(self, x): return x
     def lower(self, x): return x
     def combine(self, a,b):
-        return Term('$error', ("Aggregator `=` should not have more than two values",))
+        return Term('$error', ("Aggregator `=` should not have more than one value",))
 
 class AggregatorSaturate(AggregatorOpBase):
     selective = True

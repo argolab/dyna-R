@@ -118,18 +118,32 @@ def split_heuristic(R, info=None):
                     vs |= set(c2.arguments)
                 elif isinstance(c2, CallTerm):
                     # if this is something that is interesting, then we should
-                    # include it, which emans that there aren't additional variables
+                    # include it, which means that there aren't additional variables
                     # that would have to be included
+
+                    # TODO: this could potentially be representing that there is some merged expression, which could
+                    # potentially return a higher multiplicity, as for those expressions this is not restricted.
+                    # this should really ensure that the result would be from an aggregator, so that the multiplicity is at most 1
 
                     assert c2.dyna_system is c.dyna_system  # is this going to be a requirement, or just something that we should instead check, how to mix different "dynabases?"
                     if lv.issubset(vs) and lv:  # if there are some vars that intersect and it is a subset of the vars that we are interested in
                         ecall.add(c2)
+                        assert isinstance(c2.term_ref, tuple)
                 elif isinstance(c2, ModedOp):
                     # take moded ops if they are dealing with this operator
                     # specifically, so, if there was something like `f(X, X+1)`
                     # that would take the addition operator.  But this currently
                     # wouldn't take something like: `f(X,Z), Y=X+1, Z=Y+1`
                     # because it goes through two different operators to combine
+
+
+                    # this can't change the resulting multiplicity for a given
+                    # expression.  The builtins are all semi-determinstic for a
+                    # given assignment.  Though they may provide a way to loop
+                    # over the domain of a variable.  Though in that case, it
+                    # would just have duplicated the builtin constraint which
+                    # would not change the multiplicty overall.
+
                     if lv.issubset(vs) and lv:
                         ecall.add(lv)
 
@@ -200,7 +214,7 @@ def make_split(R, splits):
     return intersect(R, *additions)
 
 
-class RStrctureInfo:
+class RStructureInfo:
 
     conjunctive_constraints : Dict[Variable,List[RBaseType]]  # all the current constraints in the partition + what is in the parent
 
@@ -224,7 +238,7 @@ class RStrctureInfo:
 
 
     def recurse(self, *, frame=None):
-        return RStrctureInfo(
+        return RStructureInfo(
             conjunctive_constraints=defaultdict(list, ((k, v.copy()) for k,v in self.conjunctive_constraints.items())),
             all_constraints=self.all_constraints,
             # don't pass alias vars, as we want to handle that at every scope seperatly
@@ -232,7 +246,7 @@ class RStrctureInfo:
             frame=frame or self.frame)
 
     def get_constraints(self, var, typ):
-        for c in conjunctive_constraints[var]:
+        for c in self.conjunctive_constraints[var]:
             if isinstance(c, typ):
                 yield c
 
@@ -513,7 +527,7 @@ def run_optimizer_local(R, exposed_variables):
         if R.isEmpty():
             break
 
-        info = RStrctureInfo(exposed_variables=exposed_variables,frame=frame)
+        info = RStructureInfo(exposed_variables=exposed_variables,frame=frame)
         info.partition_constraints = info.conjunctive_constraints = map_constraints_to_vars(get_intersecting_constraints(R))
         info.all_constraints = map_constraints_to_vars(R.all_children())
 

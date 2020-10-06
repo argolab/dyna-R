@@ -8,7 +8,7 @@ from .optimize import optimizer
 def _term_op(op):
     def oper(*args):
         # this does not have the current reference to the dyna_system
-        # this makes this somewhat brittle in the case that
+        # this makes this somewhat brittle in the case that new things were defined in a different dyna instance
         from . import dyna_system
         return dyna_system.raw_call('op_'+op, args)
     return oper
@@ -575,7 +575,7 @@ def simplify_call(self, frame):
 
     if len(self.parent_calls_blocker) >= 10:
         err = 'Dyna backchaining stack depth has exceeded 10 recurisve frames'
-        suggested_command = None
+        suggested_prompt = None
         if isinstance(self.term_ref, tuple) and len(self.term_ref) == 2:
             name, arity = self.term_ref
             if isinstance(name, str) and isinstance(arity, int):

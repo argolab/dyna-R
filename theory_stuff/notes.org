@@ -233,3 +233,22 @@ public:
 + that requires that there is an occurs check being performed to ensure that we
   are not going to just keep inling around a cycle which is building itself in
   the cycle.
+
+
+* just a rewriting library
++ if it was just a term rewriting and pattern matching library, then it would
+  just be applying rewrite rules when applicable.  There would be some outer
+  functor matching on all of the expressions as well as a representation for a
+  nested variable kind.  There could be some special cases where a variable
+  would be used as one of the arguments.
+  - the idea of having a frame could just be built into the representation, it
+    would maintain the frame as it pushed and poped from different levels in the
+    program.  Allowing custom defined rules would enable the system to be
+    extended.
+  - there does not need to be a discussion about compilation, as /speed/ is not
+    necessarily something that we are trying to prioritize with the language
+    atm.  Just that it should not be /too slow/.
+  - being able to match against the conjunctive rewrites could be interested?
+    it would model closely what is happening in other logic programming languages.
+    - if there was some way that it could have all of the different levels which
+      may be useful, then we could have some discussion about having the differences

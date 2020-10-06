@@ -23,12 +23,13 @@ dyna   OR   python -m dyna.repl
 ```
 ./dyna   # start dyna
 
-# define fib
+# define finannaci sequence
 fib(X) = fib(X - 1) + fib(X - 2) for X > 1.
 fib(0) = 0.
 fib(1) = 1.
 
-# set fib to be memoized with an unk default
+# set fib to be memoized with an unknown default.
+# A value will be compute the first time an entry is required
 memoize_unk fib/1
 
 # make a query against fib
@@ -44,6 +45,7 @@ odd([X|Y]) :- even(Y).
 even_odd(X) :- even(X), odd(X).
 
 # run the optimizer on the program to identify that even_odd(X) is empty
+# even & odd represent incompatiable recursive "types" where their intersection is empty.
 optimize
 
 even_odd(X)
