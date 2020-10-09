@@ -5,8 +5,12 @@ import pytest
 def test_python_api():
     api = DynaAPI()
 
+    called_my_function = 0
+
     @api.define_function()
     def my_function(arg1):
+        nonlocal called_my_function
+        called_my_function += 1
         return arg1 * 7
 
     api.add_rules("""
@@ -23,6 +27,9 @@ def test_python_api():
     two_c(0, 2) = 3.
     two_c(1, 3) = 4.
     two_c(1, 4) = 5.
+
+    my_function_test(X) += my_function(X * 2).
+    my_function_test(X) += 1.
     """)
 
     fib = api.make_call('fib/1')
@@ -44,6 +51,11 @@ def test_python_api():
     assert {k: v for ((k,), v) in api.make_call('two_c(1, %)')} == {3:4, 4:5}
 
     assert {k: v for ((k,), v) in api.make_call('two_c(%, 3)')} == {1: 4}
+    assert api.make_call('two_c(%,3)').to_dict() == {(1,): 4}
+
+    my_function_test = api.make_call('my_function_test/1')
+    assert my_function_test(3) == 1 + 3*2*7
+    assert called_my_function == 1
 
     return
 

@@ -68,16 +68,6 @@ class SystemContext:
 
         self.run_agenda()
 
-
-    # @property
-    # def safety_planner(self):
-    #     # TODO: we should build a single instance and then update it.  In the
-    #     # case of optimization, we might idnetify that we are willing to work
-    #     # with a more free mode and still perform grounding.  In the case that
-    #     # new rules are added, we are going to have to invalidate those terms
-    #     # and then redo any compuation that they were involved in.
-    #     return SafetyPlanner(
-
     def term_as_defined_assumption(self, name):
         if name not in self.terms_as_defined_assumptions:
             self.terms_as_defined_assumptions[name] = Assumption(f'defined {name}')
@@ -188,6 +178,20 @@ class SystemContext:
         # track that this expression has changed, which can cause things to get recomputed/propagated to the agenda etc
         self.invalidate_term_as_defined_assumption(a)
         #self.invalidate_term_assumption(a)
+
+    def lookup_term_aggregator(self, name, arity):
+        a = (name, arity)
+        if a not in self.terms_as_defined:
+            return None
+        t = self.terms_as_defined[a]
+        if not isinstance(t, Aggregator):
+            return None
+        name = None
+        from .aggregators import AGGREGATORS
+        for k, v in AGGEGATORS.items():
+            if v is t.aggregator:
+                name = k
+        return t.aggregator, k
 
     def memoize_term(self, name, kind='null', mem_variables=None):
         assert kind in ('unk', 'null', 'none')
@@ -399,7 +403,7 @@ class SystemContext:
     def _compile_term(self, term, ground_vars :Set[Variable]):
         # always use the lookup as this can get optimized versions
         R = self.lookup_term(term, ignore=('compile', 'memo'))
-        if isinstance(R, MergedExpression):
+        if isinstance(term, MergedExpression):
             exposed = term.exposed_vars
         else:
             # for dyna expressions the exposed public variables always have the same names

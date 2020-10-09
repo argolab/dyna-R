@@ -8,7 +8,7 @@ from dyna.interpreter import saturate, loop, Frame, Terminal, ret_variable, Vari
 from dyna.builtins import moded_op
 from dyna.syntax.normalizer import user_query_to_rexpr, run_parser, FVar as ParserWrappedVariableName
 from dyna.optimize import run_optimizer
-from dyna.terms import CallTerm
+from dyna.terms import CallTerm, Term
 
 
 class WrappedOpaqueObject:
@@ -32,15 +32,20 @@ def cast_to_dyna(value):
 def cast_from_dyna(value):
     if isinstance(value, Term):
         try:
+            # if it not a list then .aslist either returns None or raises an exception (at some point internally)
             return [cast_from_dyna(v) for v in value.aslist()]
         except (TypeError,AttributeError):
             pass
-    if isinstance(value, WrappedOpaqueObject):
+    elif isinstance(value, WrappedOpaqueObject):
         return value._value
     return value
 
 
 def construct_call(system, string):
+    # given a string like `foo/123` or `foo(%,%,7, bar(8, %))`, construct an
+    # R-expr which can be used to retrieve the value of the expression.  The
+    # variables 0,1,... will be the arguments and ret_variable will be the returned variable
+
     m = re.match(r'([a-z][a-zA-Z0-9_\$]*)/([0-9]+)', string)
     if m:
         name = m.group(1)
@@ -68,10 +73,34 @@ def construct_call(system, string):
     # so an expression like foo(%, 123) will have that there is one variable, but calls foo/2
     call_term = None
     for child in rexpr.all_children():
-        if isinstance(child, CallTerm) and ret_variable in child.var_map.values():
+        if isinstance(child, CallTerm): # and ret_variable in child.var_map.values():  # TODO: this needs to deal with the parser adding Unify with dummy variables...
             call_term = child
     assert call_term is not None
-    return rexpr, var_idx, call_term.term_ref
+    name = call_term.term_ref
+    if not (isinstance(name, tuple) and len(name) == 2 and isinstance(name[0], str) and isinstance(name[1], int)):
+        name = None
+    return rexpr, var_idx, name
+
+
+def construct_assignment(system, string):
+    raise NotImplemented()
+
+    m = re.match(r'([a-z][a-zA-Z0-9_\$]*)/([0-9]+)', string)
+    if m:
+        name = m.group(1)
+        arity = int(m.group(2))
+        agg = system.lokup_term_aggregator(name, arity)
+        # if aggregator:
+        #     agg, _ = agg
+        # else:
+        #     agg =
+        # this should construct a dummy expression where it just has the aggregtor for the given variables which are in the expression
+        # then it will find that there are values which correspond with
+        vals = [Unify(VariableId(i), VariableId(f'ARGUMENT_{i}')) for i in range(arity)] + [Unify(ret_variable, VariableId('VALUE'))]
+
+
+        return system.call_term(name, arity), arity, (name, arity)
+
 
 
 class DynaIncompleteComputationException(Exception):
@@ -124,7 +153,7 @@ class DynaExpressionWrapper:
         if r == Terminal(0):
             return None
         if r == Terminal(1):
-            return ret_variable.getValue(frame)
+            return cast_from_dyna(ret_variable.getValue(frame))
         if self._api._expose_rexprs:
             return r
         else:
@@ -138,6 +167,7 @@ class DynaExpressionWrapper:
     def __setitem__(self, key, value):
         if not isinstance(key, tuple):
             key = key,  # make it always a tuple
+        assert self._name, "can not set the value of an expression which does not have a user referencable name"
 
         # this needs to figure out which aggregator an expression is using? and then override the value
         # or we could always just use := for expressions that are assigned via this setitem
@@ -163,7 +193,8 @@ class DynaExpressionWrapper:
                 else:
                     raise DynaIncompleteComputationException(rr)
             if rr.isEmpty(): return
-            *arg_values, res_value = [v.getValue(ff) for v in user_vars]
+            *arg_values, res_value = [cast_from_dyna(v.getValue(ff)) for v in user_vars]
+            arg_values = tuple(arg_values)
             for _ in range(rr.multiplicity):
                 cb((arg_values, res_value))
 
@@ -173,6 +204,12 @@ class DynaExpressionWrapper:
 
     def __iter__(self):
         return callback_to_iterator(self.callback)
+
+    def to_dict(self):
+        ret = {}
+        @self.loop_via_callback
+        def s(x): ret[x[0]] = x[1]
+        return ret
 
     def set_memoized(self, mode):
         assert mode in ('null', 'unk', 'off')
@@ -184,7 +221,6 @@ class DynaExpressionWrapper:
         if self._statement:
             return str(self._statement)
         return str(self._call)
-
 
 class DynaAPI:
 
@@ -226,8 +262,8 @@ class DynaAPI:
     @property
     def stack_recursion_limit(self): return self._system.stack_recursion_limit
 
-    @stack_depth_limit.setter
-    def stack_depth_limit(self, val):
+    @stack_recursion_limit.setter
+    def stack_recursion_limit(self, val):
         assert val > 0
         self._system.stack_recursion_limit = val
 
@@ -247,19 +283,18 @@ class DynaAPI:
 
     def table(self, name, arity):
         r = DynaExpressionWrapper(self, statement=f'{name}/{arity}')
-
-        pass
+        raise NotImplemented()
 
     def define_function(self, name=None, arity=None):
-        """
-        This could be used as:
+        """This could be used as:
 
         @api.define_function()
         def my_function(arg1, arg2):
             return arg1+arg2
 
-        then my_function/2 would be exposed in the dyna runtime for the all ground mode.  This could be done just using the builtins to expose these methods
-        simply.
+        then my_function/2 would be exposed in the dyna runtime for the all ground mode.
+
+        This is done just using the builtins to expose these methods simply.
         """
         def f(func):
             lname, larity = name, arity
@@ -345,3 +380,14 @@ __all__ = [
     'DynaIncompleteComputationException',
     'DynaUnificationFailure'
 ]
+
+
+# DISCUSSION: could write a garbage collect pass for := aggregator.  Then when
+# setting values for an expression, it can just always use :=.  This way, it
+# could allow for "advanced" expressions where there could be any R-expr, while
+# still not being /too/ inefficient with storing all of the old values for some
+# expression.
+#
+# there is also a version where an expression would just be a simpler table.
+# Then it would allow for the values to pass the updates down in a more fine
+# grained manor.  This will mean that the values
