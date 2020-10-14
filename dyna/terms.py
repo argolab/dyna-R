@@ -581,7 +581,7 @@ def simplify_call(self, frame):
             if isinstance(name, str) and isinstance(arity, int):
                 err += '\nPossible fix is to memoize the intermeidate results and limit the stack depth, Eg:'
                 suggested_prompt = f'memoize_unk {name}/{arity}'
-                suggest_api = f'set the expression be memoized `api.make_call("{name}/{arity}").set_memoized("unk")`\n or increase the stack limit with `api.stack_limit = 100`'
+                suggest_api = f'set the expression be memoized `api.make_call("{name}/{arity}").set_memoized("unk")`\n or increase the stack recursion limit with `api.stack_recursion_limit = 100`'
         raise DynaSolverErrorSuggestPrompt(err, suggested_prompt, suggest_api)
 
     # assert len(self.parent_calls_blocker) < 10
