@@ -1,6 +1,8 @@
 
-pos_tags(Sentence, WordIdx) = $parameters(&sentence_tags(Sentence, WordIdx)).
+$load("parameters").   % tell the system to load in $parameters
 
+pos_tags(Sentence, WordIdx) := '$__parameters_current'("sentence_tags", 2, &sentence_tags(Sentence, WordIdx)).
+%$parameters(&sentence_tags(Sentence, WordIdx)).
 
 % a set of all tags which are allowed
 tags(X) :- X=pos_tags(_,_).
@@ -20,21 +22,34 @@ rule_loss(Rule :rules) += 1 for rewritten_pos_tags(Rule, Sentence, WordIdx) != g
 best_rule min= rule_loss(R) arg R.
 selected_rule = $arg(best_rule).
 best_loss = $value(best_rule).
-last_loss = $parameters(&input_loss).
+last_loss = 0.%$parameters(&input_loss).
 
 
-word_tag_count(Word, Tag) += Word=sentence(Sentence, WordIdx), Tag=gold_tags(Sentence, WordIdx).
+word_tag_count(Word, Tag) += 1 for Word=sentence(Sentence, WordIdx), Tag=gold_tags(Sentence, WordIdx).
 
 word_initial_tag(Word) = $arg((max= word_tag_count(Word, Tag) arg Tag)).
 
 $parameters_next(&input_loss) := best_loss.
 
-$parameters_next(&sentence_tags(Sentence, WordIdx)) := word_inital_tag(sentences(Sentence, WordIdx)).
-$parameters_next(&sentence_tags(Sentence, WordIdx)) := rewritten_pos_tags(selected_rule, Sentence, WordIdx).
+$parameters_next(&sentence_tags(Sentence, WordIdx)) := word_initial_tag(sentence(Sentence, WordIdx)).
+%$parameters_next(&sentence_tags(Sentence, WordIdx)) := rewritten_pos_tags(selected_rule, Sentence, WordIdx).
 
-$parameter_next(&action_sequence) := [].
-$parameter_next(&action_sequence) := [selected_rule | $parameter(&action_sequence)].
+%$parameters_next(&action_sequence) := [].
+%$parameters_next(&action_sequence) := [selected_rule | $parameters(&action_sequence)].
 
+$parameters_next(&run_count) := 0.
+$parameters_next(&run_count) := $parameters(&run_count) + 1.
 
 % control if the parameters are updated
-$parameters_step &= best_loss < last_loss.
+%$parameters_step &= best_loss < last_loss.
+$parameters_step &= $parameters(&run_count) < 2.
+
+
+
+sentence(0, 0) = "a".
+sentence(0, 1) = "b".
+sentence(0, 2) = "c".
+
+gold_tags(0, 0) = "a".
+gold_tags(0, 1) = "c".
+gold_tags(0, 2) = "c".

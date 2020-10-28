@@ -224,9 +224,11 @@ def optimizer_buildStructure(self, info):
             # partition, otherwise this is not correct.  So we are giong to need
             # to map the partition's constraints?
             #import ipdb; ipdb.set_trace()
-            const = [unify(c.result, self.result)]
+            const = []#unify(c.result, self.result)]
             for a,b in zip(c.arguments, self.arguments):
                 const.append(unify(a,b))
+            if TRACK_CONSTRUCTED_FROM:
+                for u in const: u._constructed_from = self
             return intersect(*const)
 
     # the occurs check
@@ -302,6 +304,8 @@ def reflect_buildMatch(self, name, num_args):
         consts.append(c)
         prev = np
     consts.append(Unify(prev, self.args_list))  # this should just rewrite rather than adding in this additional constraint, but it should be fine...
+    if TRACK_CONSTRUCTED_FROM:
+        for c in consts: c._constructed_from = self
 
     R = Intersect(tuple(consts))
     return R
@@ -346,12 +350,16 @@ def simplify_reflectStructure(self, frame):
         if args is None:
             return Terminal(0)
         res = Term(name, args)
+        self.name.setValue(frame, name)
         self.num_args.setValue(frame, len(res.arguments))
         self.result.setValue(frame, res)
         return Terminal(1)
 
     if name is not None and nargs is not None:
         assert not self.args_list.isBound(frame)
+
+        self.name.setValue(frame, name)
+        self.num_args.setValue(frame, nargs)
 
         R = reflect_buildMatch(self, name, nargs)
         return simplify(R, frame)
@@ -443,6 +451,9 @@ def simplify_evaluate_reflect(self, frame):
             consts.append(c)
             prev = np
         consts.append(Unify(prev, self.args_list))  # this should just rewrite rather than adding in this additional constraint, but it should be fine...
+
+        if TRACK_CONSTRUCTED_FROM:
+            for c in consts: c._constructed_from = self
 
         R = Intersect(tuple(consts))
         return simplify(R, frame)

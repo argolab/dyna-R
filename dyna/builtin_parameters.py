@@ -33,6 +33,11 @@ class SteppableParamters(object):
             # do nothing in this case
             return
 
+        # double check the result
+        do_step = self.dyna_system.raw_call('$parameters_step', ())
+        if do_step is False:
+            return
+
         for (name, arity), (source, dest) in self.collections.items():
             # identify differences in the source and destination memo
             # this is modeled after refresh_whole_table
@@ -100,6 +105,9 @@ class SteppableParametersAccess(RBaseType):
 
     def rename_vars(self, remap):
         return SteppableParametersAccess(self.parameter_collection, remap(self.name_var), remap(self.arity_var), remap(self.arg_var), remap(self.result_var))
+
+    def _tuple_rep(self):
+        return self.__class__.__name__, self.name_var, self.arity_var, self.arg_var, self.result_var
 
 @simplify.define(SteppableParametersAccess)
 def simplify_parameters_access(self, frame):

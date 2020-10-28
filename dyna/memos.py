@@ -287,6 +287,8 @@ class RMemo(RBaseType):
     def __hash__(self):
         return super().__hash__()
 
+    def _tuple_rep(self):
+        return self.__class__.__name__, *self.variables
 
 @simplify.define(RMemo)
 def simplify_memo(self, frame):
@@ -579,7 +581,7 @@ def split_partitions(R):
                     inter = []
                     for var, val in zip(partition._unioned_vars, k):
                         if val is not None:
-                            inter.append(Unify(var, constant(val)))
+                            inter.append(unify(var, constant(val)))
                     inter.append(v)
                     return intersect(*inter)
                 else:

@@ -299,11 +299,14 @@ def optimizer_aliased_vars(R, info):
         renames = dict((a,b) for a,b in ((k, min(vs)) for k, vs in info.alias_vars.items()) if a != b)
 
         if renames:
-            # then we are going to rename these variables, and then add in unify constraints which could be later delated if considered save
+            # then we are going to rename these variables, and then add in unify constraints which could be later deleted if considered safe
             #assert all(n not in renames for n in info.exposed_variables)
 
             R = R.rename_vars(lambda x: renames.get(x,x))
-            R = intersect(*(Unify(k, v) for k,v in renames.items()), R)
+            ufs = [Unify(k, v) for k,v in renames.items() if k in exposed or v in exposed]
+            if TRACK_CONSTRUCTED_FROM:
+                for u in ufs: u._constructed_from = "optimizer alias vars"
+            R = intersect(*ufs, R)
             return R
 
     return R
@@ -370,7 +373,14 @@ def optimize_aggregator(R, info):
     from .aggregators import AGGREGATORS, null_term
     from .builtins import binary_neq
     from .terms import BuildStructure
-    body = optimizer(R.body, info)
+
+    # the body of an aggregator might loop over multiple values, so it can't exactly be considered as conjunctive with the outer frame
+    # in that the outer frame can use constraints from the aggregator, but not vice versa
+    i2 = info.recurse()
+    i2.partition_constraints = map_constraints_to_vars(get_intersecting_constraints(R.body))
+
+
+    body = optimizer(R.body, i2)
 
     # if there is only a single body and everything is semidet?  Though if this
     # is :=, then we need to handle that case specially.  That will include
@@ -390,12 +400,12 @@ def optimize_aggregator(R, info):
             return intersect(unify(R.result, R.body_res), body)
         else:
             # handle :=
-            if R.body_res.isBound(info.frame):
-                val = R.body_res.getValue(info.frame)
+            if R.body_res.isBound(i2.frame):
+                val = R.body_res.getValue(i2.frame)
                 if val.arguments[1] == null_term:
                     return Terminal(0)
                 else:
-                    R.result.setValue(info.frame, val.arguments[0])
+                    R.result.setValue(i2.frame, val.arguments[0])
                     return body
             else:
                 return intersect(BuildStructure('$colon_line_tracking', R.body_res, (VariableId(), R.result)),

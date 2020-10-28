@@ -4,7 +4,9 @@ import pprint
 from .prefix_trie import PrefixTrie
 from .exceptions import *
 
-TRACK_CONSTRUCTED_FROM = False
+TRACK_CONSTRUCTED_FROM = True
+_PDB_DEBUG = False
+PDB_DEBUG = lambda: _PDB_DEBUG
 
 
 class RBaseType:
@@ -43,7 +45,10 @@ class RBaseType:
     def rewrite(self, rewriter=lambda x: x):
         return self
     def rename_vars(self, remap):
-        return self.rewrite(lambda c: c.rename_vars(remap))
+        r = self.rewrite(lambda c: c.rename_vars(remap))
+        if TRACK_CONSTRUCTED_FROM and r is not self:
+            r._constructed_from = self
+        return r
     def possibly_equal(self, other):
         # for help aligning constraints during optimization to perform rewriting
         # should consider everything except variables names
@@ -466,7 +471,7 @@ class Visitor:
     def __init__(self, track_source=True):
         self._methods = {}
         self._default = lambda R, *args, **kwargs: R.rewrite(lambda x: self(x, *args, **kwargs))
-        self._track_source = track_source
+        self._track_source = track_source and TRACK_CONSTRUCTED_FROM
     def define(self, typ):
         def f(method):
             assert typ not in self._methods
@@ -480,7 +485,7 @@ class Visitor:
         res = self.lookup(R)(R, *args, **kwargs)
         if not self._track_source:
             return res
-        if R == res:
+        if R is res:
             return R
         # we want to track the R expr that this was constructed from as it might
         # still be useful for additional pattern matching against terms that
@@ -1014,12 +1019,17 @@ class Unify(RBaseType):
             v2, v1 = v1, v2
         self.v1 = v1
         self.v2 = v2
+        # if 'V11162' in str(v2):
+        #     import ipdb; ipdb.set_trace()
     @property
     def vars(self):
         return (self.v1, self.v2)
 
     def rename_vars(self, remap):
-        return unify(remap(self.v1), remap(self.v2))
+        r = unify(remap(self.v1), remap(self.v2))
+        if TRACK_CONSTRUCTED_FROM:
+            r._constructed_from = self
+        return r
 
     def _tuple_rep(self):
         return self.__class__.__name__, self.v1, self.v2
