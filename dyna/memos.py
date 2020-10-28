@@ -535,14 +535,14 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False, dyna_system=No
 
         assert mem_variables is not None  # we need to know which variables are going to need to be present to perform queries (aka don't want to query on the result variables as we likely can't easily compute on them)
 
-        argument_mode = tuple(v in mem_variables for v in variables)
+        argument_mode = tuple((v in mem_variables) for v in variables)
 
         if is_null_memo:
             supported_mode = (False,)*len(argument_mode)
         else:
             supported_mode = (True,)*len(R.head_vars)+(False,)
 
-        memos = MemoContainer(mode, variables, R, is_null_memo=is_null_memo, dyna_system=dyna_system)
+        memos = MemoContainer(argument_mode, supported_mode, variables, R, is_null_memo=is_null_memo, dyna_system=dyna_system)
         return RMemo(variables, memos)
     else:
         if len(R.children) == 1:

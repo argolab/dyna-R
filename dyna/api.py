@@ -4,11 +4,13 @@ import re
 import inspect
 
 from dyna import context
-from dyna.interpreter import saturate, loop, Frame, Terminal, ret_variable, VariableId, UnificationFailure as DynaUnificationFailure, constant, Unify
+from dyna.interpreter import saturate, loop, Frame, Terminal, ret_variable, VariableId, UnificationFailure as DynaUnificationFailure, constant, Unify, unify, intersect, partition, ConstantVariable, Aggregator
 from dyna.builtins import moded_op
 from dyna.syntax.normalizer import user_query_to_rexpr, run_parser, FVar as ParserWrappedVariableName
 from dyna.optimize import run_optimizer
-from dyna.terms import CallTerm, Term
+from dyna.terms import CallTerm, Term, BuildStructure
+from dyna.aggregators import AGGREGATORS, colon_line_tracking
+#from dyna.prefix_trie import PrefixTrie
 
 
 class WrappedOpaqueObject:
@@ -33,6 +35,7 @@ def cast_from_dyna(value):
     if isinstance(value, Term):
         try:
             # if it not a list then .aslist either returns None or raises an exception (at some point internally)
+            # iterating over the None value returns TypeError so that should still be caught
             return [cast_from_dyna(v) for v in value.aslist()]
         except (TypeError,AttributeError):
             pass
@@ -40,6 +43,9 @@ def cast_from_dyna(value):
         return value._value
     return value
 
+
+assignment_colon_name = VariableId('$ASSIGNMENT_COLON_TRACKING')
+assignment_colon_value = VariableId('$ASSIGNMENT_COLON_VALUE')
 
 def construct_call(system, string):
     # given a string like `foo/123` or `foo(%,%,7, bar(8, %))`, construct an
@@ -71,35 +77,119 @@ def construct_call(system, string):
     rexpr = rexpr.rename_vars_unique(rep.get)
     # this needs to determine which of the expressions is the outer most one, so that we can report its name and arity
     # so an expression like foo(%, 123) will have that there is one variable, but calls foo/2
-    call_term = None
+    call_var_ret = {}
+    unified_vars = {}
     for child in rexpr.all_children():
-        if isinstance(child, CallTerm): # and ret_variable in child.var_map.values():  # TODO: this needs to deal with the parser adding Unify with dummy variables...
-            call_term = child
+        if isinstance(child, CallTerm):
+            for var in child.var_map.values():
+                call_var_ret[var] = child
+        if isinstance(child, Unify):
+            unified_vars.setdefault(child.v1, []).append(child.v2)
+            unified_vars.setdefault(child.v2, []).append(child.v1)
+    call_term = None
+    def s(v):
+        nonlocal call_term
+        if v in call_var_ret:
+            call_term = call_var_ret[v]
+            return True
+        for x in unified_vars[v]:
+            if s(x): return True
+        return False
+    s(ret_variable)
+
     assert call_term is not None
     name = call_term.term_ref
     if not (isinstance(name, tuple) and len(name) == 2 and isinstance(name[0], str) and isinstance(name[1], int)):
         name = None
+
     return rexpr, var_idx, name
 
+def convert_to_assignment(system, rexpr, arity):
+    call_var_ret = {}
+    unified_vars = {}
 
-def construct_assignment(system, string):
-    raise NotImplemented()
+    name_rename = {VariableId(i): VariableId(f'$ARGUMENT_{i}') for i in range(arity)}
+    rexpr = rexpr.rename_vars(lambda x: name_rename.get(x,x))
 
-    m = re.match(r'([a-z][a-zA-Z0-9_\$]*)/([0-9]+)', string)
-    if m:
-        name = m.group(1)
-        arity = int(m.group(2))
-        agg = system.lokup_term_aggregator(name, arity)
-        # if aggregator:
-        #     agg, _ = agg
-        # else:
-        #     agg =
-        # this should construct a dummy expression where it just has the aggregtor for the given variables which are in the expression
-        # then it will find that there are values which correspond with
-        vals = [Unify(VariableId(i), VariableId(f'ARGUMENT_{i}')) for i in range(arity)] + [Unify(ret_variable, VariableId('VALUE'))]
+    for child in rexpr.all_children():
+        if isinstance(child, CallTerm):
+            for var in child.var_map.values():
+                call_var_ret[var] = child
+        if isinstance(child, Unify):
+            unified_vars.setdefault(child.v1, []).append(child.v2)
+            unified_vars.setdefault(child.v2, []).append(child.v1)
+    call_term = None
+    def s(v):
+        nonlocal call_term
+        if v in call_var_ret:
+            call_term = call_var_ret[v]
+            return True
+        for x in unified_vars[v]:
+            if s(x): return True
+        return False
+    s(ret_variable)
+
+    assert call_term is not None  # this is what is going to become the head of the expression
+
+    def remove_call(r):
+        if r is call_term:
+            return Terminal(1)
+        else:
+            return r.rewrite(remove_call)
+    rexpr = remove_call(rexpr)
+
+    rexpr_add = []
+    for a,b in call_term.var_map.items():
+        if isinstance(a._compiler_name, int):
+            rexpr_add.append(unify(a,b))
+        else:
+            assert a is ret_variable and b is ret_variable
+    rexpr = intersect(rexpr, *rexpr_add)
+
+    # rexpr = intersect(rexpr, *(unify(a,b) for a,b in call_term.var_map.items()))
+    call_name, call_arity = call_term.term_ref
+
+    iret = VariableId()
+    #renamed[ret_variable] = iret
+    rexpr = intersect(BuildStructure('$colon_line_tracking', iret, (assignment_colon_name, assignment_colon_value)), rexpr)
+    args = tuple(VariableId(i) for i in range(call_arity))
+
+    rexpr = Aggregator(ret_variable,
+                       args,
+                       iret,
+                       AGGREGATORS[':='],
+                       partition((*args, iret), [rexpr]))
+
+    return rexpr
+
+def make_call_proxy(system, source, dest, arity):
+    r = system.lookup_term((dest, arity), ignore=('memo', 'not_found', 'assumption', 'assumption_defined'))
+    if r == Terminal(0):
+        # meaning that this is not defined, so we are going to construct a new call for this
+        c = system.call_term(source, arity)
+        # pt = PrefixTrie(arity+1)
+        # pt[(None,)*(arity+1)] = [c]
+        p = partition(tuple(VariableId(i) for i in range(arity)) + (ret_variable,), [c])
+        system.define_term(dest, arity, p)
+
+# def construct_assignment(system, string):
+#     raise NotImplemented()
+
+#     m = re.match(r'([a-z][a-zA-Z0-9_\$]*)/([0-9]+)', string)
+#     if m:
+#         name = m.group(1)
+#         arity = int(m.group(2))
+#         agg = system.lokup_term_aggregator(name, arity)
+#         # if aggregator:
+#         #     agg, _ = agg
+#         # else:
+#         #     agg =
+#         # this should construct a dummy expression where it just has the aggregtor for the given variables which are in the expression
+#         # then it will find that there are values which correspond with
+#         vals = [Unify(VariableId(i), VariableId(f'ARGUMENT_{i}')) for i in range(arity)] + [Unify(ret_variable, VariableId('VALUE'))]
 
 
-        return system.call_term(name, arity), arity, (name, arity)
+#         return system.call_term(name, arity), arity, (name, arity)
 
 
 
@@ -123,6 +213,7 @@ class DynaExpressionWrapper:
             self._call = rexpr
             self._arity = arity
             self._name = None
+        self._assignment_cache = None
 
     def __call__(self, *args):
         self._api._check_run_agenda()
@@ -168,13 +259,33 @@ class DynaExpressionWrapper:
         if not isinstance(key, tuple):
             key = key,  # make it always a tuple
         assert self._name, "can not set the value of an expression which does not have a user referencable name"
+        assert self._arity == len(key), "The number of arguments getting set into the table does not match"
+
+        value = cast_to_dyna(value)
+        key = tuple(cast_to_dyna(k) for k in key)
+
+        if self._assignment_cache is None:
+            self._assignment_cache = convert_to_assignment(self._api._system, self._call, self._arity)
+        var_map = {
+            assignment_colon_name: constant(colon_line_tracking()),
+            assignment_colon_value: constant(value)
+        }
+        for i, v in enumerate(key):
+            var_map[VariableId(f'$ARGUMENT_{i}')] = constant(v)
+        def rename(x):
+            if isinstance(x._compiler_name, int) or x is ret_variable:
+                return x
+            return var_map.get(x,x)
+        assignment = self._assignment_cache.rename_vars_unique(rename)
+
+        self._api._system.add_to_term(self._name[0], self._name[1], assignment)
 
         # this needs to figure out which aggregator an expression is using? and then override the value
         # or we could always just use := for expressions that are assigned via this setitem
 
         # this should delcare a new rule into the program.  It will want to cause that
         # if this just defines an expression using :=, then it would
-        raise NotImplemented()
+        #raise NotImplemented()
 
     def callback(self, cb):
         self._api._check_run_agenda()
@@ -211,9 +322,14 @@ class DynaExpressionWrapper:
         def s(x): ret[x[0]] = x[1]
         return ret
 
-    def set_memoized(self, mode):
-        assert mode in ('null', 'unk', 'off')
-        raise NotImplemented()
+    # def set_memoized(self, mode):
+    #     assert mode in ('null', 'unk', 'none')
+    #     assert self._name is not None and isinstance(self._name, tuple) and len(self._name) == 2
+
+    #     self._api._system.memoize_term(self._name, kind=mode)
+
+    #     import ipdb; ipdb.set_trace()
+    #     raise NotImplemented()
 
     def __repr__(self):
         return str(self)
@@ -231,6 +347,8 @@ class DynaAPI:
         self._auto_run_agenda = True
         self._auto_run_optimizer = True
         self._expose_rexprs = False
+
+        self._tables = {}
 
         if program:
             self.add_rules(program)
@@ -282,8 +400,17 @@ class DynaAPI:
         return DynaExpressionWrapper(self, statement=method)
 
     def table(self, name, arity):
-        r = DynaExpressionWrapper(self, statement=f'{name}/{arity}')
-        raise NotImplemented()
+        key = (name, arity)
+        if key not in self._tables:
+            make_call_proxy(self._system, f'{name}_value_defined_table', name, arity)
+            self._system.memoize_term((f'{name}', arity), kind='null', mem_variables=()) #tuple(VariableId(i) for i in range(arity)))
+
+            # then this is going to want to create some table which corresponds with this expression
+            pass
+        # this creates a table which can be set directly from dyna, though it would have
+        r = DynaExpressionWrapper(self, statement=f'{name}_value_defined_table/{arity}')
+        #r.set_memoized('null')
+        return r
 
     def define_function(self, name=None, arity=None):
         """This could be used as:

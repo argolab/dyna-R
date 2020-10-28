@@ -57,15 +57,14 @@ def test_python_api():
     assert my_function_test(3) == 1 + 3*2*7
     assert called_my_function == 1
 
-    return
-
 
     table2 = api.table('table2', 1)
     table2[7] = 123
     table2[8] = {'python opaque dict': 999}  # any value that we do not know how to deal with will essentially be opaque, but is still passed around
 
+
     api.add_rules("""
-    cnt_table2 += 1 for X is table2(Y).
+    cnt_table2 += 1 for X is table2_value_defined_table(Y).
     """)
 
     assert api.call('cnt_table2') == 2

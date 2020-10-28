@@ -97,7 +97,7 @@ def normalize(x, dyna_system):
         return xs
 
 
-from dyna.aggregators import AGGREGATORS as AGGR
+from dyna.aggregators import AGGREGATORS as AGGR, colon_line_tracking
 # AGGR = {
 #     '=': AggregatorOpImpl(lambda a,b: 1/0),   # should never combine
 #     '+=': AggregatorOpImpl(lambda a,b: a+b),
@@ -108,7 +108,7 @@ from dyna.aggregators import AGGREGATORS as AGGR
 #     '|=': AggregatorOpImpl(lambda a,b: a or b),
 #     '&=': AggregatorOpImpl(lambda a,b: a and b)
 # }
-colon_line_tracking = 0
+#colon_line_tracking = 0
 
 
 def add_rule(x, dyna_system=None):
@@ -157,12 +157,12 @@ def add_rule(x, dyna_system=None):
     if r.aggr == ':-':
         body = intersect(Unify(iret, constant(True)), body)
     elif r.aggr == ':=':
-        global colon_line_tracking
+        #global colon_line_tracking
         niret = VariableId()
         body = intersect(body, BuildStructure('$colon_line_tracking', niret,
-                                              (constant(colon_line_tracking), iret)))
+                                              (constant(colon_line_tracking()), iret)))
         iret = niret
-        colon_line_tracking += 1
+        #colon_line_tracking += 1
 
 
     # rename the variables that are not explicitly referenced to be unique to this rule

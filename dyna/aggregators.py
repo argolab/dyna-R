@@ -44,6 +44,21 @@ class AggregatorColonEquals(AggregatorOpBase):
         else:
             return b
 
+_colon_line_tracking = -1
+def colon_line_tracking():
+    global _colon_line_tracking
+    _colon_line_tracking += 1
+    return _colon_line_tracking
+
+def gc_colon_equals(rexpr):
+    assert isinstance(rexpr, Aggregator)
+    assert rexpr.aggregator is AGGREGATORS[':=']
+
+    partition = rexpr.body
+    assert isinstance(partition, Partiton)
+
+    raise NotImplementedError()  # TODO finish
+
 
 # the colon equals aggregator needs to be able to identify if there is a value which is partially instantiated
 # in the case that something else is added?

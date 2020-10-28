@@ -1,20 +1,20 @@
-from collections import defaultdict
 from typing import *
 import pprint
-
-import networkx as nx
 
 from .prefix_trie import PrefixTrie
 from .exceptions import *
 
+TRACK_CONSTRUCTED_FROM = False
+
 
 class RBaseType:
 
-    __slots__ = ('_hashcache', '_constructed_from')
+    __slots__ = ('_hashcache',) + (('_constructed_from',) if TRACK_CONSTRUCTED_FROM else ())
 
     def __init__(self):
         self._hashcache = None
-        self._constructed_from = None  # so that we can track what rewrites / transformations took place to get here
+        if TRACK_CONSTRUCTED_FROM:
+            self._constructed_from = None  # so that we can track what rewrites / transformations took place to get here
 
     @property
     def vars(self):
@@ -489,7 +489,8 @@ class Visitor:
         # for the case of simplify, we should also attempt to identify cases
         # where we are hitting the same state multiple times in which case we
         # may be able to compile those for the given mode that is being used
-        res._constructed_from = R
+        if TRACK_CONSTRUCTED_FROM:
+            res._constructed_from = R
         return res
 
     def lookup(self, R):
@@ -770,7 +771,7 @@ def partition(unioned_vars, children):
 
 
 @simplify.define(Partition)
-def simplify_partition(self :Partition, frame: Frame, *, map_function=None, reduce_to_single=True, simplify_rexprs=True, flatten_keys=False):  # TODO: better name than map_function???
+def simplify_partition(self :Partition, frame: Frame, *, map_function=None, reduce_to_single=True, simplify_rexprs=True, flatten_keys=False):
     """This is the simplify method for partition, but there is so many special
     arguments which lets its behavior be modified, that it deserves some special
     attention
@@ -787,7 +788,6 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
     incoming_values = [v.getValue(frame) for v in self._unioned_vars]
     incoming_types = [v.getType(frame) for v in self._unioned_vars]
 
-    #nc = defaultdict(list)
     nc = PrefixTrie(len(self._unioned_vars))
 
     def saveL(res, frame):

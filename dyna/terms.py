@@ -359,7 +359,7 @@ def simplify_reflectStructure(self, frame):
     return self
 
 @optimizer.define(ReflectStructure)
-def optimzier_reflectstructure(self, info):
+def optimizer_reflectstructure(self, info):
     # this should check if there are other conjunctive constraints that contain
     # the type info, and then we can use those to rewrite this constraint to not exist
 

@@ -1,8 +1,10 @@
 # Dyna-R
 
-The Dyna programming language built on R-exprs
+The Dyna programming language built on R-exprs.
 
-## install instructions
+Paper about the internals of this system can be found [here](http://cs.jhu.edu/~mfl/#Evaluation%20of%20Logic%20Programs%20with%20Built-Ins%20and%20Aggregation%3A%20A%20Calculus%20for%20Bag%20Relations).
+
+## Install Instructions
 ```
 git clone git@github.com:matthewfl/dyna-R.git
 cd dyna-R
@@ -34,24 +36,9 @@ memoize_unk fib/1
 
 # make a query against fib
 fib(100)
-
 ```
 
-
-```
-even([]).
-even([X,Y|Z]) :- even(Z).
-odd([X|Y]) :- even(Y).
-even_odd(X) :- even(X), odd(X).
-
-# run the optimizer on the program to identify that even_odd(X) is empty
-# even & odd represent incompatiable recursive "types" where their intersection is empty.
-optimize
-
-even_odd(X)
-```
-
-
+### Operations are derferred when they would cause non-termination
 ```
 deleteone([X|Xs], Xs, X).
 deleteone([X|Xs], [X|Ys], Z) :- deleteone(Xs, Ys, Z).
@@ -63,6 +50,20 @@ permute(As, [Z|Bs]) :- deleteone(As, Rs, Z), permute(Rs, Bs).
 permute([1,2,3], X)
 
 permute(X, [1,2,3])
+```
+
+### Dyna-R includes the ability to perform *abstract* reasoning in some cases
+```
+even([]).
+even([X,Y|Z]) :- even(Z).
+odd([X|Y]) :- even(Y).
+even_odd(X) :- even(X), odd(X).
+
+# run the optimizer on the program to identify that even_odd(X) is empty
+# even & odd represent incompatiable recursive "types" where their intersection is empty.
+optimize
+
+even_odd(X)
 ```
 
 
@@ -80,3 +81,5 @@ permute(X, [1,2,3])
                 '---' _)/
                      `-'
 ```
+
+This is an "academic" implementation.  There may be bugs in general, though it is surprisingly robust in a lot of cases.  Aka, [here be dragons](https://en.wikipedia.org/wiki/Here_be_dragons).
