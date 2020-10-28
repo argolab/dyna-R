@@ -58,9 +58,10 @@ def test_python_api():
     assert called_my_function == 1
 
 
+    opd = {'python opaque dict': 999}
     table2 = api.table('table2', 1)
     table2[7] = 123
-    table2[8] = {'python opaque dict': 999}  # any value that we do not know how to deal with will essentially be opaque, but is still passed around
+    table2[8] = opd  # any value that we do not know how to deal with will essentially be opaque, but is still passed around
 
 
     api.add_rules("""
@@ -68,3 +69,5 @@ def test_python_api():
     """)
 
     assert api.call('cnt_table2') == 2
+
+    assert api.call('table2(8)') is opd

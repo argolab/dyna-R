@@ -66,6 +66,9 @@ optimize
 even_odd(X)
 ```
 
+# Simplified API
+Document for the Python API can be found [here](python_api.md).
+
 
 # [Here be dragons](https://en.wikipedia.org/wiki/Here_be_dragons)
 
