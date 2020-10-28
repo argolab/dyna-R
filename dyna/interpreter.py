@@ -1,20 +1,20 @@
-from collections import defaultdict
 from typing import *
 import pprint
-
-import networkx as nx
 
 from .prefix_trie import PrefixTrie
 from .exceptions import *
 
+TRACK_CONSTRUCTED_FROM = False
+
 
 class RBaseType:
 
-    __slots__ = ('_hashcache', '_constructed_from')
+    __slots__ = ('_hashcache',) + (('_constructed_from',) if TRACK_CONSTRUCTED_FROM else ())
 
     def __init__(self):
         self._hashcache = None
-        self._constructed_from = None  # so that we can track what rewrites / transformations took place to get here
+        if TRACK_CONSTRUCTED_FROM:
+            self._constructed_from = None  # so that we can track what rewrites / transformations took place to get here
 
     @property
     def vars(self):
@@ -47,9 +47,9 @@ class RBaseType:
     def possibly_equal(self, other):
         # for help aligning constraints during optimization to perform rewriting
         # should consider everything except variables names
-        if type(self) is type(other) and len(self.vars) == len(other.vars) and len(self.children) == len(other.children):
-            return all(a.possibly_equal(b) for a,b in zip(self.children,other.children))
-        return False
+        return (type(self) is type(other) and len(self.vars) == len(other.vars) and
+                len(self.children) == len(other.children) and
+                all(a.possibly_equal(b) for a,b in zip(self.children,other.children)))
 
     def isEmpty(self):
         return False
@@ -245,6 +245,15 @@ class VariableId(Variable):
     def rawSetValue(self, frame, value):
         frame[self.__name] = value
 
+    def setType(self, frame, typ):
+        frame._frame_settype(self.__name, typ)
+
+    def getType(self, frame):
+        return frame._frame_gettype(self.__name)
+
+    def _unset_type(self, frame):
+        frame.variable_types.pop(self.__name, None)
+
     def __eq__(self, other):
         return (self is other) or (type(self) is type(other) and (self.__name == other.__name))
     def __hash__(self):
@@ -279,6 +288,12 @@ class ConstantVariable(Variable):
         if value != self.__value:  # otherwise we are going to have to make the result terminal with a value of zero
             raise UnificationFailure()
         return True
+
+    def setType(self, frame, value):
+        pass
+
+    def getType(self, frame):
+        return None
 
     def __lt__(self, other):
         assert isinstance(other, Variable)
@@ -320,19 +335,21 @@ def constant(v):
     return ConstantVariable(None, v)
 
 class Frame(dict):
-    __slots__ = ('call_stack', 'memo_reads', 'assumption_tracker')
+    __slots__ = ('call_stack', 'in_optimizer', 'assumption_tracker', 'variable_types')
 
     def __init__(self, f=None):
         if f is not None:
             super().__init__(f)
             self.call_stack = f.call_stack.copy()
-            self.memo_reads = f.memo_reads
+            self.in_optimizer = f.in_optimizer
             self.assumption_tracker = f.assumption_tracker
+            self.variable_types = f.variable_types.copy()
         else:
             super().__init__()
             self.call_stack = []
-            self.memo_reads = True  # if the memo tables are allowed to perform reads (making the results dependent on the values saved, otherwise just don't run)
+            self.in_optimizer = False  # if we are in the optimizer, meaning that we should avoid performing reads of the memo tables as we want a generic expression
             self.assumption_tracker = lambda x: None  # when we encounter an assumption during simplification, log that here
+            self.variable_types = {}
 
     def __repr__(self):
         nice = {str(k).split('\n')[0]: v for k,v in self.items()}
@@ -350,6 +367,17 @@ class Frame(dict):
     def _frame_isbound(self, varname):
         return varname in self
 
+    def _frame_settype(self, varname, typ):
+        if not self.in_optimizer:
+            ot = self.variable_types.get(varname)
+            if ot is None:
+                self.variable_types[varname] = typ
+            elif ot != typ:
+                # these are two different types
+                raise UnificationFailure()
+
+    def _frame_gettype(self, varname):
+        return self.variable_types.get(varname)
 
 ####################################################################################################
 # Iterators and other things
@@ -441,6 +469,7 @@ class Visitor:
         self._track_source = track_source
     def define(self, typ):
         def f(method):
+            assert typ not in self._methods
             self._methods[typ] = method
             return method
         return f
@@ -460,7 +489,8 @@ class Visitor:
         # for the case of simplify, we should also attempt to identify cases
         # where we are hitting the same state multiple times in which case we
         # may be able to compile those for the given mode that is being used
-        res._constructed_from = R
+        if TRACK_CONSTRUCTED_FROM:
+            res._constructed_from = R
         return res
 
     def lookup(self, R):
@@ -741,7 +771,7 @@ def partition(unioned_vars, children):
 
 
 @simplify.define(Partition)
-def simplify_partition(self :Partition, frame: Frame, *, map_function=None, reduce_to_single=True, simplify_rexprs=True, flatten_keys=False):  # TODO: better name than map_function???
+def simplify_partition(self :Partition, frame: Frame, *, map_function=None, reduce_to_single=True, simplify_rexprs=True, flatten_keys=False):
     """This is the simplify method for partition, but there is so many special
     arguments which lets its behavior be modified, that it deserves some special
     attention
@@ -756,8 +786,8 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
 
     incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
     incoming_values = [v.getValue(frame) for v in self._unioned_vars]
+    incoming_types = [v.getType(frame) for v in self._unioned_vars]
 
-    #nc = defaultdict(list)
     nc = PrefixTrie(len(self._unioned_vars))
 
     def saveL(res, frame):
@@ -823,9 +853,11 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
                 if not imode and val is None:
                     var._unset(frame)
 
-        for var, imode in zip(self._unioned_vars, incoming_mode):
+        for var, imode, itype in zip(self._unioned_vars, incoming_mode, incoming_types):
             if not imode:
                 var._unset(frame)
+            if itype is not None:
+                var._unset_type(frame)
 
     if not nc:
         # then nothing matched, so just return that the partition is empty
@@ -1012,6 +1044,10 @@ def simplify_unify(self, frame):
     elif self.v2.isBound(frame):
         self.v1.setValue(frame, self.v2.getValue(frame))
         return terminal(1)
+    if self.v1.getType(frame) is not None:
+        self.v2.setType(frame, self.v1.getType(frame))
+    elif self.v2.getType(frame) is not None:
+        self.v1.setType(frame, self.v2.getType(frame))
     return self
 
 
@@ -1023,6 +1059,7 @@ def simplify_unify(self, frame):
 # together.  So they really shouldn't be referenced on this object.  Maybe only
 # combine and combine_multiplicity.
 class AggregatorOpBase:
+    selective = False  # if the aggregator takes some combination of all branches or just one
     def lift(self, x): raise NotImplementedError()
     def lower(self, x): raise NotImplementedError()
     def combine(self, x, y): raise NotImplementedError()
@@ -1034,7 +1071,9 @@ class AggregatorOpBase:
 
 
 class AggregatorOpImpl(AggregatorOpBase):
-    def __init__(self, op): self.op = op
+    def __init__(self, op, selective=False):
+        self.op = op
+        self.selective = selective
     def lift(self, x): return x
     def lower(self, x): return x
     def combine(self, x, y): return self.op(x,y)
@@ -1047,7 +1086,8 @@ class AggregatorSaturated(Exception):
 
 class Aggregator(RBaseType):
 
-    def __init__(self, result: Variable, head_vars: Tuple[Variable], body_res: Variable, aggregator :AggregatorOpBase, body :RBaseType):
+    def __init__(self, result: Variable, head_vars: Tuple[Variable], body_res: Variable,
+                 aggregator :AggregatorOpBase, body :RBaseType):
         super().__init__()
         self.result = result
         self.body_res = body_res
@@ -1126,7 +1166,7 @@ def simplify_aggregator(self, frame):
         except AggregatorSaturated as s:
             agg_result = s.value
         except DynaSolverUnLoopable as ex:
-            if frame.memo_reads:
+            if not frame.in_optimizer:
                 raise
             # can not run this, probably happening from the optimizer where we are not reading from the memo tables
             return Aggregator(self.result, self.head_vars, self.body_res, self.aggregator, body)

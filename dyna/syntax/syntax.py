@@ -74,6 +74,7 @@ list: "[" expr3 [ "," expr3 ]* "|" expr3 "]" -> list_pattern_rest
     | "[" "]"                                -> list_pattern_empty
 
 functor: FUNCTOR1 -> functor
+       | "$" -> functor_tuple
        | FUNCTOR2 -> single_quote_functor
 
 db_literal: "{" [ rule ]* "}"
@@ -170,6 +171,8 @@ def add_infix_op():
         BinOp('in', N, 4, 'contains'),
         BinOp('∈', N, 4, 'contains'),
 
+        BinOp('<~', N, 4),
+
         BinOp('!',  L, 4, 'type_assertion'),   # left assoc just like :/2.
 
         ChainedCompare(5),
@@ -186,7 +189,8 @@ def add_infix_op():
 
         BinOp(';', L, 0),
 
-        #Op('with_key', N, 4),
+        #BinOp('with_key', N, 4),
+        BinOp('arg', N, 4)
     ]
 
     # operators at the same precedence level must have the
@@ -288,6 +292,7 @@ class DynaTransformer(Transformer):
     # dynabase literals
 
     def db_literal(self, x):
+        raise NotImplementedError()
         assert isinstance(x, list)
         from dyna.aggregators import AGG
         from dyna.answer import Result
@@ -432,6 +437,9 @@ class DynaTransformer(Transformer):
     def functor(self, x):
         [token] = x
         return str(token.value)
+
+    def functor_tuple(self, _):
+        return '$'
 
     def single_quote_functor(self, x):
         [token] = x

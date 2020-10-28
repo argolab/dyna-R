@@ -12,14 +12,17 @@ class Assumption:
         self._invalid = False  # invalid can only go from False -> True, there is no transition back to False
         self._name = name
 
+        # TODO: this should delete references to assumptions which are no longer valid
+
     def track(self, reciever):
         assert not self._invalid
         self._dependents.add(reciever)
 
     def invalidate(self):
-        self._invalid = True
-        for d in self._dependents:
-            d.notify_invalidated()
+        if not self._invalid:
+            self._invalid = True
+            for d in self._dependents:
+                d.notify_invalidated()
 
     def notify_invalidated(self):
         # notify that the assumption is invalidated
@@ -42,6 +45,7 @@ class Assumption:
     def isValid(self):
         return not self._invalid
 
+
 class AssumptionListener:
     # something that can be invalidated, and then will turn of getting further
     # signals, though, we are going to want to clean these out or something....
@@ -51,9 +55,8 @@ class AssumptionListener:
         self._invalid = False
 
     def invalidate(self):
-        i = self._invalid
-        self._invalid = True
-        if not i:
+        if not self._invalid:
+            self._invalid = True
             self.wrapped.invalidate()
 
     def signal(self, msg):
@@ -64,6 +67,7 @@ class AssumptionListener:
         # TODO: is this a significant difference in this case?  Is there
         # something else that should be done here
         self.invalidate()
+
 
 class AssumptionResponse:
 
@@ -81,7 +85,6 @@ class AssumptionResponse:
 
     def notify_invalidated(self):
         self.invalidate()
-
 
 
 class AssumptionWrapper(RBaseType):

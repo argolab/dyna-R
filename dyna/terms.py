@@ -7,7 +7,9 @@ from .optimize import optimizer
 
 def _term_op(op):
     def oper(*args):
-        from .context import dyna_system
+        # this does not have the current reference to the dyna_system
+        # this makes this somewhat brittle in the case that new things were defined in a different dyna instance
+        from . import dyna_system
         return dyna_system.raw_call('op_'+op, args)
     return oper
 
@@ -170,6 +172,9 @@ def simplify_buildStructure(self, frame):
         res = Term(self.name, [v.getValue(frame) for v in self.arguments])
         self.result.setValue(frame, res)
         return Terminal(1)
+    else:
+        # set type information in the frame so that this can be tracked more easily
+        self.result.setType(frame, (self.name, len(self.arguments)))
 
     return self
 
@@ -228,7 +233,6 @@ def optimizer_buildStructure(self, info):
     if self.result in buildStructure_determine_constructed_from(self.result, info, {}):
         # the occurs check fails
         return Terminal(0)
-
 
     return self
 
@@ -313,10 +317,25 @@ def simplify_reflectStructure(self, frame):
         self.args_list.setValue(frame, Term.fromlist(res.arguments))
         self.num_args.setValue(frame, len(res.arguments))
         return Terminal(1)
-    elif self.name.isBound(frame) and self.args_list.isBound(frame):
+
+    typ = self.result.getType(frame)
+
+    if self.name.isBound(frame):
+        name = self.name.getValue(frame)
+    elif typ is not None:
+        name = typ[0]
+    else:
+        name = None
+    if self.num_args.isBound(frame):
+        nargs = self.num_args.getValue(frame)
+    elif typ is not None:
+        nargs = typ[1]
+    else:
+        nargs = None
+
+    if name is not None and self.args_list.isBound(frame):
         # then we are going to be able to construct this object.  so we are
         # going to have to walk the list and convert it back into something that we want?
-        name = self.name.getValue(frame)
         args = self.args_list.getValue(frame)
         if not isinstance(name, str) or not isinstance(args, Term):
             return Terminal(0)
@@ -330,18 +349,17 @@ def simplify_reflectStructure(self, frame):
         self.num_args.setValue(frame, len(res.arguments))
         self.result.setValue(frame, res)
         return Terminal(1)
-    elif self.name.isBound(frame) and self.num_args.isBound(frame):
-        assert not self.args_list.isBound(frame)
-        name = self.name.getValue(frame)
-        num_args = self.num_args.getValue(frame)
 
-        R = reflect_buildMatch(self, name, num_args)
+    if name is not None and nargs is not None:
+        assert not self.args_list.isBound(frame)
+
+        R = reflect_buildMatch(self, name, nargs)
         return simplify(R, frame)
 
     return self
 
 @optimizer.define(ReflectStructure)
-def optimzier_reflectstructure(self, info):
+def optimizer_reflectstructure(self, info):
     # this should check if there are other conjunctive constraints that contain
     # the type info, and then we can use those to rewrite this constraint to not exist
 
@@ -394,7 +412,7 @@ class Evaluate_reflect(RBaseType):
         return self.ret, self.name, self.nargs, self.args_list
 
     def rename_vars(self, remap):
-        return Evaluate_reflect(self.dyna_system, remap(self.ret_var), remap(self.name_var), remap(self.nargs_var), remap(self.args_list))
+        return Evaluate_reflect(self.dyna_system, remap(self.ret), remap(self.name), remap(self.nargs), remap(self.args_list))
 
     def _tuple_rep(self):
         return self.__class__.__name__, self.ret, self.name, self.nargs, self.args_list
@@ -555,15 +573,16 @@ def simplify_call(self, frame):
     # sanitity check for now
     # in the case this fails, then it is likely that the python program would get a stack overflow exception without this block
 
-    if len(self.parent_calls_blocker) >= 10:
-        err = 'Dyna backchaining stack depth has exceeded 10 recurisve frames'
-        suggested_command = None
+    if len(self.parent_calls_blocker) >= self.dyna_system.stack_recursion_limit:
+        err = f'Dyna backchaining stack depth has exceeded {self.dyna_system.stack_depth_limit} recurisve frames'
+        suggested_prompt = suggest_api = None
         if isinstance(self.term_ref, tuple) and len(self.term_ref) == 2:
             name, arity = self.term_ref
             if isinstance(name, str) and isinstance(arity, int):
                 err += '\nPossible fix is to memoize the intermeidate results and limit the stack depth, Eg:'
                 suggested_prompt = f'memoize_unk {name}/{arity}'
-        raise DynaSolverErrorSuggestPrompt(err, suggested_prompt)
+                suggest_api = f'set the expression be memoized `api.make_call("{name}/{arity}").set_memoized("unk")`\n or increase the stack recursion limit with `api.stack_recursion_limit = 100`'
+        raise DynaSolverErrorSuggestPrompt(err, suggested_prompt, suggest_api)
 
     # assert len(self.parent_calls_blocker) < 10
 

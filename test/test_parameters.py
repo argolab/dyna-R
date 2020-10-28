@@ -1,5 +1,6 @@
 from dyna import *
 
+import pytest
 
 def test_basic_sgd():
     dyna = context.SystemContext()
@@ -20,8 +21,6 @@ def test_basic_sgd():
     $parameters_next(&x) := x - gf * alpha.
     """)
 
-    # when running the agenda, this should identify that
-    #import ipdb; ipdb.set_trace()
     dyna.run_agenda()
 
     frame = Frame()
@@ -29,3 +28,53 @@ def test_basic_sgd():
     assert r == Terminal(1)
 
     assert abs(interpreter.ret_variable.getValue(frame) - 1.0) < .001
+
+
+@pytest.mark.xfail
+def test_auto_diff1():
+    dyna = context.SystemContext()
+
+    dyna.add_rules("""
+    $load("gradient").
+
+    x := 0.
+
+    f = (x - 1)^2.
+
+    gx = $gradient(&x).
+
+    $loss += f.
+    """)
+    dyna.run_agenda()
+
+    frame = Frame()
+    r = simplify(dyna.call_term('gx', 0), frame)
+    assert r == Terminal(1)
+
+    assert interpreter.ret_variable.getValue(frame) == 2.0
+
+
+@pytest.mark.xfail
+def test_auto_diff2():
+    dyna = context.SystemContext()
+
+    dyna.add_rules("""
+    $load("gradient").
+
+    x := 0.
+
+    v(X) = exp(X).  % defined as a function which needs to have its gradient computed wrt its parameters
+
+    f = (v(x + 1) - 1)^2.
+
+    gx = $gradient(&x).
+
+    $loss += f.
+    """)
+    dyna.run_agenda()
+
+    frame = Frame()
+    r = simplify(dyna.call_term('gx', 0), frame)
+    assert r == Terminal(1)
+
+    assert abs(interpreter.ret_variable.getValue(frame) - 9.34155) < .001

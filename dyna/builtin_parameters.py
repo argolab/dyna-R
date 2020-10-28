@@ -69,8 +69,6 @@ class SteppableParamters(object):
             # the later invalidated value will be with a memoization container which
             self.dyna_system.define_term(PARAMETERS_NAME_FORMAT.format(name=name,arity=arity), arity, RMemo(memo_args, dest_memos))
 
-            # define direct access to $__parameters_next so that we directly access this value
-
             key_var = VariableId()
             next_parameters = self.dyna_system.call_term('$__parameters_next', 3)
             next_parameters = next_parameters(constant(name), constant(arity), key_var, ret=ret_variable)
@@ -78,8 +76,8 @@ class SteppableParamters(object):
             self.dyna_system.define_term(PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity, r)
             self.dyna_system.optimize_term((PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity))
             # make this memoized, so that we can just copy the memo table later
-            #self.dyna_system.memoize_term((PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity), kind='null')
-            source_R = partition(tuple(memo_args), [self.dyna_system.call_term(PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity)])
+            source_R = partition(tuple(memo_args),
+                                 [self.dyna_system.call_term(PARAMETERS_NEXT_FORMAT.format(name=name,arity=arity), arity)])
 
             source_memos = MemoContainer((True,)*arity+(False,), (False,)*(arity+1), memo_args,
                                          source_R, is_null_memo=True, dyna_system=self.dyna_system)

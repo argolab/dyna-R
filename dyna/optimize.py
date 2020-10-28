@@ -48,22 +48,36 @@ def make_graph(R):  # not used atm
     return G
 
 
-def is_known_semidet(R):
-    from .terms import BuildStructure
+# def is_known_semidet(R):
+#     from .terms import BuildStructure
 
-    if isinstance(R, ModedOp):
-        return not R.nondet  # if there is no non-det opereators, then it is semi-det, and we can duplicate it
+#     if isinstance(R, ModedOp):
+#         return not R.nondet  # if there is no non-det opereators, then it is semi-det, and we can duplicate it
 
-    if isinstance(R, BuildStructure):
+#     if isinstance(R, BuildStructure):
+#         return True
+
+#     # if it is an aggregator, then it is semi-det, but it might involve loops
+#     # internally (expensive stuff), so we are going to avoid duplicating them
+#     # for now.  But idk how this will work out with aggregators, given that we
+#     # are removing partitions from the consideration of splitting atm
+
+#     # if isinstance(R, Aggregator):
+#     #     return True  # then this returns 0 or 1... but
+#     return False
+
+def is_expression_semidet(R):
+    from .terms import BuildStructure, ReflectStructure
+
+    if isinstance(R, Intersect):
+        return all(is_expression_semidet(c) for c in R.children)
+    elif isinstance(R, ModedOp):
+        return not R.nondet
+    elif isinstance(R, (BuildStructure, Aggregator, Unify, ReflectStructure)):
+        return True
+    elif isinstance(R, Terminal) and R.multiplicity <= 1:
         return True
 
-    # if it is an aggregator, then it is semi-det, but it might involve loops
-    # internally (expensive stuff), so we are going to avoid duplicating them
-    # for now.  But idk how this will work out with aggregators, given that we
-    # are removing partitions from the consideration of splitting atm
-
-    # if isinstance(R, Aggregator):
-    #     return True  # then this returns 0 or 1... but
     return False
 
 
@@ -104,18 +118,32 @@ def split_heuristic(R, info=None):
                     vs |= set(c2.arguments)
                 elif isinstance(c2, CallTerm):
                     # if this is something that is interesting, then we should
-                    # include it, which emans that there aren't additional variables
+                    # include it, which means that there aren't additional variables
                     # that would have to be included
+
+                    # TODO: this could potentially be representing that there is some merged expression, which could
+                    # potentially return a higher multiplicity, as for those expressions this is not restricted.
+                    # this should really ensure that the result would be from an aggregator, so that the multiplicity is at most 1
 
                     assert c2.dyna_system is c.dyna_system  # is this going to be a requirement, or just something that we should instead check, how to mix different "dynabases?"
                     if lv.issubset(vs) and lv:  # if there are some vars that intersect and it is a subset of the vars that we are interested in
                         ecall.add(c2)
+                        assert isinstance(c2.term_ref, tuple)
                 elif isinstance(c2, ModedOp):
                     # take moded ops if they are dealing with this operator
                     # specifically, so, if there was something like `f(X, X+1)`
                     # that would take the addition operator.  But this currently
                     # wouldn't take something like: `f(X,Z), Y=X+1, Z=Y+1`
                     # because it goes through two different operators to combine
+
+
+                    # this can't change the resulting multiplicity for a given
+                    # expression.  The builtins are all semi-determinstic for a
+                    # given assignment.  Though they may provide a way to loop
+                    # over the domain of a variable.  Though in that case, it
+                    # would just have duplicated the builtin constraint which
+                    # would not change the multiplicty overall.
+
                     if lv.issubset(vs) and lv:
                         ecall.add(lv)
 
@@ -186,7 +214,7 @@ def make_split(R, splits):
     return intersect(R, *additions)
 
 
-class RStrctureInfo:
+class RStructureInfo:
 
     conjunctive_constraints : Dict[Variable,List[RBaseType]]  # all the current constraints in the partition + what is in the parent
 
@@ -210,7 +238,7 @@ class RStrctureInfo:
 
 
     def recurse(self, *, frame=None):
-        return RStrctureInfo(
+        return RStructureInfo(
             conjunctive_constraints=defaultdict(list, ((k, v.copy()) for k,v in self.conjunctive_constraints.items())),
             all_constraints=self.all_constraints,
             # don't pass alias vars, as we want to handle that at every scope seperatly
@@ -218,7 +246,7 @@ class RStrctureInfo:
             frame=frame or self.frame)
 
     def get_constraints(self, var, typ):
-        for c in conjunctive_constraints[var]:
+        for c in self.conjunctive_constraints[var]:
             if isinstance(c, typ):
                 yield c
 
@@ -335,9 +363,53 @@ def optimzier_partition(partition, info):
     # matching.  But I suppose that this tracks that there are
     res = simplify(partition, info.frame, map_function=opt_mapper)
 
-
     return res
 
+@optimizer.define(Aggregator)
+def optimize_aggregator(R, info):
+    from .aggregators import AGGREGATORS, null_term
+    from .builtins import binary_neq
+    from .terms import BuildStructure
+    body = optimizer(R.body, info)
+
+    # if there is only a single body and everything is semidet?  Though if this
+    # is :=, then we need to handle that case specially.  That will include
+    # checking if the result is null?  Though if there are not semi-det
+    # operations
+    #
+    # I suppose that we could also check if there is some semiring between
+    # different aggregators, though that would require checking that we have the builtins also defined?
+
+    if isinstance(body, Intersect) and is_expression_semidet(body):
+        # then all of the branches of the partition have been removed, so there
+        # is only a single branch left.  We can try and determine if the
+        # expression is semi-deterministic, so we can remove the operation
+        is_colon_eq = R.aggregator is AGGREGATORS[':=']
+
+        if not is_colon_eq:
+            return intersect(unify(R.result, R.body_res), body)
+        else:
+            # handle :=
+            if R.body_res.isBound(info.frame):
+                val = R.body_res.getValue(info.frame)
+                if val.arguments[1] == null_term:
+                    return Terminal(0)
+                else:
+                    R.result.setValue(info.frame, val.arguments[0])
+                    return body
+            else:
+                return intersect(BuildStructure('$colon_line_tracking', R.body_res, (VariableId(), R.result)),
+                                 binary_neq(R.result, constant(null_term), ret=constant(True)),
+                                 body)
+
+    # TODO: this should be able to consider if the resulting variable of
+    # aggregation is already set in which case, this could eleminate branches of
+    # the expression which would not match.  But in the case of something like
+    # :=, this might override the value with something that does not match?
+    # Also with something like max/min, then it would need to include all
+    # branches which might produce a higher value
+
+    return Aggregator(R.result, R.head_vars, R.body_res, R.aggregator, body)
 
 @optimizer.define(Unify)
 def optimizer_unify(R, info):
@@ -442,7 +514,7 @@ def run_optimizer_local(R, exposed_variables):
 
     exposed_constants = []
     frame = Frame()
-    frame.memo_reads = False  # prevent memo tables from being read at this step so optimizations are not dependant
+    frame.in_optimizer = True  # prevent memo tables from being read at this step so optimizations are not dependant
     frame.assumption_tracker = assumptions.add
     while True:
         last_R = R
@@ -455,7 +527,7 @@ def run_optimizer_local(R, exposed_variables):
         if R.isEmpty():
             break
 
-        info = RStrctureInfo(exposed_variables=exposed_variables,frame=frame)
+        info = RStructureInfo(exposed_variables=exposed_variables,frame=frame)
         info.partition_constraints = info.conjunctive_constraints = map_constraints_to_vars(get_intersecting_constraints(R))
         info.all_constraints = map_constraints_to_vars(R.all_children())
 

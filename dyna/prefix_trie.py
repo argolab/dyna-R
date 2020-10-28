@@ -178,6 +178,24 @@ class PrefixTrie:
         nr = r(len(self._filter)-1, self._root)
         return PrefixTrie(0, _filter=self._filter, _root=nr)
 
+    def map_values_wkey(self, mapper):
+        def r(l, aa, ckey):
+            f = self._filter[-l-1]
+            if f is None:
+                a = aa  # should just take all of the values
+            else:
+                a = {}
+                if f in aa:
+                    a[f] = aa[f]
+                if None in aa:
+                    a[None] = aa[None]
+            if l == 0:
+                return {k: mapper(ckey+(k,), v) for k,v in a.items()}
+            else:
+                return {k: r(l-1, v, ckey+(k,)) for k,v in a.items()}
+        nr = r(len(self._filter)-1, self._root, ())
+        return PrefixTrie(0, _filter=self._filter, _root=nr)
+
     def __len__(self):
         # this is not efficient, should have something better here I suppose? if
         # there are filters then this is going to become more of an issue..

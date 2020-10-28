@@ -1,0 +1,11 @@
+$load("gradient").
+
+x := 0.
+
+v(X) = exp(X).  % defined as a function which needs to have its gradient computed wrt its parameters
+
+f = (exp(x + 1) - 1)^2.
+
+gx = $gradient(&x).
+
+$loss += f.

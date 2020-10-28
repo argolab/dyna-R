@@ -1,0 +1,33 @@
+just +/* semiring, where the gradietns are getting multiplied together as it is going back
+then it is adding the different cases where it appears in the progrma
+
+stop gradient???
+     - if want to limit backpropagating through a particular operation?
+       I suppose that this could just be overriding the gradient to a given operation, so it could use something like
+       $gradient with := operator, then it could just override what the input for a particular gradient's accumulator is defined as
+
+
+transformation based learning
+- start with sentences and the starting tags, can then update which takes are selected, and what the respective change is for a given value.  It would want to update the parameters with
+
+
+--------------------
+
+When it comes to representing the problem using a jacobian and then sovoling
+
+
+If we consider an equation like `a * 2 = b, a + 1 = b` for when `a == 1`, then it is not 100% clear what the gradient should be in this case.  There are two different ways in which teh gradient could be computed.  Also if either of the equations was to change, then it would likely eleminate the rule in this case, meaning that the gradient is likely wrong due to the filtering.
+   - current systems which are computing the gradient are basically ignoring the gradient wrt
+
+
+
+---------------------
+
+This just needs to find /some/ mode which is supported by all of the operations.
+In which case, this can use the safety planning, and then identify the different
+possible modes of every expression.  From that point, it can just construct the
+computation circuit such that the flow from the different inputs to the output
+follows the backwards graph of the modes.  Anything that is not involved in the
+moded computation of the result, is just directly attached to the computation as
+a side condition.  Those operations still need to get checked, but those
+operations are just

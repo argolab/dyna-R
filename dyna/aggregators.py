@@ -2,12 +2,14 @@ from .interpreter import *
 from .terms import Term
 
 class AggregatorEqual(AggregatorOpBase):
+    selective = True
     def lift(self, x): return x
     def lower(self, x): return x
     def combine(self, a,b):
-        return Term('$error', ("Aggregator `=` should not have more than two values",))
+        return Term('$error', ("Aggregator `=` should not have more than one value",))
 
 class AggregatorSaturate(AggregatorOpBase):
+    selective = True
     def __init__(self, op, saturated):
         self.op = op
         self.saturated = saturated
@@ -26,6 +28,7 @@ class AggregatorSaturate(AggregatorOpBase):
 
 null_term = Term('$null', ())
 class AggregatorColonEquals(AggregatorOpBase):
+    selective = True
     def lift(self, x): return x
     def lower(self, x):
         assert x.name == '$colon_line_tracking'
@@ -40,6 +43,21 @@ class AggregatorColonEquals(AggregatorOpBase):
             return a
         else:
             return b
+
+_colon_line_tracking = -1
+def colon_line_tracking():
+    global _colon_line_tracking
+    _colon_line_tracking += 1
+    return _colon_line_tracking
+
+def gc_colon_equals(rexpr):
+    assert isinstance(rexpr, Aggregator)
+    assert rexpr.aggregator is AGGREGATORS[':=']
+
+    partition = rexpr.body
+    assert isinstance(partition, Partiton)
+
+    raise NotImplementedError()  # TODO finish
 
 
 # the colon equals aggregator needs to be able to identify if there is a value which is partially instantiated
@@ -56,8 +74,8 @@ AGGREGATORS = {
     '=': AggregatorEqual(),
     '+=': AggregatorOpImpl(lambda a,b: a+b),
     '*=': AggregatorOpImpl(lambda a,b: a*b),
-    'max=': AggregatorOpImpl(max),
-    'min=': AggregatorOpImpl(min),
+    'max=': AggregatorOpImpl(max, True),
+    'min=': AggregatorOpImpl(min, True),
     ':-': AggregatorSaturate(lambda a,b: a or b, True),
     '|=': AggregatorSaturate(lambda a,b: a or b, True),
     '&=': AggregatorSaturate(lambda a,b: a and b, False),

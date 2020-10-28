@@ -234,6 +234,14 @@ class CompiledFrame:
         # key = self._vmap[varname]
         # self._values[key] = value
 
+    def _frame_settype(self, varname, typ):
+        # ignore this operation in compiled code as it should have been already processed by this points
+        pass
+
+    def _frame_gettype(self, varname):
+        # should have been already processed when the information was handled with a given expression
+        return None
+
     def __repr__(self):
         nice = {str(k).split('\n')[0]:self._values[v] for k,v in self._vmap.items()}
         import pprint

@@ -292,7 +292,7 @@ class RMemo(RBaseType):
 def simplify_memo(self, frame):
     # the idea should be that if we are handling different modes
 
-    if not frame.memo_reads:
+    if frame.in_optimizer:
         # then we are not allowed to perform any reads of a memo table
         return self
 
@@ -331,13 +331,9 @@ def getPartition_memos(self, frame):
     # values is not already present.  So may need to perform a computation for
     # the memoized values.
 
-    if not frame.memo_reads:
+    if frame.in_optimizer:
         # then the memoized values are disabled (for optimization)
         return
-
-    # if not self.memos.is_null_memo or not frame.memo_reads:
-    #     # then we can not use this table to iterate as we do not know all of the non-null values
-    #     return
 
     f = Frame()
     for va, vb, imode in zip(self.variables, self.memos.variables, self.memos.supported_mode):
@@ -539,14 +535,14 @@ def rewrite_to_memoize(R, mem_variables=None, is_null_memo=False, dyna_system=No
 
         assert mem_variables is not None  # we need to know which variables are going to need to be present to perform queries (aka don't want to query on the result variables as we likely can't easily compute on them)
 
-        argument_mode = tuple(v in mem_variables for v in variables)
+        argument_mode = tuple((v in mem_variables) for v in variables)
 
         if is_null_memo:
             supported_mode = (False,)*len(argument_mode)
         else:
             supported_mode = (True,)*len(R.head_vars)+(False,)
 
-        memos = MemoContainer(mode, variables, R, is_null_memo=is_null_memo, dyna_system=dyna_system)
+        memos = MemoContainer(argument_mode, supported_mode, variables, R, is_null_memo=is_null_memo, dyna_system=dyna_system)
         return RMemo(variables, memos)
     else:
         if len(R.children) == 1:

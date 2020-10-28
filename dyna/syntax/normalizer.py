@@ -6,7 +6,8 @@ from dyna.syntax.aggregators import AGG
 from dyna.syntax.syntax import term, run_parser
 from dyna.syntax.util import colors, fib_check
 
-from dyna.interpreter import VariableId, constant, ConstantVariable, intersect, InvalidValue
+from dyna.interpreter import VariableId, constant, ConstantVariable, intersect, InvalidValue, FinalState
+from dyna.optimize import run_optimizer
 #from dyna.context import dyna_system
 
 from dyna import Frame, Terminal, Aggregator, Unify, interpreter, \
@@ -96,7 +97,7 @@ def normalize(x, dyna_system):
         return xs
 
 
-from dyna.aggregators import AGGREGATORS as AGGR
+from dyna.aggregators import AGGREGATORS as AGGR, colon_line_tracking
 # AGGR = {
 #     '=': AggregatorOpImpl(lambda a,b: 1/0),   # should never combine
 #     '+=': AggregatorOpImpl(lambda a,b: a+b),
@@ -107,14 +108,13 @@ from dyna.aggregators import AGGREGATORS as AGGR
 #     '|=': AggregatorOpImpl(lambda a,b: a or b),
 #     '&=': AggregatorOpImpl(lambda a,b: a and b)
 # }
-colon_line_tracking = 0
+#colon_line_tracking = 0
 
 
 def add_rule(x, dyna_system=None):
     if dyna_system is None:
         # use a global references if not defined
-        from dyna import dyna_system as _dyna_system
-        dyna_system = _dyna_system
+        from dyna import dyna_system
 
     if DEBUG: print()
     if DEBUG: print(colors.green % 'parsed:', x)
@@ -157,12 +157,12 @@ def add_rule(x, dyna_system=None):
     if r.aggr == ':-':
         body = intersect(Unify(iret, constant(True)), body)
     elif r.aggr == ':=':
-        global colon_line_tracking
+        #global colon_line_tracking
         niret = VariableId()
         body = intersect(body, BuildStructure('$colon_line_tracking', niret,
-                                              (constant(colon_line_tracking), iret)))
+                                              (constant(colon_line_tracking()), iret)))
         iret = niret
-        colon_line_tracking += 1
+        #colon_line_tracking += 1
 
 
     # rename the variables that are not explicitly referenced to be unique to this rule
@@ -195,8 +195,7 @@ def user_query_to_rexpr(x, dyna_system=None):
     "Map a user's textual query to an R-expression."
     if dyna_system is None:
         # use a global references if not defined
-        from dyna import dyna_system as _dyna_system
-        dyna_system = _dyna_system
+        from dyna import dyna_system
 
     q = run_parser(f'{x} ?')
     if DEBUG: print(colors.green % 'parsed:', q)
@@ -213,9 +212,9 @@ def user_query(x):
     r = user_query_to_rexpr(f'Result is ({x})')
 
     # extracts the user's variable names
-    user_vars = [v for v in r.all_vars()
+    user_vars = list(dict((v, 0) for v in r.all_vars()
                  if not str(v).startswith('$') and not isinstance(v, ConstantVariable)
-    ]
+    ).keys())
 
     results = []
     def callback(rr, ff):
@@ -233,8 +232,16 @@ def user_query(x):
                 except:
                     pass
                 values.append(f"'{v}': {r}")
+
+        # bind variables to their value in the frame for printing
+        if isinstance(rr, FinalState):
+            rbf = rr
+        else:
+            rbf = rr.rename_vars(lambda v: constant(v.getValue(ff)) if v.isBound(ff) else v)
+            rbf, _ = run_optimizer(rbf, user_vars)
+
         values = colors.yellow % 'result: ' + '{'+', '.join(values)+'} ' + colors.yellow % '@'
-        rexpr = textwrap.indent(str(rr), ' '*(len(values) - 2*len(colors.yellow)+5)).strip()
+        rexpr = textwrap.indent(str(rbf), ' '*(len(values) - 2*len(colors.yellow)+5)).strip()
         print(values, rexpr)
 
         # print(colors.yellow % 'result:', '{'+', '.join(values)+'}',
@@ -245,7 +252,11 @@ def user_query(x):
     frame = Frame()
 
     #print(r)
-    rr = saturate(r, frame)
+    ro, _ = run_optimizer(r, user_vars)
+    rr = saturate(ro, frame)
+    # this could run the optimizer and rerun saturate on the user's query?
+    # though that does not necessarily result in something better?
+
     #print(rr)
     loop(rr,
          frame, callback, best_effort=True)

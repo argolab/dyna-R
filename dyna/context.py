@@ -5,7 +5,7 @@
 
 # maybe these should be imported later or not at all?
 from .interpreter import *
-from .terms import CallTerm, Evaluate, Evaluate_reflect, ReflectStructure
+from .terms import CallTerm, Evaluate, Evaluate_reflect, ReflectStructure, BuildStructure
 from .guards import Assumption, AssumptionWrapper, AssumptionResponse
 from .agenda import Agenda
 from .optimize import run_optimizer
@@ -15,6 +15,7 @@ from .safety_planner import SafetyPlanner
 
 from functools import reduce
 import operator
+import os
 
 class SystemContext:
     """
@@ -51,25 +52,21 @@ class SystemContext:
 
         self.safety_planner = SafetyPlanner(lambda term: self.lookup_term(term, ignore=('memos', 'compile')))
 
+        self.stack_recursion_limit = 10
+
         if parent is None:
             # then we load the builtin operators
             from dyna.builtins import define_builtins
             define_builtins(self)
             # where we fallback for other defined expressions
+
+            # load the prelude file
+            with open(os.path.join(os.path.dirname(__file__), 'prelude.dyna'), 'r') as f:
+                self.add_rules(f.read())
         else:
             assert False
 
         self.run_agenda()
-
-
-    # @property
-    # def safety_planner(self):
-    #     # TODO: we should build a single instance and then update it.  In the
-    #     # case of optimization, we might idnetify that we are willing to work
-    #     # with a more free mode and still perform grounding.  In the case that
-    #     # new rules are added, we are going to have to invalidate those terms
-    #     # and then redo any compuation that they were involved in.
-    #     return SafetyPlanner(
 
     def term_as_defined_assumption(self, name):
         if name not in self.terms_as_defined_assumptions:
@@ -182,6 +179,20 @@ class SystemContext:
         self.invalidate_term_as_defined_assumption(a)
         #self.invalidate_term_assumption(a)
 
+    def lookup_term_aggregator(self, name, arity):
+        a = (name, arity)
+        if a not in self.terms_as_defined:
+            return None
+        t = self.terms_as_defined[a]
+        if not isinstance(t, Aggregator):
+            return None
+        name = None
+        from .aggregators import AGGREGATORS
+        for k, v in AGGEGATORS.items():
+            if v is t.aggregator:
+                name = k
+        return t.aggregator, k
+
     def memoize_term(self, name, kind='null', mem_variables=None):
         assert kind in ('unk', 'null', 'none')
 
@@ -244,7 +255,10 @@ class SystemContext:
         # included tracking with the assumption, so if it later defined, we are
         # able to change the expression.
 
-        if name in self.terms_as_memoized and 'memo' not in ignore:
+        if isinstance(name, tuple) and len(name) == 2 and name[0] == '$':
+            # make is so that $(1,2,3,4,5) can be used as a tuple type, regardless of the size
+            return BuildStructure('$', ret_variable, tuple(VariableId(i) for i in range(name[1])))
+        elif name in self.terms_as_memoized and 'memo' not in ignore:
             # do not include additional assumptions as the assumptions are "broken" by the memo table
             # which includes its own assumptions
             return self.terms_as_memoized[name]  # should contain an RMemo type which will perform reads from a memo table
@@ -389,7 +403,7 @@ class SystemContext:
     def _compile_term(self, term, ground_vars :Set[Variable]):
         # always use the lookup as this can get optimized versions
         R = self.lookup_term(term, ignore=('compile', 'memo'))
-        if isinstance(R, MergedExpression):
+        if isinstance(term, MergedExpression):
             exposed = term.exposed_vars
         else:
             # for dyna expressions the exposed public variables always have the same names
@@ -401,8 +415,7 @@ class SystemContext:
 
         result = run_compiler(self, ce, R, incoming_mode)
 
-        # the compiler will have
-
+        #raise NotImplemented()
 
     def watch_term_changes(self, term, callback):
         # in the case that a term changes value, then this can get a callback
@@ -502,7 +515,7 @@ def check_basecases(R, stack=()):
     # return:
     #   0 then it does not hit a basecase for sure, and we should report an error or just mark this as terminal(0) as it would never be able to terminate
     #   1 unsure as it uses evaluate on all branches so it could go anywhere
-    #   2 this is definitly uses indirectly or directly recursion but that thing has base cases
+    #   2 this is definitly uses indirectly or directly recursion but this thing has base cases
     #   3 there is no detected recursion
 
     if isinstance(R, (Evaluate, Evaluate_reflect)):
