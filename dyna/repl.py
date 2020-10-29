@@ -234,6 +234,10 @@ class REPL:
         import ipdb
         ipdb.post_mortem(self.excpt[2])
 
+    def do_debug_on(self, _):
+        from dyna import interpreter
+        interpreter._PDB_DEBUG = True
+
     def do_run_agenda(self, _):
         "Run the agenda until convergence"
         dyna_system.run_agenda()

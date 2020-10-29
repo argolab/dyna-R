@@ -1,5 +1,6 @@
 from .interpreter import *
 from .terms import Term
+from collections import Counter
 
 class AggregatorEqual(AggregatorOpBase):
     selective = True
@@ -60,6 +61,33 @@ def gc_colon_equals(rexpr):
     raise NotImplementedError()  # TODO finish
 
 
+class AggregatorSetEquals(AggregatorOpBase):
+    def lift(self, x): return {x}
+    def lower(self, x):
+        l = list(x)
+        l.sort()
+        return Term.fromlist(l)
+    def combine(self, a,b):
+        return a | b
+
+class AggregatorBagEquals(AggregatorOpBase):
+    def lift(self, x):
+        return Counter({x: 1})
+    def lower(self, x):
+        l = [Term('$', (a,b)) for a,b in x.items()]
+        l.sort(key=lambda x: (-x.arguments[1], x.arguments[0]))  # sort by the largest count first and then the value
+        return Term.fromlist(l)
+    def combine(self, a,b):
+        return a + b
+
+class AggregatorQuestionMark(AggregatorOpBase):
+    # this isn't going to be stable.  The system really needs to know that it should be forced to memoize the result of these expressions
+    # but that is going to have to be managed elsewhere? something that will detect that it is using this aggregator, and then tag that it must
+    # be memoized or something
+    def lift(self, x): return x
+    def lower(self, x): return x
+    def combine(self, a,b): return a
+
 # the colon equals aggregator needs to be able to identify if there is a value which is partially instantiated
 # in the case that something else is added?
 #
@@ -79,5 +107,8 @@ AGGREGATORS = {
     ':-': AggregatorSaturate(lambda a,b: a or b, True),
     '|=': AggregatorSaturate(lambda a,b: a or b, True),
     '&=': AggregatorSaturate(lambda a,b: a and b, False),
-    ':=': AggregatorColonEquals()
+    ':=': AggregatorColonEquals(),
+    'set=': AggregatorSetEquals(),
+    'bag=': AggregatorBagEquals(),
+    '?=': AggregatorQuestionMark(),
 }

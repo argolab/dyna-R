@@ -629,6 +629,9 @@ def loop(R, frame, callback, till_terminal=False, best_effort=False, partition=N
             partition = p
             break
 
+    if PDB_DEBUG():
+        import ipdb; ipdb.set_trace()
+
     if not best_effort:
         if not isinstance(partition, Iterator):
             raise DynaSolverUnLoopable(R)
@@ -1163,6 +1166,7 @@ def simplify_aggregator(self, frame):
                 v = self.body_res.getValue(frame)
                 assert v is not InvalidValue  # if this happens some invalid R-expr was generated?
                 mul = R.multiplicity
+                v = self.aggregator.lift(v)
                 if agg_result is None:
                     agg_result = v
                     mul -= 1
@@ -1207,6 +1211,7 @@ def getPartitions_aggregator(self, frame):
     for p in getPartitions(self.body, frame):
         if p.variable in self.head_vars:
             # filter out the iterators that are going to yield unconsolidated results
+
             yield p
 
 

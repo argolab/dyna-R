@@ -32,9 +32,14 @@ class DynaSolverGussed(DynaSolverError):
     """
     In the case that the solver needs to make a guess and start forward chaining in the case of a cycle
     """
-    def __init__(self):
-        super().__init__()
-        pass
+    pass
+
+
+class DynaSolverProcessAgendaAndRestart(DynaSolverError):
+    """
+    Make the system stop the current query, run the agenda until converged, and then this can restart the current query
+    """
+    pass
 
 
 

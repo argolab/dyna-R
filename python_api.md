@@ -39,6 +39,14 @@ methods to be called at the same time.  E.g.  `foo(%, bar(%))` will construct a 
 and `annon_func/2` being the resulting call.
 
 
+#### Getting values back
+
+Values can be retrieved using one of three methods.  The simplest is using
+`to_dict()` as `api.make_call('foo(X)').to_dict()`, iterating over the result of
+`make_call()` or using a callback method such as `make_call().callback(lambda x:
+key=x[0], val=x[1])`.  Note that using `.callback` or `.to_dict()` will be the
+most efficient methods for retrieving values.
+
 ### Exposing Python functions.
 
 Functions can be exposed from Python using `api.define_function` as a decorator.

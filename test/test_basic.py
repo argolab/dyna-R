@@ -1102,3 +1102,22 @@ def test_type_information_passing():
     frame = Frame()
     rr = saturate(z, frame)
     assert rr == Terminal(0)
+
+
+
+def test_count_unique_return_values():
+    from dyna.syntax.normalizer import add_rules
+
+    add_rules("""
+    cnt_a(1) = "a".
+    cnt_a(2) = "a".
+    cnt_z(X) :- X is cnt_a(_).
+
+    cnt_c += 1 for cnt_z(X).
+    """)
+
+    z = dyna_system.call_term('cnt_c', 0)
+    frame = Frame()
+    z, _ = run_optimizer(z, (interpreter.ret_variable,))
+    rr = saturate(z, frame)
+    assert interpreter.ret_variable.getValue(frame) == 1

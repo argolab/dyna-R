@@ -322,14 +322,14 @@ class DynaExpressionWrapper:
         def s(x): ret[x[0]] = x[1]
         return ret
 
-    # def set_memoized(self, mode):
-    #     assert mode in ('null', 'unk', 'none')
-    #     assert self._name is not None and isinstance(self._name, tuple) and len(self._name) == 2
+    def set_memoized(self, mode):
+        assert mode in ('null', 'unk', 'none')
+        assert self._name is not None and isinstance(self._name, tuple) and len(self._name) == 2
 
-    #     self._api._system.memoize_term(self._name, kind=mode)
+        self._api._system.memoize_term(self._name, kind=mode)
 
-    #     import ipdb; ipdb.set_trace()
-    #     raise NotImplemented()
+        # import ipdb; ipdb.set_trace()
+        # raise NotImplemented()
 
     def __repr__(self):
         return str(self)

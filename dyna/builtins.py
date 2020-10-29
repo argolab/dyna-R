@@ -662,3 +662,17 @@ def define_builtins(dyna_system):
     dyna_system.add_rules("$load(0).")
     # whenever $load("file_name"). is defined, it will load the file into the program
     dyna_system.watch_term_changes(('$load', 1), watch_load_callback)
+
+
+    def watch_forced_memoized_change(msg):
+        term_name, term_arity, memo_mode = msg.key
+        assert memo_mode in ('null', 'unk', 'off')
+
+        if term_name == 0 and term_arity == 0:
+            return
+
+        dyna_system.memoize_term((term_name, term_arity), kind=memo_mode)
+
+    dyna_system.add_rules('$memoized(0, 0) := "off".')
+
+    dyna_system.watch_term_changes(('$memoized', 2), watch_forced_memoized_change)

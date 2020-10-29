@@ -93,6 +93,7 @@ class SteppableParamters(object):
 class SteppableParametersAccess(RBaseType):
 
     def __init__(self, parameter_collection, name_var, arity_var, arg_var, result_var):
+        super().__init__()
         self.parameter_collection = parameter_collection
         self.name_var = name_var
         self.arity_var = arity_var

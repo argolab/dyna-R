@@ -1,14 +1,14 @@
 
 $load("parameters").   % tell the system to load in $parameters
 
-pos_tags(Sentence, WordIdx) := '$__parameters_current'("sentence_tags", 2, &sentence_tags(Sentence, WordIdx)).
-%$parameters(&sentence_tags(Sentence, WordIdx)).
+pos_tags(Sentence, WordIdx) := $parameters(&sentence_tags(Sentence, WordIdx)).
 
 % a set of all tags which are allowed
 tags(X) :- X=pos_tags(_,_).
 
 rules(&prefix_replace(T0 :tags, T1 :tags, T2 :tags)).
 rules(&infix_replace(T0 :tags, T1 :tags, T2 :tags)).
+
 
 % the rewrite rules which rewrite a particular tag in the sentence based off matching the surounding context
 % default to using the tag from the last time that this expression ran, otherwise this is
@@ -52,4 +52,4 @@ sentence(0, 2) = "c".
 
 gold_tags(0, 0) = "a".
 gold_tags(0, 1) = "c".
-gold_tags(0, 2) = "c".
+gold_tags(0, 2) = "d".

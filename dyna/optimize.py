@@ -390,11 +390,14 @@ def optimize_aggregator(R, info):
     # I suppose that we could also check if there is some semiring between
     # different aggregators, though that would require checking that we have the builtins also defined?
 
+    # this is buggy as in the case of iterators, this is still going to have to filter which iterators are allowed to come back
     if isinstance(body, Intersect) and is_expression_semidet(body):
         # then all of the branches of the partition have been removed, so there
         # is only a single branch left.  We can try and determine if the
         # expression is semi-deterministic, so we can remove the operation
         is_colon_eq = R.aggregator is AGGREGATORS[':=']
+
+        #import ipdb; ipdb.set_trace()
 
         if not is_colon_eq:
             return intersect(unify(R.result, R.body_res), body)
