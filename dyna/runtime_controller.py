@@ -52,7 +52,8 @@ class NOOPRuntimeController(RuntimeController):
         return R
 
     def unloopable(self, R):
-        # this could look at the stack track to try and identify something that
+        # this could look at the stack track to try and identify something that could be memoized.
+        # if something loops multiple times, then it would be a candidate for which
         raise DynaSolverUnLoopable(R)
 
 

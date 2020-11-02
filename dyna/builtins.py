@@ -666,13 +666,13 @@ def define_builtins(dyna_system):
 
     def watch_forced_memoized_change(msg):
         term_name, term_arity, memo_mode = msg.key
-        assert memo_mode in ('null', 'unk', 'off')
+        assert memo_mode in ('null', 'unk', 'none')
 
         if term_name == 0 and term_arity == 0:
             return
 
         dyna_system.memoize_term((term_name, term_arity), kind=memo_mode)
 
-    dyna_system.add_rules('$memoized(0, 0) := "off".')
+    dyna_system.add_rules('$memoized(0, 0) := "none".')
 
     dyna_system.watch_term_changes(('$memoized', 2), watch_forced_memoized_change)

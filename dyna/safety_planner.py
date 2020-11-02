@@ -20,6 +20,8 @@ from .terms import BuildStructure, CallTerm, Evaluate, ReflectStructure
 # in the case that a memoized mode is not supported, I suppose that this should either change the memoized mode so
 # that it can run what it needs.
 
+# TODO: this should return if it is semi-det for a given R-expr
+
 
 class SafetyPlanner:
 

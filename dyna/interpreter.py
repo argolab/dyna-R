@@ -1022,8 +1022,6 @@ class Unify(RBaseType):
             v2, v1 = v1, v2
         self.v1 = v1
         self.v2 = v2
-        # if 'V11162' in str(v2):
-        #     import ipdb; ipdb.set_trace()
     @property
     def vars(self):
         return (self.v1, self.v2)

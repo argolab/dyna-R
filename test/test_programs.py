@@ -188,7 +188,8 @@ def program_linear_regression1(d):
     varY += (y(I) - avgY)^2 / n.
 
     covXY += (x(I) - avgX) * (y(I) - avgY) / n.
-    n += 1 for ?x(I), ?y(I).
+    %n += 1 for ?x(I), ?y(I).  % this line is wrong.  the ?foo(X) can not be used to iterate the domain of X
+    n += 1 for _ is x(I), _ is y(I).
 
     % Synthetic `y` variable: a noisy linear function of `x`.
     y(I) := a*x(I) + b.

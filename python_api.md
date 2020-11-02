@@ -42,7 +42,7 @@ and `annon_func/2` being the resulting call.
 #### Getting values back
 
 Values can be retrieved using one of three methods.  The simplest is using
-`to_dict()` as `api.make_call('foo(X)').to_dict()`, iterating over the result of
+`to_dict()` as `api.make_call('foo(%)').to_dict()`, iterating over the result of
 `make_call()` or using a callback method such as `make_call().callback(lambda x:
 key=x[0], val=x[1])`.  Note that using `.callback` or `.to_dict()` will be the
 most efficient methods for retrieving values.

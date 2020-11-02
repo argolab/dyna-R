@@ -66,19 +66,95 @@ def make_graph(R):  # not used atm
 #     #     return True  # then this returns 0 or 1... but
 #     return False
 
-def is_expression_semidet(R):
+def is_expression_semidet_broken(R):
     from .terms import BuildStructure, ReflectStructure
-
     if isinstance(R, Intersect):
-        return all(is_expression_semidet(c) for c in R.children)
+        return all(is_expression_semidet_broken(c) for c in R.children)
     elif isinstance(R, ModedOp):
         return not R.nondet
     elif isinstance(R, (BuildStructure, Aggregator, Unify, ReflectStructure)):
         return True
     elif isinstance(R, Terminal) and R.multiplicity <= 1:
         return True
-
     return False
+
+
+def is_expression_semidet_recurse(R, det_vars):
+    from .terms import BuildStructure, ReflectStructure, CallTerm
+
+    # this is going to have to track that the output of a variable.  In the case
+    # that an aggreator is instead used as `X for true is foo(X)` then this is
+    # not a semidet expression.  Which means that the transformations are
+
+    def det(v):
+        return v in det_vars or isinstance(v, ConstantVariable)
+
+    if isinstance(R, ModedOp):
+        # this is going to have to mark which variables are assigned in a determinstic way
+        mode = tuple(det(v) for v in R.vars)
+        if mode in R.det:
+            det_vars |= set(R.vars)
+        return True
+    elif isinstance(R, BuildStructure):
+        if det(R.result):
+            det_vars |= set(R.arguments)
+        elif all(det(v) for v in R.arguments):
+            det_vars.add(R.result)
+        return True
+    elif isinstance(R, ReflectStructure):
+        if det(R.result):
+            det_vars.add(R.args_list)
+            det_vars.add(R.num_args)
+            det_vars.add(R.name)
+        elif det(R.name) and det(R.num_args) and det(R.args_list):
+            det_vars.add(R.result)
+        return True
+    elif isinstance(R, Unify):
+        if det(R.v1): det_vars.add(R.v2)
+        if det(R.v2): det_vars.add(R.v1)
+        return True
+    elif isinstance(R, Aggregator):
+        if all(det(v) for v in R.head_vars):
+            det_vars.add(R.result)
+        return True
+    elif isinstance(R, Partition):
+        return False
+    elif isinstance(R, Intersect):
+        for r in R.children:
+            if is_expression_semidet_recurse(r, det_vars) is False:
+                return False
+        return True
+    elif isinstance(R, Terminal):
+        return R.multiplicity <= 1
+    elif isinstance(R, CallTerm):
+        return False
+    else:
+        # are there ther things that should exist
+        # if this is a call to some other expression, then it would need to consider if that expression
+        # is semidet.  For the optimizer, we can just assume that those are not semi-det, as we should have embedded
+        # those R-exprs into this
+        return False
+
+def is_expression_semidet(R, det_vars):
+    # this is going to keep going until it finds
+    d = None
+    while det_vars != d:
+        d = det_vars.copy()
+        if is_expression_semidet_recurse(R, det_vars) is False:
+            return set()  # this is for some reason marked as non-det, so we are just giong to return an empty set
+    return det_vars
+
+
+# #########################33
+
+#         elif isinstance(R, (BuildStructure, Unify, ReflectStructure)):
+#         return True
+#     elif isinstance(R, Terminal) and R.multiplicity <= 1:
+#         return True
+
+#     elif isinstance(R, Aggregator):
+#         # this is going to have to distinguish between which variables
+
 
 
 def split_heuristic(R, info=None):
@@ -390,8 +466,10 @@ def optimize_aggregator(R, info):
     # I suppose that we could also check if there is some semiring between
     # different aggregators, though that would require checking that we have the builtins also defined?
 
-    # this is buggy as in the case of iterators, this is still going to have to filter which iterators are allowed to come back
-    if isinstance(body, Intersect) and is_expression_semidet(body):
+    semidet_results = is_expression_semidet(body, set(R.head_vars))
+    semidet = (semidet_results and (R.result in semidet_results or isinstance(R.result, ConstantVariable)))
+    semidet_broken = is_expression_semidet_broken(R)
+    if isinstance(body, Intersect) and semidet:
         # then all of the branches of the partition have been removed, so there
         # is only a single branch left.  We can try and determine if the
         # expression is semi-deterministic, so we can remove the operation
