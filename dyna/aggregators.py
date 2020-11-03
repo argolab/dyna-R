@@ -112,3 +112,10 @@ AGGREGATORS = {
     'bag=': AggregatorBagEquals(),
     '?=': AggregatorQuestionMark(),
 }
+
+removable_aggregators = {
+    AGGREGATORS['max='],
+    AGGREGATORS['min='],
+    AGGREGATORS[':-'],
+    # := and = should also be removable, though maybe depending on how we have defined errors to get handled by those aggregators, it might
+}

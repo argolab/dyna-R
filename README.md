@@ -59,15 +59,24 @@ even([X,Y|Z]) :- even(Z).
 odd([X|Y]) :- even(Y).
 even_odd(X) :- even(X), odd(X).
 
+# here even/1 matches all lists of even length, where odd/1 will match lists of odd length.
+# the expression even_odd would require that a list is both even and odd.  For which there
+# are no ground values which will satasify this requirement
+
 # run the optimizer on the program to identify that even_odd(X) is empty
-# even & odd represent incompatiable recursive "types" where their intersection is empty.
 optimize
 
 even_odd(X)
 ```
 
-# Simplified API
-Document for the Python API can be found [here](python_api.md).
+# Python API
+Dyna-R has a simplified API for interacting with it from python.
+```python
+from dyna.api import DynaAPI
+
+api = DynaApi()
+```
+Document can be found [here](python_api.md).
 
 
 # [Here be dragons](https://en.wikipedia.org/wiki/Here_be_dragons)
@@ -85,4 +94,4 @@ Document for the Python API can be found [here](python_api.md).
                      `-'
 ```
 
-This is an "academic" implementation.  There may be bugs in general, though it is surprisingly robust in a lot of cases.  Aka, [here be dragons](https://en.wikipedia.org/wiki/Here_be_dragons).
+This is an "academic" implementation.  There may be bugs in general, though it is surprisingly robust in a lot of cases.  AKA: [here be dragons](https://en.wikipedia.org/wiki/Here_be_dragons).

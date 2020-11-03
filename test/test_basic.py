@@ -1121,3 +1121,24 @@ def test_count_unique_return_values():
     z, _ = run_optimizer(z, (interpreter.ret_variable,))
     rr = saturate(z, frame)
     assert interpreter.ret_variable.getValue(frame) == 1
+
+
+def test_looping_with_build_structure():
+    from dyna.syntax.normalizer import add_rules
+
+    add_rules("""
+    set_4(1).
+    set_4(2).
+    set_4(3).
+    set_4(4).
+
+    set_structure(&struct_a(X :set_4)).
+    set_structure(&struct_b(X :set_4)).
+
+    set_structure_size += 1 for set_structure(X).
+    """)
+
+    z = dyna_system.call_term('set_structure_size', 0)
+    frame = Frame()
+    z = saturate(z, frame)
+    assert interpreter.ret_variable.getValue(frame) == 8

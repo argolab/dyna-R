@@ -304,22 +304,39 @@ class RStructureInfo:
 
     frame : Frame
 
-    def __init__(self, *, conjunctive_constraints=None, partition_constraints=None, all_constraints=None, alias_vars=None, exposed_variables=None, frame=None):
+    parent : 'RStructureInfo'
+
+    Rexpr : RBaseType
+
+    def __init__(self, *,
+                 conjunctive_constraints=None,
+                 partition_constraints=None,
+                 all_constraints=None,
+                 alias_vars=None,
+                 exposed_variables=None,
+                 frame=None,
+                 parent=None,
+                 Rexpr=None):
         self.conjunctive_constraints = conjunctive_constraints or defaultdict(list)
         self.partition_constraints = partition_constraints if partition_constraints is not None else self.conjunctive_constraints
         self.all_constraints = all_constraints
         self.alias_vars = alias_vars or defaultdict(set)
         self.exposed_variables = exposed_variables
         self.frame = frame
+        self.parent = parent
+        self.Rexpr = Rexpr
 
 
-    def recurse(self, *, frame=None):
+    def recurse(self, *, frame=None, Rexpr=None):
         return RStructureInfo(
             conjunctive_constraints=defaultdict(list, ((k, v.copy()) for k,v in self.conjunctive_constraints.items())),
             all_constraints=self.all_constraints,
             # don't pass alias vars, as we want to handle that at every scope seperatly
             exposed_variables=self.exposed_variables,
-            frame=frame or self.frame)
+            frame=frame or self.frame,
+            parent=self,
+            Rexpr=Rexpr,
+        )
 
     def get_constraints(self, var, typ):
         for c in self.conjunctive_constraints[var]:
@@ -379,7 +396,11 @@ def optimizer_aliased_vars(R, info):
             #assert all(n not in renames for n in info.exposed_variables)
 
             R = R.rename_vars(lambda x: renames.get(x,x))
-            ufs = [Unify(k, v) for k,v in renames.items() if k in exposed or v in exposed]
+            # if any('279' in str(v) for v in renames):
+            #     import ipdb; ipdb.set_trace()
+            ufs = [Unify(k, v) for k,v in renames.items()]# if k in exposed or v in exposed]
+            if len(ufs) > 8:
+                import ipdb; ipdb.set_trace()  # todo, figure out what to do in these cases
             if TRACK_CONSTRUCTED_FROM:
                 for u in ufs: u._constructed_from = "optimizer alias vars"
             R = intersect(*ufs, R)
@@ -410,7 +431,7 @@ def optimzier_partition(partition, info):
 
         # we are going to identify which conjunctive constraints are used here first
 
-        i2 = info.recurse(frame=frame)
+        i2 = info.recurse(frame=frame, Rexpr=R)
         i2.partition_constraints = map_constraints_to_vars(get_intersecting_constraints(R))
 
         frame2 = Frame(frame)  # copy frame as we do not want to modify the state with these extra operators as they might not be properly unset later
@@ -446,13 +467,13 @@ def optimzier_partition(partition, info):
 
 @optimizer.define(Aggregator)
 def optimize_aggregator(R, info):
-    from .aggregators import AGGREGATORS, null_term
+    from .aggregators import AGGREGATORS, null_term, removable_aggregators
     from .builtins import binary_neq
     from .terms import BuildStructure
 
     # the body of an aggregator might loop over multiple values, so it can't exactly be considered as conjunctive with the outer frame
     # in that the outer frame can use constraints from the aggregator, but not vice versa
-    i2 = info.recurse()
+    i2 = info.recurse(Rexpr=R)
     i2.partition_constraints = map_constraints_to_vars(get_intersecting_constraints(R.body))
 
 
@@ -466,20 +487,55 @@ def optimize_aggregator(R, info):
     # I suppose that we could also check if there is some semiring between
     # different aggregators, though that would require checking that we have the builtins also defined?
 
+    can_remove_aggregator = False
+
     semidet_results = is_expression_semidet(body, set(R.head_vars))
-    semidet = (semidet_results and (R.result in semidet_results or isinstance(R.result, ConstantVariable)))
-    semidet_broken = is_expression_semidet_broken(R)
-    if isinstance(body, Intersect) and semidet:
+    semidet = isinstance(body, Intersect) and bool(semidet_results) and (R.body_res in semidet_results or isinstance(R.body_res, ConstantVariable))
+    semidet_broken = isinstance(body, Intersect) and is_expression_semidet_broken(R)
+
+    # if semidet != semidet_broken:
+    #     import ipdb; ipdb.set_trace()
+
+    if semidet:
+        can_remove_aggregator = True
+
+    parent_aggregator = None
+    parent_info = info
+    while parent_info is not None:
+        if isinstance(parent_info.Rexpr, Aggregator):
+            break
+        parent_info = parent_info.parent
+    if parent_info is not None:
+        if R.aggregator in removable_aggregators and R.aggregator is parent_info.Rexpr.aggregator and parent_info.Rexpr is not R:
+            # this means that they have the same aggregator nested between two
+            # different levels so we are going to check if the variables are the
+            # same between the two cases.  If both are unified to the same
+            # value, then it would not matter
+
+            # this is only going on idempotent aggregator anyways, so if any of
+            # the results are constant, then reglardless of how many times
+            # something appears the result will be the same.  So that would mean that there is
+            if ((isinstance(R.result, ConstantVariable) or
+                 isinstance(R.body_res, ConstantVariable)) or
+                isinstance(parent_info.Rexpr.body_res, ConstantVariable) or
+                R.aggregator is AGGREGATORS[':-']  # this always just takes `True` as the contributed value
+                # if the result of an aggregtor feeds directly into the input of another?  I suppose that there could be some stuff
+                # that would be filtered out, so this would not be technically correct?
+                # we could check that nothing else performs a read on this variable some something like: `min= (min= f(X))` would be ok whereas something
+                # like `min= Z for Z=(min=f(X)), g(Z)` would require that it first finds the min values from `f(X)`, otherwise `g(Z)` could be
+                # like `Z > 5`, which would result in some stuff that needs to get filtered.
+
+                ## R.result == parent_info.Rexpr.body_res
+                ):
+                can_remove_aggregator = True
+
+
+    if can_remove_aggregator:
         # then all of the branches of the partition have been removed, so there
         # is only a single branch left.  We can try and determine if the
         # expression is semi-deterministic, so we can remove the operation
-        is_colon_eq = R.aggregator is AGGREGATORS[':=']
 
-        #import ipdb; ipdb.set_trace()
-
-        if not is_colon_eq:
-            return intersect(unify(R.result, R.body_res), body)
-        else:
+        if R.aggregator is AGGREGATORS[':=']:
             # handle :=
             if R.body_res.isBound(i2.frame):
                 val = R.body_res.getValue(i2.frame)
@@ -492,6 +548,11 @@ def optimize_aggregator(R, info):
                 return intersect(BuildStructure('$colon_line_tracking', R.body_res, (VariableId(), R.result)),
                                  binary_neq(R.result, constant(null_term), ret=constant(True)),
                                  body)
+        elif R.aggregator is AGGREGATORS[':-']:
+            return intersect(unify(R.result, constant(True)), unify(R.body_res, constant(True)), body)
+        else:
+            return intersect(unify(R.result, R.body_res), body)
+
 
     # TODO: this should be able to consider if the resulting variable of
     # aggregation is already set in which case, this could eleminate branches of
@@ -546,6 +607,7 @@ def delete_useless_unions(R, info):
 
                     # there could be more rounds of running the optimizer/simplification here, but this should be sufficient for our current use cases....
                     rr = simplify(intersect(v, R), i2.frame)
+                    i2.Rexpr = rr
                     if not rr.isEmpty():
                         rr = optimizer(rr, i2)
 
@@ -618,21 +680,25 @@ def run_optimizer_local(R, exposed_variables):
         if R.isEmpty():
             break
 
-        info = RStructureInfo(exposed_variables=exposed_variables,frame=frame)
+        info = RStructureInfo(exposed_variables=exposed_variables,frame=frame, Rexpr=R)
         info.partition_constraints = info.conjunctive_constraints = map_constraints_to_vars(get_intersecting_constraints(R))
         info.all_constraints = map_constraints_to_vars(R.all_children())
 
         R0 = R
         R = optimizer(R, info)
+        info.Rexpr = R
         R1 = R
         R = saturate(R, info.frame)
+        info.Rexpr = R
 
         if R.isEmpty():
             break
 
         R = delete_useless_unions(R, info)
+        info.Rexpr = R
 
         R = optimizer_aliased_vars(R, info)
+        info.Rexpr = R
 
         if R == last_R:
             break

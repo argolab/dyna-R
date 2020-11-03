@@ -125,7 +125,7 @@ def program_value_iteration(d):
 
     % The optimal policy function π. The free-choice aggregator ?= is used
     % merely to break ties as in footnote 17.
-    π(S) ?= A for v(S) == q(S,A).
+    pi(S) ?= A for v(S) == q(S,A).
 
     r("a", 0) := 0.
     r("a", 1) := 1.
@@ -133,8 +133,11 @@ def program_value_iteration(d):
     p("a", 1, "a") := 1.
     """)
 
+    d.make_call('v/1').set_memoized('null')
+    d.make_call('pi/1').set_memoized('null')
+
     assert d.make_call('v(%)').to_dict() == {("a",): 2.0}
-    assert d.make_call('π(%)').to_dict() == {("a",): 1.0}
+    assert d.make_call('pi(%)').to_dict() == {("a",): 1.0}
 
 
 def program_value_iteration_prefix_aggr(d):
@@ -147,7 +150,7 @@ def program_value_iteration_prefix_aggr(d):
 
     % The optimal policy function π. The free-choice aggregator ?= is used
     % merely to break ties as in footnote 17.
-    π(S) ?= A for q(S,A) == (max= q(S,Ap)).
+    pi(S) ?= A for q(S,A) == (max= q(S,Ap)).
 
     r("a", 0) := 0.
     r("a", 1) := 1.
@@ -155,8 +158,11 @@ def program_value_iteration_prefix_aggr(d):
     p("a", 1, "a") := 1.
     """)
 
+    d.make_call('q/2').set_memoized('null')
+    d.make_call('pi/1').set_memoized('null')
+
     assert d.make_call('q(%, %)').to_dict() == {("a", 0): 1.0, ("a", 1): 2.0}
-    assert d.make_call('π(%)').to_dict() == {("a",): 1.0}
+    assert d.make_call('pi(%)').to_dict() == {("a",): 1.0}
 
 
 def program_markov_reward_process(d):

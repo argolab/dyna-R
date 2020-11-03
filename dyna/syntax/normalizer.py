@@ -259,7 +259,9 @@ def user_query(x):
 
     #print(rr)
     loop(rr,
-         frame, callback, best_effort=True)
+         frame, callback,
+         best_effort=True
+         )
 
     print()
 

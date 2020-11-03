@@ -307,6 +307,12 @@ class ConstantVariable(Variable):
         else:
             return True
 
+    def _unset(self, frame):
+        pass
+
+    def _unset_type(self, frame):
+        pass
+
 # class UnitaryVariable(Variable):
 #     # a variable that is not referenced in more than 1 place, so we are going to
 #     # ignore the value, it isn't even a constant
@@ -857,9 +863,11 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
                 res = Rexpr
             save(res, frame)
 
-            for var, imode, val in zip(self._unioned_vars, incoming_mode, grounds):
+            for var, imode, itype, val in zip(self._unioned_vars, incoming_mode, incoming_types, grounds):
                 if not imode and val is None:
                     var._unset(frame)
+                if not itype:
+                    var._unset_type(frame)
 
         for var, imode, itype in zip(self._unioned_vars, incoming_mode, incoming_types):
             if not imode:
