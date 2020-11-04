@@ -336,6 +336,7 @@ class RStructureInfo:
             frame=frame or self.frame,
             parent=self,
             Rexpr=Rexpr,
+            alias_vars=self.alias_vars.copy()
         )
 
     def get_constraints(self, var, typ):
@@ -356,13 +357,26 @@ class RStructureInfo:
 
 def optimizer_aliased_vars(R, info):
     # this should take the variables and perform renaming on the variables.
-    if info.alias_vars:
+
+    # if '$V253' in str(R):
+    #     import ipdb; ipdb.set_trace()
+
+    alias_vars = info.alias_vars
+    alias_vars2 = defaultdict(set)
+
+    for c in get_intersecting_constraints(R):
+        if isinstance(c, Unify):
+            alias_vars2[c.v1].add(c.v2)
+            alias_vars2[c.v2].add(c.v1)
+
+    if alias_vars != alias_vars2:
+        import ipdb; ipdb.set_trace()
+
+    if alias_vars:
         # then we are going to want to determine if there are more variables at
         # the outer scope which are referencing these variables, which will
         # inform us if we can just delete these variables.  In this case, we
         # want to determine which expressions are
-
-        alias_vars = info.alias_vars
 
         for k, v in alias_vars.items():
             v.add(k)  # add the var to its own collection
@@ -372,7 +386,7 @@ def optimizer_aliased_vars(R, info):
         done_progagate = False
         while not done_progagate:
             done_progagate = True
-            for var in alias_vars:
+            for var in list(alias_vars.keys()):
                 for v in alias_vars[var]:
                     if alias_vars[var] != alias_vars[v]:
                         r = alias_vars[var] | alias_vars[v]
@@ -399,8 +413,8 @@ def optimizer_aliased_vars(R, info):
             # if any('279' in str(v) for v in renames):
             #     import ipdb; ipdb.set_trace()
             ufs = [Unify(k, v) for k,v in renames.items()]# if k in exposed or v in exposed]
-            if len(ufs) > 8:
-                import ipdb; ipdb.set_trace()  # todo, figure out what to do in these cases
+            # if len(ufs) > 8:
+            #     import ipdb; ipdb.set_trace()  # todo, figure out what to do in these cases
             if TRACK_CONSTRUCTED_FROM:
                 for u in ufs: u._constructed_from = "optimizer alias vars"
             R = intersect(*ufs, R)
@@ -490,11 +504,8 @@ def optimize_aggregator(R, info):
     can_remove_aggregator = False
 
     semidet_results = is_expression_semidet(body, set(R.head_vars))
-    semidet = isinstance(body, Intersect) and bool(semidet_results) and (R.body_res in semidet_results or isinstance(R.body_res, ConstantVariable))
-    semidet_broken = isinstance(body, Intersect) and is_expression_semidet_broken(R)
-
-    # if semidet != semidet_broken:
-    #     import ipdb; ipdb.set_trace()
+    semidet = isinstance(body, Intersect) and bool(semidet_results) and (R.body_res in semidet_results or R.body_res.isBound(i2.frame))
+    semidet_broken = isinstance(body, Intersect) and is_expression_semidet_broken(body)
 
     if semidet:
         can_remove_aggregator = True
@@ -529,6 +540,9 @@ def optimize_aggregator(R, info):
                 ):
                 can_remove_aggregator = True
 
+
+    # if semidet_broken and not can_remove_aggregator:
+    #     import ipdb; ipdb.set_trace()
 
     if can_remove_aggregator:
         # then all of the branches of the partition have been removed, so there
@@ -593,6 +607,9 @@ def delete_useless_unions(R, info):
 
     #st = str(R)
 
+    #if '$V191' in str(R):
+    #import ipdb; ipdb.set_trace()
+
     if partitions:
         for p in partitions:
             for kk, vv in p._children:
@@ -616,6 +633,10 @@ def delete_useless_unions(R, info):
                         deletes.setdefault(p, set()).add((kk, v))
 
     #assert st == str(R)
+
+    # if '$V191' in str(R):
+    #     import ipdb; ipdb.set_trace()
+
 
     if deletes:
         def rewriter(r):
@@ -743,6 +764,13 @@ def run_optimizer(R, exposed_variables):
     different operations.  These operations will be saved in the dyna_system."""
 
     rr, assumptions = run_optimizer_local(R, exposed_variables)
+
+    # import inspect
+    # zzz = inspect.getouterframes( inspect.currentframe() )[1]
+
+    # if zzz.frame.f_locals.get('term') == ('even_odd_list_p', 1):
+    #     import ipdb; ipdb.set_trace()
+
 
     splits = split_heuristic(construct_intersecting(rr))
 

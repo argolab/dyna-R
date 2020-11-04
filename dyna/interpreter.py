@@ -801,6 +801,7 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
     incoming_mode = [v.isBound(frame) for v in self._unioned_vars]
     incoming_values = [v.getValue(frame) for v in self._unioned_vars]
     incoming_types = [v.getType(frame) for v in self._unioned_vars]
+    set_types = [set() for _ in range(len(self._unioned_vars))]
 
     nc = PrefixTrie(len(self._unioned_vars))
 
@@ -811,6 +812,9 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
         if not res.isEmpty():
             #nc[nkey].append(res)
             nc.setdefault(nkey,[]).append(res)
+
+            for i, var in enumerate(self._unioned_vars):
+                set_types[i].add(var.getType(frame))
 
     #saveL.unioned_vars = self._unioned_vars
 
@@ -904,12 +908,14 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
             r.append(Terminal(multiplicity))
         nc[k] = r
 
-    for var, val in zip(self._unioned_vars, set_values):
+    for var, val, stype in zip(self._unioned_vars, set_values, set_types):
         if val is not None:
             try:
                 var.setValue(frame, val)
             except UnificationFailure:
                 assert False # ??? shouldn't happen
+        elif len(stype) == 1 and stype != {None}:
+            var.setType(frame, next(iter(stype)))
 
     if reduce_to_single:
         r = nc.single_item()

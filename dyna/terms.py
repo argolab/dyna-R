@@ -212,6 +212,11 @@ def optimizer_buildStructure(self, info):
             if c.name != self.name or len(c.arguments) != len(self.arguments):
                 return Terminal(0)  # unification fails in this case
 
+    # the occurs check
+    if self.result in buildStructure_determine_constructed_from(self.result, info, {}):
+        # the occurs check fails
+        return Terminal(0)
+
     for c in info.partition_constraints[self.result]:
         if c is self:
             break
@@ -226,15 +231,12 @@ def optimizer_buildStructure(self, info):
             #import ipdb; ipdb.set_trace()
             const = []#unify(c.result, self.result)]
             for a,b in zip(c.arguments, self.arguments):
-                const.append(unify(a,b))
+                u = unify(a,b)
+                if u not in info.partition_constraints[a]:
+                    const.append(u)
             if TRACK_CONSTRUCTED_FROM:
                 for u in const: u._constructed_from = self
-            return intersect(*const)
-
-    # the occurs check
-    if self.result in buildStructure_determine_constructed_from(self.result, info, {}):
-        # the occurs check fails
-        return Terminal(0)
+            return intersect(self, *const)
 
     return self
 
