@@ -156,14 +156,6 @@ def simplify_buildStructure(self, frame):
         res = self.result.getValue(frame)
         if not isinstance(res, Term) or res.name != self.name or len(res.arguments) != len(self.arguments):
             return Terminal(0)  # then this has failed
-        # import inspect
-        # #and str(self.arguments[0]) != '$V3':#
-        # if self.name == 'inp' and not any(('(c, frame2)' in f.code_context[0] if f.code_context else False) for f in inspect.stack()):
-        #     import ipdb; ipdb.set_trace()
-
-        # if self.name == 'out':
-        #     import ipdb; ipdb.set_trace()
-
         for var, val in zip(self.arguments, res.arguments):
             var.setValue(frame, val)
         return Terminal(1)
@@ -203,7 +195,7 @@ def optimizer_buildStructure(self, info):
 
     for c in cc:
         if c is self:
-            break
+            continue  # looking for other constraitns that are in this loop
 
         # we can only do this if we are not in a partition
         # as otherwise the partition has to be made aware of the fact that we are reading and setting these additional variables.
@@ -217,18 +209,16 @@ def optimizer_buildStructure(self, info):
         # the occurs check fails
         return Terminal(0)
 
-    for c in info.partition_constraints[self.result]:
-        if c is self:
-            break
-        if isinstance(c, BuildStructure) and c.result == self.result:
-            # if we are in a partition, then we would require that all of the
-            # arguments of one side are present, otherwise this isn't giong to
-            # work?
-            #
-            # This requires that both of the constraints are in the same
-            # partition, otherwise this is not correct.  So we are giong to need
-            # to map the partition's constraints?
-            #import ipdb; ipdb.set_trace()
+    unifable_structures = [c for c in info.partition_constraints[self.result]
+                           if isinstance(c, BuildStructure) and c.result == self.result]
+
+    if len(unifable_structures) > 1:
+        # we just need to keep one of these around.  So we are going to use the id to sort these into
+        # some sort of stable order, such that we will select the same one regardless of where this is running
+        # from
+        unifable_structures.sort(key=id)
+        c = unifable_structures[0]
+        if c is not self:
             const = []#unify(c.result, self.result)]
             for a,b in zip(c.arguments, self.arguments):
                 u = unify(a,b)
@@ -236,7 +226,24 @@ def optimizer_buildStructure(self, info):
                     const.append(u)
             if TRACK_CONSTRUCTED_FROM:
                 for u in const: u._constructed_from = self
-            return intersect(self, *const)
+            return intersect(*const)
+
+
+    # for c in info.partition_constraints[self.result]:
+    #     if c is self: continue
+
+    # for c in info.partition_constraints[self.result]:
+    #     if c is self:
+    #         continue
+    #     if isinstance(c, BuildStructure) and c.result == self.result:
+    #         # if we are in a partition, then we would require that all of the
+    #         # arguments of one side are present, otherwise this isn't giong to
+    #         # work?
+    #         #
+    #         # This requires that both of the constraints are in the same
+    #         # partition, otherwise this is not correct.  So we are giong to need
+    #         # to map the partition's constraints?
+    #         #import ipdb; ipdb.set_trace()
 
     return self
 

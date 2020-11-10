@@ -114,6 +114,8 @@ AGGREGATORS = {
 }
 
 removable_aggregators = {
+    # there might be an issue with removing max/min.
+
     AGGREGATORS['max='],
     AGGREGATORS['min='],
     AGGREGATORS[':-'],

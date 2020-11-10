@@ -455,12 +455,16 @@ def test_optimizer2():
     # to perform the approperate reflection and then inline calls.  This should
     # also eleminate excess variables from the expression.
 
-    dyna_system.define_term('opt_call', 2, Intersect(Unify(constant(True), interpreter.ret_variable), Unify(*variables_named(0,1))))  # opt_call(X,X).
+    dyna_system.define_term('opt_call', 2,
+                            Intersect(Unify(constant(True), interpreter.ret_variable),
+                                      Unify(*variables_named(0,1))))  # opt_call(X,X).
 
     res, sv, a1, a2, sname, snargs, alist = variables_named(*'abcdefg')
 
     # res = *&opt_call(A1, A2)
-    rx = Intersect(BuildStructure('opt_call', sv, (a1, a2)), ReflectStructure(sv, sname, snargs, alist), Evaluate_reflect(dyna_system, res, sname, snargs, alist))
+    rx = Intersect(BuildStructure('opt_call', sv, (a1, a2)),
+                   ReflectStructure(sv, sname, snargs, alist),
+                   Evaluate_reflect(dyna_system, res, sname, snargs, alist))
 
     rr, assumptions = run_optimizer(rx, (a1, a2, res))
 
@@ -469,12 +473,16 @@ def test_optimizer2():
 
 def test_optimizer3():
 
-    dyna_system.define_term('opt_call2', 2, Intersect(Unify(constant(True), interpreter.ret_variable), Unify(*variables_named(0,1))))  # opt_call(X,X).
+    dyna_system.define_term('opt_call2', 2,
+                            Intersect(Unify(constant(True), interpreter.ret_variable),
+                                      Unify(*variables_named(0,1))))  # opt_call(X,X).
 
     res, sv, a1, a2, sname, snargs, alist = variables_named(*'abcdefg')
 
     # res = *&opt_call(A1, 7).
-    rx = Intersect(BuildStructure('opt_call2', sv, (a1, constant(7))), ReflectStructure(sv, sname, snargs, alist), Evaluate_reflect(dyna_system, res, sname, snargs, alist))
+    rx = Intersect(BuildStructure('opt_call2', sv, (a1, constant(7))),
+                   ReflectStructure(sv, sname, snargs, alist),
+                   Evaluate_reflect(dyna_system, res, sname, snargs, alist))
 
     rr, assumptions = run_optimizer(rx, (a1, a2, res))
 
@@ -995,22 +1003,24 @@ def test_geometric_series():
 def test_quicksort_optimize():
     from dyna.syntax.normalizer import add_rules
 
+    # import ipdb; ipdb.set_trace()
+
     add_rules("""
     quicksort([X|Xs],Ys) :-
-    partition(Xs,X,Left,Right),
-    quicksort(Left,Ls),
-    quicksort(Right,Rs),
-    append(Ls,[X|Rs],Ys).
+        partition(Xs,X,Left,Right),
+        quicksort(Left,Ls),
+        quicksort(Right,Rs),
+        append(Ls,[X|Rs],Ys).
     quicksort([],[]).
 
     partition([X|Xs],Y,[X|Ls],Rs) :-
-    X <= Y, partition(Xs,Y,Ls,Rs).
+        X <= Y, partition(Xs,Y,Ls,Rs).
     partition([X|Xs],Y,Ls,[X|Rs]) :-
-    X > Y, partition(Xs,Y,Ls,Rs).
+        X > Y, partition(Xs,Y,Ls,Rs).
     partition([],Y,[],[]).
     """)
 
-    #dyna_system._optimize_term(('partition', 4))
+    # dyna_system._optimize_term(('partition', 4))
     dyna_system._optimize_term(('quicksort', 2))
     dyna_system.run_agenda()
 
@@ -1020,6 +1030,7 @@ def test_quicksort_optimize():
     rr = saturate(qs, frame)
 
     assert rr == Terminal(1)
+    assert frame[1] == Term.fromlist([1,2,3])
 
 
 def test_watching_terms():

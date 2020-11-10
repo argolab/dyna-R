@@ -369,8 +369,12 @@ def optimizer_aliased_vars(R, info):
             alias_vars2[c.v1].add(c.v2)
             alias_vars2[c.v2].add(c.v1)
 
-    if alias_vars != alias_vars2:
-        import ipdb; ipdb.set_trace()
+    # if alias_vars != alias_vars2:
+    #     import ipdb; ipdb.set_trace()
+
+    #     alias_vars = alias_vars2
+
+    # import ipdb; ipdb.set_trace()
 
     if alias_vars:
         # then we are going to want to determine if there are more variables at
@@ -412,7 +416,7 @@ def optimizer_aliased_vars(R, info):
             R = R.rename_vars(lambda x: renames.get(x,x))
             # if any('279' in str(v) for v in renames):
             #     import ipdb; ipdb.set_trace()
-            ufs = [Unify(k, v) for k,v in renames.items()]# if k in exposed or v in exposed]
+            ufs = [Unify(k, v) for k,v in renames.items() if k in exposed and v in exposed]
             # if len(ufs) > 8:
             #     import ipdb; ipdb.set_trace()  # todo, figure out what to do in these cases
             if TRACK_CONSTRUCTED_FROM:
@@ -492,6 +496,8 @@ def optimize_aggregator(R, info):
 
 
     body = optimizer(R.body, i2)
+
+    body = optimizer_aliased_vars(body, i2)
 
     # if there is only a single body and everything is semidet?  Though if this
     # is :=, then we need to handle that case specially.  That will include
@@ -675,7 +681,7 @@ def lift_up_equivalent_constraints(R):
     pass
 
 
-def run_optimizer_local(R, exposed_variables):
+def run_optimizer_local(R, exposed_variables, *, check_R=lambda x, y: None):
     """This is the entry point for the optimizer that is _only_ going to operate on
     a single R-expr.  This will return a new R-expr that is semantically
     equivalent and at least the variables listed in exposed_variables will have
@@ -697,9 +703,12 @@ def run_optimizer_local(R, exposed_variables):
         # print(frame)
         # print('-'*50)
 
+        check_R(R, frame)
+        Rps = R
         R = saturate(R, frame)
         if R.isEmpty():
             break
+        check_R(R, frame)
 
         info = RStructureInfo(exposed_variables=exposed_variables,frame=frame, Rexpr=R)
         info.partition_constraints = info.conjunctive_constraints = map_constraints_to_vars(get_intersecting_constraints(R))
@@ -707,10 +716,12 @@ def run_optimizer_local(R, exposed_variables):
 
         R0 = R
         R = optimizer(R, info)
+        check_R(R, frame)
         info.Rexpr = R
         R1 = R
         R = saturate(R, info.frame)
         info.Rexpr = R
+        check_R(R, frame)
 
         if R.isEmpty():
             break
@@ -718,8 +729,12 @@ def run_optimizer_local(R, exposed_variables):
         R = delete_useless_unions(R, info)
         info.Rexpr = R
 
+        check_R(R, frame)
+
         R = optimizer_aliased_vars(R, info)
         info.Rexpr = R
+
+        check_R(R, frame)
 
         if R == last_R:
             break
@@ -736,6 +751,8 @@ def run_optimizer_local(R, exposed_variables):
                 exposed_constants.append(Unify(constant(var.getValue(frame)), var))
 
     R = intersect(*exposed_constants, R)
+
+    check_R(R, frame)
 
     # Rz = sort_intersections(construct_intersecting(R))
 
@@ -763,14 +780,26 @@ def run_optimizer(R, exposed_variables):
     """this will potentially construct new method names that are the same for
     different operations.  These operations will be saved in the dyna_system."""
 
-    rr, assumptions = run_optimizer_local(R, exposed_variables)
 
-    # import inspect
-    # zzz = inspect.getouterframes( inspect.currentframe() )[1]
+    import inspect
+    zzz = inspect.getouterframes( inspect.currentframe() )[1]
 
-    # if zzz.frame.f_locals.get('term') == ('even_odd_list_p', 1):
-    #     import ipdb; ipdb.set_trace()
+    check_R = lambda x, y: None
 
+    if zzz.frame.f_locals.get('term') == ('quicksort', 2):
+        import ipdb; ipdb.set_trace()
+
+        def check_R(rc, frame):
+            from .terms import Term
+            frame = Frame(frame)
+            frame.in_optimizer = False
+            frame[0] = Term.fromlist([3,1,2])
+            rr = saturate(rc, frame)
+            assert rr == Terminal(1)
+
+        check_R(R, Frame())
+
+    rr, assumptions = run_optimizer_local(R, exposed_variables, check_R=check_R)
 
     splits = split_heuristic(construct_intersecting(rr))
 

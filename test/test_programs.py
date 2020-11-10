@@ -228,6 +228,68 @@ def program_linear_regression1(d):
     assert d.call('intercept') == -1
 
 
+def program_parse_cky(d):
+    return
+
+    # count_calls = 0
+
+    # d.define_function()
+    # def count_number_times(x):
+    #     nonlocal count_calls
+    #     count_calls += 1
+    #     return x
+
+    d.add_rules("""
+    % Parsing a simple sentence.
+
+    % CKY-like parsing
+    phrase(X,I,K, &t(X,TY))    max= phrase(Y,I,K,TY) * rewrite(X,Y).
+    phrase(X,I,K, &t(X,TY,TZ)) max= phrase(Y,I,J,TY) * phrase(Z,J,K,TZ) * rewrite(X,Y,Z).
+    phrase(W, I, I+1, W)       max= word(W, I), 1.
+
+    bestScore max= phrase("S", 0, length, P).
+    bestParse ?= P for phrase("S", 0, length, P) == bestScore.
+
+    length max= word(_, I), I+1.
+
+    % grammar rules
+    rewrite( "S",   "S",  ".") += 1.
+    rewrite( "S",  "NP", "VP") += 1.
+    rewrite("NP", "Det",  "N") += 1.
+    rewrite("NP",  "NP", "PP") += 1.
+    rewrite("VP",   "V", "NP") += 1.
+    rewrite("VP",  "VP", "PP") += 1.
+    rewrite("PP",   "P", "NP") += 1.
+
+    rewrite( "NP",   "Papa") += 1.
+    rewrite(  "N", "caviar") += 1.
+    rewrite(  "N",  "spoon") += 1.
+    rewrite(  "V",    "ate") += 1.
+    rewrite(  "P",   "with") += 1.
+    rewrite("Det",    "the") += 1.
+    rewrite("Det",      "a") += 1.
+
+    % sentence
+    % "Papa at the caviar with the spoon ."
+    word(  "Papa", 0) := true.
+    word(   "ate", 1) := true.
+    word(   "the", 2) := true.
+    word("caviar", 3) := true.
+    word(  "with", 4) := true.
+    word(     "a", 5) := true.
+    word( "spoon", 6) := true.
+    word(     ".", 7) := true.
+    """)
+
+
+    assert d.call('length') == 8
+
+    d.make_call('phrase/4').set_memoized('null')
+
+    import ipdb; ipdb.set_trace()
+
+    print(d.call('bestScore'))
+
 
 def _make_test_cases():
     def make_func(method):
