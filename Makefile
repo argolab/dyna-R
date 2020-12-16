@@ -1,6 +1,9 @@
 
 
-.PHONY: install test repl
+.PHONY: module install test repl
+
+module:
+	cd dyna_backend && $(MAKE) all
 
 repl:
 	dyna
