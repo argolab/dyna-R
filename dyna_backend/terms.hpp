@@ -1,3 +1,6 @@
+#ifndef _DYNA_TERMS
+#define _DYNA_TERMS
+
 #include <string>
 #include <vector>
 #include <assert.h>
@@ -23,7 +26,7 @@ struct Term;
 struct NestedTermInfo {
   TermInfo *term;   // the info pointer for this object itself
   uint offset:31;   // what is the byte offset (from value) for this object
-  uint embedded = 0;  // if the values are embedded in this object, or if they are a pointer elsewhere
+  uint embedded : 1= 0;  // if the values are embedded in this object, or if they are a pointer elsewhere
 };
 
 struct TermInfo {
@@ -85,8 +88,8 @@ extern const TermInfo StaticFloat64Tag;
 
 struct Term {
   const TermInfo *info;
-  uint32_t ref_count : 31;
-  uint shared_between_threads : 1; // if we are sharing between threads, then it
+  mutable uint32_t ref_count = 0;//: 31;
+  //uint shared_between_threads : 1; // if we are sharing between threads, then it
   // would want to use atomics, or just not
   // perform ref counting, and do some GC pass
   // later?  We could instead keep these
@@ -102,18 +105,18 @@ struct Term {
     if(info && info->deallocator) { info->deallocator((void*)values); }
   }
 
-  Term() { info = nullptr; ref_count = 0; shared_between_threads = 0; }
+  Term() { info = nullptr; ref_count = 0; /*shared_between_threads = 0;*/ }
 
-  void incr_ref() {
+  void incr_ref() const {
     ref_count++;
   }
 
-  void decr_ref() {
+  void decr_ref() const {
     // these are not thread save, so would like to have some way to set that an object is in a shared heap
     // or some thread local heap or something.  Then we can handle the two cases
     ref_count--;
     if(ref_count == 0) {
-      delete this;
+      delete const_cast<Term*>(this);
     }
   }
 
@@ -179,10 +182,10 @@ struct TermContainer {
 
   inline bool is_ptr() const { return ((uintptr_t)ptr) & 0x1 == 0; }
 
-  void set_pointer(Term *ptr) {
+  void set_pointer(const Term *ptr) {
     assert(( ((uintptr_t)ptr) & 0x1) == 0);
     ptr->incr_ref();
-    this->ptr = ptr;
+    this->ptr = const_cast<Term*>(ptr);
     assert(is_ptr());
   }
   Term *get_ptr() const {
@@ -213,6 +216,16 @@ struct TermContainer {
     // if this is threaded code, then this should be a compare and swap
     assert(false);
   }
+
+  bool unify_ground(TermContainer &other) {
+    // this is something that
+    assert(false); // this is something that needs to check that the values are the same
+  }
+
+
 };
 
 }
+
+
+#endif

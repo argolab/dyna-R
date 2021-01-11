@@ -33,14 +33,14 @@ class AggregatorColonEquals(AggregatorOpBase):
     def lift(self, x): return x
     def lower(self, x):
         assert x.name == '$colon_line_tracking'
-        r = x.arguments[1]
+        r = x.get_argument(1)
         if r == null_term:
             return None
         return r
     def combine(self, a,b):
         assert a.name == '$colon_line_tracking'
         assert b.name == '$colon_line_tracking'
-        if a.arguments[0] > b.arguments[0]:
+        if a.get_argument(0) > b.get_argument(0):
             return a
         else:
             return b
@@ -75,7 +75,7 @@ class AggregatorBagEquals(AggregatorOpBase):
         return Counter({x: 1})
     def lower(self, x):
         l = [Term('$', (a,b)) for a,b in x.items()]
-        l.sort(key=lambda x: (-x.arguments[1], x.arguments[0]))  # sort by the largest count first and then the value
+        l.sort(key=lambda x: (-x.get_argument(1), x.get_argument(0)))  # sort by the largest count first and then the value
         return Term.fromlist(l)
     def combine(self, a,b):
         return a + b

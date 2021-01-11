@@ -652,7 +652,7 @@ def test_mapl_neural_network():
         vs = {}
         def cb(R, frame):
             assert isinstance(R, Terminal)
-            vs[frame[0].arguments[0]] = ret_variable.getValue(frame)
+            vs[frame[0].get_argument(0)] = ret_variable.getValue(frame)
             #import ipdb; ipdb.set_trace()
 
         eo = saturate(eo, frame)
