@@ -21,7 +21,6 @@ PYBIND11_MODULE(dyna_cpp_backend, m) {
   dyna::define_term_module(terms);
 
 
-
   static py::exception<dyna::DynaException> dyna_exception(m, "DynaBackendException");
   py::register_exception_translator([](std::exception_ptr p) {
     try {

@@ -8,6 +8,9 @@
 #include <iostream>
 #include <typeinfo>
 
+#include <pybind11/pybind11.h>
+namespace py = pybind11;
+
 namespace dyna {
 
 // dyna primitive types
@@ -24,10 +27,12 @@ struct Term;
 
 
 struct NestedTermInfo {
-  TermInfo *term;   // the info pointer for this object itself
-  uint offset:31;   // what is the byte offset (from value) for this object
-  uint embedded : 1= 0;  // if the values are embedded in this object, or if they are a pointer elsewhere
+  const TermInfo *term;   // the info pointer for this object itself
+  uint offset:31;         // what is the byte offset (from value) for this object
+  uint embedded : 1= 0;   // if the values are embedded in this object, or if they are a pointer elsewhere
 };
+
+std::string TermInfo_defaultToString(const TermInfo *info, const void *address);
 
 struct TermInfo {
   uint32_t n_bytes;  // the primitive size of this object
@@ -40,9 +45,9 @@ struct TermInfo {
   bool unique_info = false; // if this should also get deleted when the Term object is deleted.  If we are reusing this, then this should be false
 
   // there should be some information about what is being held
-  bool is_ptr = false;
+  bool is_ptr = false; // XXX: what is going to be the point of this????
   std::type_info const *held_type = nullptr;
-  void (*deallocator)(void*) = nullptr; // if there is something else in the
+
   // container, then we should hold pointers
   // to the relevant methods.  The most
   // important is the ability to deallocate
@@ -53,8 +58,8 @@ struct TermInfo {
   // there are types in the dispatch, then that makes /some/ things a bit easier, but then there are
 
 
-  TermInfo (std::string name, uint32_t n_bytes) : name(name), n_bytes(n_bytes) {}
-  TermInfo() {}
+  // TermInfo (std::string name, uint32_t n_bytes) : name(name), n_bytes(n_bytes) {}
+  // TermInfo() {}
 
   template<typename T>
   static TermInfo* create (bool is_ptr=false) {
@@ -63,14 +68,31 @@ struct TermInfo {
     if(is_ptr) {
       // if we hold a pointer to the object instead of the object itself
       ret->n_bytes = sizeof(T*);
-      ret->deallocator = [](void *ptr) { delete (T*)ptr; };
+      ret->custom_deallocator = [](void *ptr) { delete (T*)ptr; };
+      // the store from / to python methods oculd just do casting?
+      // though those casting methods would go through pybind so how would that work here?
     } else {
       ret->n_bytes = sizeof(T);
-      ret->deallocator = [](void *ptr) { ((T*)ptr)->~T(); }; // make it so we can call the deconstructor
+      ret->custom_deallocator = [](void *ptr) { ((T*)ptr)->~T(); }; // make it so we can call the deconstructor
     }
     ret->is_ptr = is_ptr;
     return ret;
   }
+
+  Term *allocate() const;
+  void deallocate(Term*) const;
+
+
+  // the annoying thing about this is that it closely ties the implementation to python
+
+  // doing this would allow it to be more extensiable with having more types that can be stored
+  // though the amount of space that would be required may change.  The TermInfo which is represented
+  // for each of these values
+  void (*store_from_python)(const TermInfo *info, void *address, py::handle *obj)=nullptr;
+  py::object (*cast_to_python)(const TermInfo *info, const void *address)=nullptr;
+  std::string (*to_string)(const TermInfo *info, const void *address)=&TermInfo_defaultToString;
+
+  void (*custom_deallocator)(void*) = nullptr; // if there is something that needs special handling
 };
 
 
@@ -102,7 +124,9 @@ struct Term {
 
 
   ~Term() {
-    if(info && info->deallocator) { info->deallocator((void*)values); }
+    // this should never call the delete method on this, as it shold instead use info->deallocate(this) which can handle nested values properly
+    __builtin_unreachable();
+    //if(info && info->deallocator) { info->deallocator((void*)values); }
   }
 
   Term() { info = nullptr; ref_count = 0; /*shared_between_threads = 0;*/ }
@@ -116,9 +140,11 @@ struct Term {
     // or some thread local heap or something.  Then we can handle the two cases
     ref_count--;
     if(ref_count == 0) {
-      delete const_cast<Term*>(this);
+      info->deallocate(const_cast<Term*>(this));
     }
   }
+
+
 
   // TermContainer &access(int i) {
   //   // return some container which represents what information has been stored in this object
@@ -147,6 +173,8 @@ struct Term {
     assert(false);
     return nullptr;
   }
+
+  operator std::string() const;
 };
 
 
@@ -180,11 +208,12 @@ struct TermContainer {
 
   ~TermContainer() { if(is_ptr()) { ptr->decr_ref(); } }
 
-  inline bool is_ptr() const { return ((uintptr_t)ptr) & 0x1 == 0; }
+  inline bool is_ptr() const { return ptr != nullptr && (((uintptr_t)ptr) & 0x1) == 0; }
 
   void set_pointer(const Term *ptr) {
     assert(( ((uintptr_t)ptr) & 0x1) == 0);
     ptr->incr_ref();
+    if(this->is_ptr()) this->ptr->decr_ref();
     this->ptr = const_cast<Term*>(ptr);
     assert(is_ptr());
   }
@@ -221,7 +250,6 @@ struct TermContainer {
     // this is something that
     assert(false); // this is something that needs to check that the values are the same
   }
-
 
 };
 
