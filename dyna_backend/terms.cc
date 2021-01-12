@@ -17,18 +17,23 @@ using namespace std;
 // otherwise it would have that this is is something else
 template<typename T> struct PyTermContainerTemplate {};
 
+typedef dyna::TermContainer DynaPyTermType;
 template<>
-struct PyTermContainerTemplate<dyna::Term> {
+struct PyTermContainerTemplate<DynaPyTermType> {
   dyna::TermContainer container;
   PyTermContainerTemplate(dyna::TermContainer &c) : container(c) {}
   PyTermContainerTemplate(const dyna::Term *ptr) { container.set_pointer(ptr); }
+  PyTermContainerTemplate(const PyTermContainerTemplate &o) : container(o.container) {}
+  PyTermContainerTemplate() {}
 };
 
 namespace pybind11 { namespace detail {
     template<>
-    struct holder_helper<PyTermContainerTemplate<Term>> { // <-- specialization
-        static const Term *get(const PyTermContainerTemplate<Term> &p) {
-          return p.container.is_ptr() ? p.container.get_ptr() : nullptr; }
+    struct holder_helper<PyTermContainerTemplate<DynaPyTermType>> { // <-- specialization
+        static const DynaPyTermType *get(const PyTermContainerTemplate<DynaPyTermType> &p) {
+          return &p.container;
+          //return p.container.is_ptr() ? p.container.get_ptr() : nullptr;
+        }
     };
 }}
 
@@ -36,7 +41,7 @@ namespace pybind11 { namespace detail {
 PYBIND11_DECLARE_HOLDER_TYPE(T, PyTermContainerTemplate<T>, true);
 
 
-using PyTermContainer = PyTermContainerTemplate<Term>;
+using PyTermContainer = PyTermContainerTemplate<DynaPyTermType>;
 
 
 namespace dyna {
@@ -160,19 +165,24 @@ Term::operator std::string() const {
 }
 
 Term *TermInfo::allocate() const {
-  Term *ret = malloc(sizeof(Term)+n_bytes);
+  Term *ret = (Term*)malloc(sizeof(Term)+n_bytes);
   ret->info = this;
   return ret;
 }
 
-void TermInfo::deallocate(Term *term) {
+void TermInfo::deallocate(Term *term) const {
   // this needs to go through all of the nested values and deallocate those as well
   // in the case that those exist
   // so this should track if there is some value which requires alternate deallocation methods
+  if(term->info->custom_deallocator != nullptr) {
+    assert(false); // need to define what this interface is doing???
+    term->info->custom_deallocator(term);
+  }
   if(term->info->unique_info) {
     // then this should deallocate which of the values
-    free(term-info);
+    free(const_cast<TermInfo*>(term->info));
   }
+
   free(term);
 }
 
@@ -222,15 +232,17 @@ const TermInfo *construct_term_info(const py::handle &h, size_t &size) {
   } else if(py::isinstance<py::float_>(h)) {
     size += 4;
     return &StaticInt64Tag;
+  } else if(py::isinstance<PyTermContainer>(h)) {
+    assert(false); // this needs to identify which term is nested here, then it handle something
   }
-    return nullptr;
+  return nullptr;
 }
 
-PyTermContainer construct_term(const std::string, py::tuple &args) {
-  size_t term_size = 0;
+PyTermContainer construct_term(const std::string name, py::tuple &args) {
   TermInfo *info = new TermInfo;
   info->arity = py::len(args);
   info->unique_info = true;
+  info->name = name;
   // need some way in the future to identify how to merge these
   // term values.  This would be something like looking up the different type values in some
   // identifier tree or something
@@ -250,12 +262,11 @@ PyTermContainer construct_term(const std::string, py::tuple &args) {
   info->n_bytes = size;
 
   Term *ret = info->allocate();
-  for(uint i = 0; info->arity; i++) {
+  for(uint i = 0; i < info->arity; i++) {
     const TermInfo *ni = info->args[i].term;
     py::handle h = args[i];
     ni->store_from_python(ni, get_address(ret, i), &h);
   }
-
 
   // this needs to lookup what kinds of types are referenced from this object
   return PyTermContainer(ret);
@@ -293,22 +304,29 @@ void define_term_module(py::module &m) {
 
   m.def("term_constructor", &construct_term);
 
-  py::class_<Term>(m, "Term")
+  py::class_<TermContainer>(m, "Term")
 
-    .def("__str__", [](const TermContainer &t) -> const std::string {
-      if(t.ptr == nullptr) {
+    .def("__str__", [](const PyTermContainer &t) -> const std::string {
+      if(t.container.ptr == nullptr) {
         return "None";
-      } else if(t.is_ptr()) {
+      } else if(t.container.is_ptr()) {
         // this is a pointer, this is going to have to print the term value
-        return (std::string)(*t.ptr);
+        return (std::string)(*t.container.ptr);
       } else {
-        switch(t.tag) {
-        case TermContainer::T_int: return std::to_string(t.int_v);
-        case TermContainer::T_float: return std::to_string(t.float_v);
-        case TermContainer::T_bool: return t.bool_v ? "True" : "False";
+        switch(t.container.tag) {
+        case TermContainer::T_int: return std::to_string(t.container.int_v);
+        case TermContainer::T_float: return std::to_string(t.container.float_v);
+        case TermContainer::T_bool: return t.container.bool_v ? "True" : "False";
         case TermContainer::T_nonground: return "non-ground";
-        default: __builtin_unreachable();
+        default: { __builtin_unreachable(); return "None"; }
         }
+      }
+    })
+    .def_property_readonly("name", [](const PyTermContainer &t) -> const std::string& {
+      if(t.container.is_ptr()) {
+        return t.container.ptr->info->name;
+      } else {
+        throw DynaException("term is null");
       }
     });
 
