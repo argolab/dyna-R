@@ -123,13 +123,20 @@ struct Term {
   uint8_t values[];
 
 
+
+private:
+  // this should never be allocated via new/delete.  This is going to have to be mallocated and freeded as there are additional fields
+  // at the end of this object
+  Term() { info = nullptr; ref_count = 0; /*shared_between_threads = 0;*/ }
+
   ~Term() {
     // this should never call the delete method on this, as it shold instead use info->deallocate(this) which can handle nested values properly
-    __builtin_unreachable();
+    // asm("int3");
+    // __builtin_unreachable();
     //if(info && info->deallocator) { info->deallocator((void*)values); }
   }
 
-  Term() { info = nullptr; ref_count = 0; /*shared_between_threads = 0;*/ }
+public:
 
   void incr_ref() const {
     ref_count++;

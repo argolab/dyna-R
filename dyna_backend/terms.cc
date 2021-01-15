@@ -17,28 +17,36 @@ using namespace std;
 // otherwise it would have that this is is something else
 template<typename T> struct PyTermContainerTemplate {};
 
-typedef dyna::TermContainer DynaPyTermType;
+typedef dyna::Term DynaPyTermType;
 template<>
 struct PyTermContainerTemplate<DynaPyTermType> {
-  dyna::TermContainer container;
-  PyTermContainerTemplate(dyna::TermContainer &c) : container(c) {}
-  PyTermContainerTemplate(const dyna::Term *ptr) { container.set_pointer(ptr); }
-  PyTermContainerTemplate(const PyTermContainerTemplate &o) : container(o.container) {}
-  PyTermContainerTemplate() {}
+  dyna::Term *ptr;
+  ~PyTermContainerTemplate() { if(ptr != nullptr) ptr->decr_ref(); }
+  PyTermContainerTemplate(const PyTermContainerTemplate &oth) : ptr(oth.ptr) { if(ptr != nullptr) ptr->incr_ref(); }
+  PyTermContainerTemplate(dyna::Term *ptr) : ptr(ptr) { if(ptr != nullptr) ptr->incr_ref(); }
+  PyTermContainerTemplate() : ptr(nullptr) {}
+
+
+  // dyna::TermContainer container;
+  // PyTermContainerTemplate(dyna::TermContainer &c) : container(c) {}
+  // PyTermContainerTemplate(const dyna::Term *ptr) { container.set_pointer(ptr); }
+  // PyTermContainerTemplate(const PyTermContainerTemplate &o) : container(o.container) {}
+  // PyTermContainerTemplate() {}
 };
 
 namespace pybind11 { namespace detail {
     template<>
     struct holder_helper<PyTermContainerTemplate<DynaPyTermType>> { // <-- specialization
         static const DynaPyTermType *get(const PyTermContainerTemplate<DynaPyTermType> &p) {
-          return &p.container;
+          return p.ptr;
+          //return &p.container;
           //return p.container.is_ptr() ? p.container.get_ptr() : nullptr;
         }
     };
 }}
 
 
-PYBIND11_DECLARE_HOLDER_TYPE(T, PyTermContainerTemplate<T>, true);
+PYBIND11_DECLARE_HOLDER_TYPE(T, PyTermContainerTemplate<T>); //, true);
 
 
 using PyTermContainer = PyTermContainerTemplate<DynaPyTermType>;
@@ -65,7 +73,7 @@ const TermInfo StaticFloatTag {
   .name = "primitive_float",
   .held_type = &typeid(float),
   .store_from_python = [](const TermInfo *info, void *address, py::handle *obj) -> void {
-  *((float*)address) = obj->cast<float>();
+    *((float*)address) = obj->cast<float>();
   },
   .cast_to_python = [](const TermInfo *info, const void *address) -> py::object {
     return py::cast(*(float*)address);
@@ -167,6 +175,7 @@ Term::operator std::string() const {
 Term *TermInfo::allocate() const {
   Term *ret = (Term*)malloc(sizeof(Term)+n_bytes);
   ret->info = this;
+  ret->ref_count = 0;
   return ret;
 }
 
@@ -272,26 +281,26 @@ PyTermContainer construct_term(const std::string name, py::tuple &args) {
   return PyTermContainer(ret);
 }
 
-PyTermContainer construct_any_term(py::object &value) {
-  TermContainer ret;
-  if(py::isinstance<py::bool_>(value)) {
-    ret = TermContainer(py::cast<bool_d>(value));
-  } else if(py::isinstance<py::int_>(value)) {
-    ret = TermContainer(py::cast<int_d>(value));
-  } else if(py::isinstance<py::float_>(value)) {
-    ret = TermContainer(py::cast<float_d>(value));
-  } else if(py::isinstance<py::str>(value) ||
-            py::isinstance<py::dict>(value) ||
-            py::isinstance<py::set>(value) ||
-            py::isinstance<py::tuple>(value) ||
-            py::isinstance<py::list>(value)) {
-    throw DynaException("not implemented casting higher order structured types");
-  } else {
-    throw DynaException("type unknown");
-  }
-  PyTermContainer ptc(ret);
-  return ptc;
-}
+// PyTermContainer construct_any_term(py::object &value) {
+//   TermContainer ret;
+//   if(py::isinstance<py::bool_>(value)) {
+//     ret = TermContainer(py::cast<bool_d>(value));
+//   } else if(py::isinstance<py::int_>(value)) {
+//     ret = TermContainer(py::cast<int_d>(value));
+//   } else if(py::isinstance<py::float_>(value)) {
+//     ret = TermContainer(py::cast<float_d>(value));
+//   } else if(py::isinstance<py::str>(value) ||
+//             py::isinstance<py::dict>(value) ||
+//             py::isinstance<py::set>(value) ||
+//             py::isinstance<py::tuple>(value) ||
+//             py::isinstance<py::list>(value)) {
+//     throw DynaException("not implemented casting higher order structured types");
+//   } else {
+//     throw DynaException("type unknown");
+//   }
+//   PyTermContainer ptc(ret);
+//   return ptc;
+// }
 
 // std::string get_string_rep(const TermContainer &tc) {
 //   if(tc.is_ptr()) {
@@ -304,32 +313,39 @@ void define_term_module(py::module &m) {
 
   m.def("term_constructor", &construct_term);
 
-  py::class_<TermContainer>(m, "Term")
+  py::class_<DynaPyTermType, PyTermContainer>(m, "Term")
 
-    .def("__str__", [](const PyTermContainer &t) -> const std::string {
-      if(t.container.ptr == nullptr) {
+    .def("__str__", [](const PyTermContainer t) -> const std::string {
+      if(t.ptr == nullptr) {
         return "None";
-      } else if(t.container.is_ptr()) {
-        // this is a pointer, this is going to have to print the term value
-        return (std::string)(*t.container.ptr);
       } else {
-        switch(t.container.tag) {
-        case TermContainer::T_int: return std::to_string(t.container.int_v);
-        case TermContainer::T_float: return std::to_string(t.container.float_v);
-        case TermContainer::T_bool: return t.container.bool_v ? "True" : "False";
-        case TermContainer::T_nonground: return "non-ground";
-        default: { __builtin_unreachable(); return "None"; }
-        }
+        return (std::string)(*t.ptr);
       }
+      // } else if(t.is_ptr()) {
+      //   // this is a pointer, this is going to have to print the term value
+      //   return (std::string)(*t.container.ptr);
+      // } else {
+      //   switch(t.container.tag) {
+      //   case TermContainer::T_int: return std::to_string(t.container.int_v);
+      //   case TermContainer::T_float: return std::to_string(t.container.float_v);
+      //   case TermContainer::T_bool: return t.container.bool_v ? "True" : "False";
+      //   case TermContainer::T_nonground: return "non-ground";
+      //   default: { __builtin_unreachable(); return "None"; }
+      //   }
+      // }
     })
-    .def_property_readonly("name", [](const PyTermContainer &t) -> const std::string& {
-      if(t.container.is_ptr()) {
-        return t.container.ptr->info->name;
+    .def_property_readonly("name", [](const PyTermContainer t) -> const std::string& {
+      if(t.ptr != nullptr) {
+        return t.ptr->info->name;
       } else {
         throw DynaException("term is null");
       }
-    });
+      // if(t.container.is_ptr()) {
+      //   return t.container.ptr->info->name;
+      // } else {
 
+      // }
+    });
     /*
     .def_property_readonly("name", [](const TermContainer &t) -> const std::string& {
       if(t.info) {
