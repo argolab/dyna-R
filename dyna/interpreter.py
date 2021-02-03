@@ -416,7 +416,7 @@ class UnionIterator(Iterator):
         self.iterators = iterators
     def bind_iterator(self, frame, variable, value):
         assert variable == self.variable
-        return any(v.bind_iterator(self.variable, value) for v in self.iterators)
+        return any(v.bind_iterator(frame, self.variable, value) for v in self.iterators)
     def run(self, frame):
         # this needs to identify the domain of the two iterators, and the
         # combine then such that it doesn't loop twice.  We are also going to

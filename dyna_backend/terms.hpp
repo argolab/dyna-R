@@ -18,18 +18,49 @@ typedef int32_t int_d;
 typedef float float_d;
 typedef bool bool_d;
 
+// 32 bits should be enough for the hash code, though with more bits, then it may be better for hashing stuff
+typedef uint32_t hashcode_T;
+
+// a list in dyna will be '.'(1, '.'(2, nil()))
+// though this can become an object which is flattened in memory, so it might be ok still
+#define DYNA_LIST_EMPTY_NAME "nil"
+#define DYNA_LIST_CONS_NAME "."
+
 struct TermInfo;
 struct NestedTermInfo;
 struct Term;
 
 struct TermContainer;
-struct Term;
+
+struct TermInforPointer {
+  static TermInfo *term_info_base_pointer;  // these could be allocated allocated into some array, and then later filled in as kinds of terms are created
+  // though if this is also be used to track the program states, the nit might not be a good idea to have this represented
+  uint term_info_id : 31;
+  uint gc_mark_and_sweep : 1;
+  const uint32_t term_info_id;
+  dyna::TermInfo *operator*() const { return term_info_base_pointer + term_info_id; }
+  dyna::TermInfo *operator->() const { return term_info_base_pointer + term_info_id; }
+
+};
 
 
 struct NestedTermInfo {
   const TermInfo *term;   // the info pointer for this object itself
   uint offset:31;         // what is the byte offset (from value) for this object
   uint embedded : 1= 0;   // if the values are embedded in this object, or if they are a pointer elsewhere
+
+  //uint is_offset_from_base; // if this is nested many levels down.  We might want to mark that this is not some nested
+                              // value but that this is offset from the root pointer?  Though how would that work in the case
+                              // that there are differences with which of the values it encounters.  If there is something that
+                              // it encounters in the expression.  The root pointer might not always be avaliable also (at least how this is implemented atm)
+  // we could just allow the offset to also have a negative number.  In which case it would offset from its current nested location.  Though that might also be somewhat annoying for it to handle which of the expressions are getting rewritten.
+  // if there are values which correspond with what of the values are mapped
+  // if there was a variable reference, the it would find that it would be referencing back to the point where the cell is located.  As more values are added into the program, it would find that there is something which needs to get mapped.
+
+
+  // I suppose that if embedded is set to 1, and term was set to nullptr, then that could be considered a generic thing
+  // there could also just be some specific pointer type, and then we can just assume that everything is embedded
+  // from that point, it would just be tracking the struct info.  If everything is embedded that makes stuff easier
 };
 
 std::string TermInfo_defaultToString(const TermInfo *info, const void *address);
@@ -46,6 +77,7 @@ struct TermInfo {
 
   // there should be some information about what is being held
   bool is_ptr = false; // XXX: what is going to be the point of this????
+  bool is_non_trivial = false; // meaning that custom_deallocator or custom_copy is set for this or something nested inside inside of this.  This would require scanning through the entire structure to find the call the relevant methods
   std::type_info const *held_type = nullptr;
 
   // container, then we should hold pointers
@@ -92,7 +124,22 @@ struct TermInfo {
   py::object (*cast_to_python)(const TermInfo *info, const void *address)=nullptr;
   std::string (*to_string)(const TermInfo *info, const void *address)=&TermInfo_defaultToString;
 
-  void (*custom_deallocator)(void*) = nullptr; // if there is something that needs special handling
+  void (*custom_deallocator)(const TermInfo*, void*) = nullptr; // if there is something that needs special handling
+  void (*custom_copy)(const TermInfo*, const void *source, void *dest) = nullptr;
+
+  //
+
+  hashcode_T (*get_hashcode)(const TermInfo *info, const void*) = nullptr;
+
+  // the operations which are for some of the values
+  //void (*visit_nested_rexprs)(const TermInfo *info, const void*, const TermVisitor*, TermNestedContext*) = nullptr;
+  //void (*rename_vars)(const TermInfo *info, const void*)  // the renamming of variables does not pattern match which of the expressions would have for some of the values
+  // in the case that there are differences with which of
+
+  //TermInfo* (*rename_vars)(const TermInfo *info, const void *)=nullptr; // there should only have a single value in the case that the variables are renammed with different values.
+
+
+
 };
 
 
@@ -105,12 +152,10 @@ extern const TermInfo StaticFloat64Tag;
 
 
 
-
-
-
 struct Term {
   const TermInfo *info;
   mutable uint32_t ref_count = 0;//: 31;
+  mutable hashcode_T  hashcache = 0;
   //uint shared_between_threads : 1; // if we are sharing between threads, then it
   // would want to use atomics, or just not
   // perform ref counting, and do some GC pass
@@ -158,30 +203,35 @@ public:
   //   return
   // }
 
-  void unpack(uint i, TermContainer &c) const {
-    // unpack the element at position i into container c
-    // basically get what type this is, find the offset position, and then construct some wrapper for that element
-  }
+  // void unpack(uint i, TermContainer &c) const {
+  //   // unpack the element at position i into container c
+  //   // basically get what type this is, find the offset position, and then construct some wrapper for that element
+  // }
 
-  static Term *createInt(int_d i) {
-    Term *ret = (Term*)malloc(sizeof(Term)+sizeof(int_d));
-    ret->info = &StaticIntTag;
-    *((int_d*)ret->values) = i;
-    return ret;
-  }
-  static Term *createFloat(float_d f) {
-    Term *ret = (Term*)malloc(sizeof(Term)+sizeof(float_d));
-    ret->info = &StaticFloatTag;
-    *((float_d*)ret->values) = f;
-    return ret;
-  }
-  static Term *createBool(bool_d b) {
-    // this should return some static term objects, so we are not creating new instances all of the time
-    assert(false);
-    return nullptr;
-  }
+  // static Term *createInt(int_d i) {
+  //   Term *ret = (Term*)malloc(sizeof(Term)+sizeof(int_d));
+  //   ret->info = &StaticIntTag;
+  //   *((int_d*)ret->values) = i;
+  //   return ret;
+  // }
+  // static Term *createFloat(float_d f) {
+  //   Term *ret = (Term*)malloc(sizeof(Term)+sizeof(float_d));
+  //   ret->info = &StaticFloatTag;
+  //   *((float_d*)ret->values) = f;
+  //   return ret;
+  // }
+  // static Term *createBool(bool_d b) {
+  //   // this should return some static term objects, so we are not creating new instances all of the time
+  //   assert(false);
+  //   return nullptr;
+  // }
 
   operator std::string() const;
+
+  bool operator==(const Term&) const;
+
+  inline hashcode_T hash() const { if(hashcache == 0) compute_hash(); return hashcache; }
+  void compute_hash() const;
 };
 
 
