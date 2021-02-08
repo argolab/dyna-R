@@ -10,6 +10,7 @@ namespace py = pybind11;
 
 namespace dyna {
   void define_term_module(py::module&);
+  void define_rexpr_module(py::module&);
 }
 
 

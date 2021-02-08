@@ -1,5 +1,15 @@
+#include <cstdlib>
+#include <cstdint>
+
+#include "terms.hpp"
+
+
 namespace dyna {
 
+struct Term;
+
+class TermCompactingHeap;
+class TermRuntimePointer;
 
 
 class TermCompactingHeap {
@@ -17,12 +27,16 @@ private:
   uint8_t *second_buffer_end;
 
   friend class TermRuntimePointer;
-  TermCompactingPointer *roots;
+  TermRuntimePointer *roots = nullptr;
 
-  Term *copy_object(Term *ptr);
+  Term *move_to_new_heap(Term *ptr);
   Term *gc_heap_and_allocate(size_t n_bytes);
 
+  void reallocate_second_buffer(size_t n_bytes);
+
 public:
+  TermCompactingHeap();
+  ~TermCompactingHeap();
 
   inline Term * allocate(const TermInfo *info) {
     Term *ret = (Term*)bump_allocator_ptr;
@@ -36,6 +50,21 @@ public:
   }
 
 
+  /**
+   * Make a copy of the object which will now be reference counted.  This will make all of the nested values which are he different values
+   */
+  Term *convert_to_refcount(const Term*);
+
+
+  bool is_on_heap(const Term *ptr) const {
+    return (intptr_t)(allocation_buffer) <= (intptr_t)(ptr) &&
+      (intptr_t)(ptr) < (intptr_t)(allocation_buffer_end);
+  }
+
+
+  // there might be some point where we are not trackng all of the roots, so we would want to avoid doing allocations in those cases
+  // though this would require that there are some of the values
+  void safe_run_gc_point(size_t n_bytes=1024*1024);
 
 };
 
@@ -43,11 +72,15 @@ class TermRuntimePointer {
   // this could be a pointer to a Term which is used during rutime
 private:
   TermCompactingHeap *heap;
-  TermCompactingPointer *next_ptr;
+  TermRuntimePointer *next_ptr;
   Term *ptr;
+  friend class TermCompactingHeap;
 public:
-  TermCompactingPointer(TermCompactingHeap *heap) : heap(heap), next_ptr(heap->roots) { heap->roots = this; }
-  ~TermCompactingPointer() { assert(heap->roots == this); heap->roots = next_ptr; }
+  TermRuntimePointer(TermCompactingHeap *heap) : heap(heap), next_ptr(heap->roots) { heap->roots = this; }
+  ~TermRuntimePointer() { assert(heap->roots == this); heap->roots = next_ptr; }
+  TermRuntimePointer(const TermRuntimePointer &x) : heap(x.heap), next_ptr(x.heap->roots), ptr(x.ptr) {
+    heap->roots = this;
+  }
 
   inline Term* operator->() const { return ptr; }
   inline Term* operator*() const { return ptr; }
@@ -62,4 +95,6 @@ public:
   // operations can be exercised.  In the case that it is written in C++, then it would be able to identify that the expressions are
 
 
+
+  thread_local TermCompactingHeap *active_heap;
 }

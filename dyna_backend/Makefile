@@ -1,5 +1,5 @@
 
-CPP_SOURCE=module.cc terms.cc rexpr.cc frame.cc
+CPP_SOURCE=module.cc terms.cc rexpr.cc frame.cc memory_management.cc
 TARGET=dyna_cpp_backend.so
 FLAGS := $(shell python -m pybind11 --include) -fpic -ggdb -O0 -std=c++2a
 LDFLAGS := $(shell python-config --ldflags) -lpython3

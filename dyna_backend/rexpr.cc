@@ -1,3 +1,9 @@
+
+#include "terms.hpp"
+
+#include <pybind11/pybind11.h>
+namespace py = pybind11;
+
 namespace dyna {
 
 class RewriteBaseOperation {
@@ -15,7 +21,7 @@ public:
   virtual int functor_arity() const { return 3; }
 
   virtual TermContainer doRewrite(const TermContainer &term)=0;
-}
+};
 
 
 void define_rexpr_module(py::module &m) {

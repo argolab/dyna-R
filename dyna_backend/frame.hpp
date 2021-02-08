@@ -12,7 +12,7 @@ namespace dyna {
 
   class FrameLayout {
   private:
-    robhin_hood::unordered_map<std::string, uint> variable_mapping;
+    //robhin_hood::unordered_map<std::string, uint> variable_mapping;
   };
 
   class Frame {
@@ -23,43 +23,43 @@ namespace dyna {
     friend class VariableId;
   };
 
-  class Variable {
-  public:
-    virtual TermContainer getValue(Frame*)=0;
-    virtual bool setValue(Frame *, TermContainer &value)=0;
-  };
+  // class Variable {
+  // public:
+  //   virtual TermContainer getValue(Frame*)=0;
+  //   virtual bool setValue(Frame *, TermContainer &value)=0;
+  // };
 
-  class VariableId {
-  private:
-    std::string variable_identifier;
-    FrameLayout *cache_layout = nullptr;
-    uint cache_slot;
-  public:
-    override TermContainer getValue(Frame *frame) {
-      if(cache_layout != frame->layout) {
-        cache_slot = frame->layout->variable_mapping[variable_identifier];
-        cache_layout = frame->layout;
-      }
-      return frame->slots[cache_slot];
-    }
-    override bool setValue(Frame *frame, TermContainer &value) {
-      if(cache_layout != frame->layout) {
-        cache_slot = frame->layout->variable_mapping[variable_identifier];
-        cache_layout = frame->layout;
-      }
-      return frame->slots[cache_slot].unify_ground(value);
-    }
-  };
+  // class VariableId : public Vraiable {
+  // private:
+  //   std::string variable_identifier;
+  //   FrameLayout *cache_layout = nullptr;
+  //   uint cache_slot;
+  // public:
+  //   override TermContainer getValue(Frame *frame) {
+  //     if(cache_layout != frame->layout) {
+  //       cache_slot = frame->layout->variable_mapping[variable_identifier];
+  //       cache_layout = frame->layout;
+  //     }
+  //     return frame->slots[cache_slot];
+  //   }
+  //   override bool setValue(Frame *frame, TermContainer &value) {
+  //     if(cache_layout != frame->layout) {
+  //       cache_slot = frame->layout->variable_mapping[variable_identifier];
+  //       cache_layout = frame->layout;
+  //     }
+  //     return frame->slots[cache_slot].unify_ground(value);
+  //   }
+  // };
 
-  class VariableConstant : public Variable {
-  private:
-    TermContainer value;
-  public:
-    override TermContainer getValue(Frame*) { return value; }
-    override bool setValue(Frame*, TermContainer &value) {
-      return value == this->value;
-    }
-    VariableConstant(TermContainer v) : value(v) {}
-  };
+  // class VariableConstant : public Variable {
+  // private:
+  //   TermContainer value;
+  // public:
+  //   override TermContainer getValue(Frame*) { return value; }
+  //   override bool setValue(Frame*, TermContainer &value) {
+  //     return value == this->value;
+  //   }
+  //   VariableConstant(TermContainer v) : value(v) {}
+  // };
 
 }

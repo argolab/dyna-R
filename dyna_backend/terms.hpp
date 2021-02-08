@@ -32,14 +32,14 @@ struct Term;
 
 struct TermContainer;
 
-struct TermInforPointer {
+struct TermInfoPointer {
   static TermInfo *term_info_base_pointer;  // these could be allocated allocated into some array, and then later filled in as kinds of terms are created
   // though if this is also be used to track the program states, the nit might not be a good idea to have this represented
-  uint term_info_id : 31;
-  uint gc_mark_and_sweep : 1;
+  // uint term_info_id : 31;
+  // uint gc_mark_and_sweep : 1;
   const uint32_t term_info_id;
-  dyna::TermInfo *operator*() const { return term_info_base_pointer + term_info_id; }
-  dyna::TermInfo *operator->() const { return term_info_base_pointer + term_info_id; }
+  // dyna::TermInfo *operator*() const { return term_info_base_pointer + term_info_id; }
+  // dyna::TermInfo *operator->() const { return term_info_base_pointer + term_info_id; }
 
 };
 
@@ -125,11 +125,12 @@ struct TermInfo {
   std::string (*to_string)(const TermInfo *info, const void *address)=&TermInfo_defaultToString;
 
   void (*custom_deallocator)(const TermInfo*, void*) = nullptr; // if there is something that needs special handling
-  void (*custom_copy)(const TermInfo*, const void *source, void *dest) = nullptr;
+  //void (*custom_copy)(const TermInfo*, const void *source, void *dest) = nullptr;
+
+  hashcode_T (*get_hashcode)(const TermInfo *info, const void *self) = nullptr;
 
   //
-
-  hashcode_T (*get_hashcode)(const TermInfo *info, const void*) = nullptr;
+  void (*walk_all_pointers)(const TermInfo *info, void *self, void *(*walker_function)(void *ptr, void *transparent), void *transparent) = nullptr;
 
   // the operations which are for some of the values
   //void (*visit_nested_rexprs)(const TermInfo *info, const void*, const TermVisitor*, TermNestedContext*) = nullptr;
@@ -169,7 +170,8 @@ struct Term {
 
 
 
-private:
+protected: // there might be a downstream item which is allocated that needs to call the deallocator....
+
   // this should never be allocated via new/delete.  This is going to have to be mallocated and freeded as there are additional fields
   // at the end of this object
   Term() { info = nullptr; ref_count = 0; /*shared_between_threads = 0;*/ }

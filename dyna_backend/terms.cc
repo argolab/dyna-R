@@ -83,7 +83,8 @@ const TermInfo StaticIntTag {
   },
   .to_string = [](const TermInfo *info, const void *address) -> std::string {
     return to_string(*(int32_t*)address);
-  }
+  },
+  .walk_all_pointers = [](const TermInfo *info, void *self, void *(*walker_function)(void *ptr, void *transparent_metadata), void *transparent) {}
 };
 const TermInfo StaticFloatTag {
   .n_bytes = sizeof(float),
@@ -97,7 +98,8 @@ const TermInfo StaticFloatTag {
   },
   .to_string = [](const TermInfo *info, const void *address) -> std::string {
     return to_string(*(float*)address);
-  }
+  },
+  .walk_all_pointers = [](const TermInfo *info, void *self, void *(*walker_function)(void *ptr, void *transparent), void *transparent) {}
 };
 const TermInfo StaticBoolTag {
   .n_bytes = sizeof(bool),
@@ -111,7 +113,8 @@ const TermInfo StaticBoolTag {
   },
   .to_string = [](const TermInfo *info, const void *address) -> std::string {
     return to_string(*(bool*)address);
-  }
+  },
+  .walk_all_pointers = [](const TermInfo *info, void *self, void *(*walker_function)(void *ptr, void *transparent), void *transparent) {}
 };
 
 const TermInfo StaticInt64Tag {
@@ -126,7 +129,8 @@ const TermInfo StaticInt64Tag {
   },
   .to_string = [](const TermInfo *info, const void *address) -> std::string {
     return to_string(*(int64_t*)address);
-  }
+  },
+  .walk_all_pointers = [](const TermInfo *info, void *self, void *(*walker_function)(void *ptr, void *transparent), void *transparent) {}
 };
 
 const TermInfo StaticFloat64Tag {
@@ -141,7 +145,8 @@ const TermInfo StaticFloat64Tag {
   },
   .to_string = [](const TermInfo *info, const void *address) -> std::string {
     return to_string(*(double*)address);
-  }
+  },
+  .walk_all_pointers = [](const TermInfo *info, void *self, void *(*walker_function)(void *ptr, void *transparent), void *transparent) {}
 };
 
 const TermInfo StaticGenericTermPointer {
@@ -167,6 +172,9 @@ const TermInfo StaticGenericTermPointer {
   .custom_deallocator = [](const TermInfo *info, void *address) -> void {
     Term *t = *((Term**)address);
     t->decr_ref();
+  },
+  .walk_all_pointers = [](const TermInfo *info, void *self, void *(*walker_function)(void *ptr, void *transparent), void *transparent) {
+    *static_cast<void**>(self) = walker_function(*static_cast<void**>(self), transparent);
   }
 };
 
@@ -225,6 +233,14 @@ void TermInfo_defaultStructuredTerm_storedFromPython(const TermInfo *info, void 
 
 py::object TermInfo_defaultStructuredTerm_castToPython(const TermInfo *info, const void *address) {
   return py::none();
+}
+
+void TermInfo_defaultStructuredTerm_walkAllPointers(const TermInfo *info, void *self, void *(*walker_function)(void *ptr, void *transparent), void *transparent) {
+  Term *term = (Term*)self;
+  for(uint i = 0; i < info->arity; i++) {
+    const NestedTermInfo *ni = &info->args[i];
+    ni->term->walk_all_pointers(ni->term, get_address(term, i), walker_function, transparent);
+  }
 }
 
 Term::operator std::string() const {
@@ -303,6 +319,7 @@ PyTermContainer construct_term(const std::string name, py::tuple &args) {
   info->name = name;
   info->store_from_python = TermInfo_defaultStructuredTerm_storedFromPython;
   info->cast_to_python = TermInfo_defaultStructuredTerm_castToPython;
+  info->walk_all_pointers = TermInfo_defaultStructuredTerm_walkAllPointers;
   // need some way in the future to identify how to merge these
   // term values.  This would be something like looking up the different type values in some
   // identifier tree or something
