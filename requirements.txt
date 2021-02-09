@@ -12,6 +12,9 @@ prompt_toolkit
 path
 
 
+# for accessing the JVM
+pyjnius
+
 # for representing Neural networks
 # onnx
 # pytorch
