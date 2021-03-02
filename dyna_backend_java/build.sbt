@@ -6,3 +6,5 @@ scalaVersion := "2.13.4"
 
 // https://mvnrepository.com/artifact/org.javassist/javassist
 libraryDependencies += "org.javassist" % "javassist" % "3.27.0-GA"
+
+scalacOptions += "-target:jvm-1.11"

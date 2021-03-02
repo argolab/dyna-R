@@ -15,6 +15,9 @@ path
 # for accessing the JVM
 pyjnius
 
+# alternate JVM wrapper, will pick one of these eventally
+jpype1
+
 # for representing Neural networks
 # onnx
 # pytorch

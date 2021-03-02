@@ -1,9 +1,11 @@
-package org.dyna
+package org.dyna.term
 
-class SimpleTerm(override val name: String,
+class SimpleTerm(private val name: String,
                  private val arguments: Array[Term]) extends Term {
 
-  override def arity = arguments.length
+  override def getName = name
+
+  override def getArity = arguments.length
 
   override def getArgument(idx: Int): AnyRef = arguments(idx)
 

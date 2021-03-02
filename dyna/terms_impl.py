@@ -34,8 +34,15 @@ class Term:
     def name(self):
         return self.__name
 
+    # def getName(self):
+    #     # seems that using a java wrapper would not allow us to use @property stuff on the classes which are wrapped
+    #     return self.__name
+
     @property
     def arity(self):
+        return len(self.__arguments)
+
+    def get_arity(self):
         return len(self.__arguments)
 
     def get_argument(self, idx):

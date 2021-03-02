@@ -57,15 +57,16 @@ E.g.
 def my_function(Arg1, Arg2):
     return 123
 
-api.add_rules(" result += my_function(A, B) for g(A, B).
+api.add_rules(" result += my_function(A, B) for g(A, B). ")
 ```
 
-The decorator takes the optional arguments `name` and `arity`, otherwise it will infer those from the definition of the function.
+The decorator takes the optional arguments `name` and `arity`, otherwise it
+infers those from the definition of the function.
 
 Note: This function **MUST** be functional and not modify its arguments or have
 external side effects.  Doing otherwise will results in bugs as the order in
 which functions are invoked or the number of times that a function will be
-invoked my change between runs.
+invoked may change between runs.
 
 ### Passing Opaque values through Dyna
 

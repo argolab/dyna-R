@@ -1,4 +1,5 @@
 .bsp/
 target/
 out/
-
+.sbt-launch.jar
+.compile_tracker
