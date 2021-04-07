@@ -1,0 +1,29 @@
+#!/usr/bin/env coconut-run
+
+# coconut version of rexprs
+# https://coconut.readthedocs.io
+
+
+# this is a pure functional thing, which means that the context would have to be handled as a monoid, which is a pain in the .... so forget this
+
+
+data Term(name: str, *args)
+
+data Context
+
+data Rexpr from Term
+
+
+def is_ground(ctx, Term('$VARIABLE', x)) = False
+addpattern def is_ground(ctx, t) = True
+
+
+
+# def simplify(ctx, rexpr) = rexpr
+# addpattern def simplify(ctx, Rexpr('plus', x,y,z) if is_ground(ctx, x) and is_ground(ctx, y) and is_ground(ctx, z))
+
+
+# def factorial(0) = 1
+# addpattern def factorial(n is int if n > 0) = factorial(n-1)*n
+
+# 7 |> factorial |> print

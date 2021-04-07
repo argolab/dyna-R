@@ -8,8 +8,10 @@ class Lessthan extends Rewrite {
   override def rewriteFunctorName: String = "lessthan"
   override def rewriteFunctorArity: Int = 2
 
-  override def canRewrite(term: Term)(implicit ctx: RewriteEnvironment): Boolean =
-    Variable.isBound(term.getArgument_Term(0)) && Variable.isBound(term.getArgument_Term(1))
+  override def canRewrite(term: Term)(implicit ctx: RewriteEnvironment): Boolean = term match {
+    case Term("lessthan", VariableBound(_,_), VariableBound(_,_)) => true
+    case _ => false
+  }
 
   override def doRewrite(term: Term)(implicit ctx: RewriteEnvironment): Term = term match {
     case Term("lessthan", VariableBound(_, valA: PrimitiveValueTerm), VariableBound(_, valB: PrimitiveValueTerm)) =>

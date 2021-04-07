@@ -2,6 +2,7 @@ package org.dyna.term
 
 import java.lang.reflect.Field
 import scala.collection.mutable
+import scala.collection.mutable.ListBuffer
 
 class TermInfo(val name: String, val arguments: List[NestedTermInfo]) {
   def primitive: Boolean = false
@@ -35,30 +36,31 @@ object TermInfo {
 
   val pointer_info = new TermInfo("primitive_pointer", null) {
     override def pointer: Boolean = true
-
     override def size = TermSize(1, 0)
+    override def getArity: Int = 1
   }
 
   val primitive_int = new TermInfo("primitiv_int32", null) {
     override def primitive: Boolean = true
-
     override def size = TermSize(0, 4)
+    override def getArity: Int = 1
   }
 
   val primitive_int64 = new TermInfo("primitive_int64", null) {
     override def primitive: Boolean = true
-
     override def size = TermSize(0, 8)
+    override def getArity: Int = 1
   }
 
   val primitive_float32 = new TermInfo("primitive_float32", null) {
     override def primitive: Boolean = true
-
     override def size: TermSize = TermSize(0, 4)
+    override def getArity: Int = 1
   }
 
   val primitive_string = new TermInfo("primitive_string", null) {
     override def size = TermSize(1, 0)
+    override def getArity: Int = 1
   }
 
   def getTermInfo(v: Object): TermInfo = {
@@ -83,5 +85,7 @@ object TermInfo {
   /**
    * If we are going to be constructing classes which back these object, then we should ensure that these also
    */
-  val constructedTermInfos = new mutable.HashMap[(String, Int), mutable.ListBuffer[TermInfo]]()
+  val constructedTermInfos = new mutable.HashMap[(String, Int), mutable.ListBuffer[TermInfo]]() {
+    override def default(x: (String,Int)) = new ListBuffer[TermInfo]()
+  }
 }

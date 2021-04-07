@@ -11,7 +11,13 @@ class Plus extends Rewrite {
 
   override def canRewrite(term: Term)(implicit ctx: RewriteEnvironment): Boolean = {
     // this needs to determine if there is some way in which this
-    false
+    term match {
+      case Term("plus", VariableBound(_, _), VariableBound(_,_), VariableBound(_,_)) => true
+      case Term("plus", VariableBound(_, _), VariableBound(_,_), VariableFree(_)) => true
+      case Term("plus", VariableBound(_, _), VariableFree(_), VariableBound(_,_)) => true
+      case Term("plus", VariableFree(_), VariableBound(_,_), VariableBound(_,_)) => true
+      case _ => false
+    }
   }
 
   override def doRewrite(term: Term)(implicit ctx: RewriteEnvironment): Term = {
@@ -33,7 +39,10 @@ class Plus extends Rewrite {
         val res = valA + valB
         Term("=", c, res)
       }
-      case t => t // if we can not match, then this is
+      case Term("plus", VariableBound(_, valA: PrimitiveValueTerm), VariableFree(b), VariableBound(_, valC: PrimitiveValueTerm)) => ???
+      case Term("plus", VariableFree(_), VariableBound(_, valB: PrimitiveValueTerm), VariableBound(_, valC: PrimitiveValueTerm)) => ???
+
+      case t => t // if we can not match, then this should not have been called in the first place?
     }
   }
 

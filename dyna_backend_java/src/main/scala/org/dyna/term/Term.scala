@@ -30,6 +30,8 @@ abstract class Term {
   def getArgument(idx: Int): Object
   def getArgument_Term(idx: Int): Term = getArgument(idx).asInstanceOf[Term]
 
+  def arguments: IndexedSeq[Term]  = (0 until getArity).map(getArgument_Term(_))
+
   // if we are going to wrap everything in having some wrapper, then should these methods come out?
   def getArgument_int32(idx: Int): Int = getArgument(idx).asInstanceOf[Int]
   def getArgument_int64(idx: Int): Long = getArgument(idx).asInstanceOf[Long]
@@ -59,6 +61,20 @@ abstract class Term {
 //  final def __hash__ = hashCode()
 //  final def __eq__(o: Object) = equals(o)
 
+  override def toString: String = {
+    // in the case that the nested term is very big, this should maybe consider somehow having some indent?
+    val r = new StringBuilder
+    r.append(getName)
+    if(getArity > 0) {
+      r.append("(")
+      for ((a, i) <- arguments.zipWithIndex) {
+        if (i != 0) r.append(", ")
+        r.append(a.toString)
+      }
+      r.append(")")
+    }
+    r.toString()
+  }
 
 }
 
@@ -73,7 +89,12 @@ object Term {
     new SimpleTerm(name, args)
   }
 
-  def apply(name: String, args: Object*): Term = {
+  def constructTerm(name: String, args: Seq[Term]): Term = {
+    new SimpleTerm(name, args.toArray)
+  }
+
+
+  def apply(name: String, args: Any*): Term = {
     constructTerm(name, args.map({
       case t: Term => t // if this is already a term, then we just keep it, otherwise
       case o => PrimitiveValueTerm.construct(o)

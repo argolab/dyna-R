@@ -10,13 +10,19 @@ abstract class PrimitiveValueTerm extends Term {
   def <=(o :PrimitiveValueTerm): Boolean
   def ==(o: PrimitiveValueTerm): Boolean
   def !=(o: PrimitiveValueTerm): Boolean = !(this == o)
+
+  override def getArgument_Term(idx: Int): Term = {
+    assert(idx == 0)
+    this
+  }
 }
 
 object PrimitiveValueTerm {
 
-  def construct(o: Object): PrimitiveValueTerm = {
+  def construct(o: Any): PrimitiveValueTerm = {
     o match {
       case v: Integer => PrimitiveValueTermInt(v)
+
       case _ => ???
 //      case v: Long => {}
 //      case v: Float => {}
@@ -57,4 +63,6 @@ case class PrimitiveValueTermInt(value: Int) extends PrimitiveValueTerm {
     assert(idx == 0)
     value.asInstanceOf[Integer]
   }
+
+  override def toString = "$int("+value+")"
 }

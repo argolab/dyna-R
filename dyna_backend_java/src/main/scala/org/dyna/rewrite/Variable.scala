@@ -5,24 +5,23 @@ import org.dyna.term.Term
 object Variable {
   final val variable_name = "$VARIABLE"
 
-  def unapply(o: Object)(implicit ctx: RewriteEnvironment): Option[Term] = {
-    if(o.isInstanceOf[Term]) unapply(o.asInstanceOf[Term])
-    else None
-  }
+//  def unapply(o: Object)(implicit ctx: RewriteEnvironment): Option[Term] = {
+//    if(o.isInstanceOf[Term]) unapply(o.asInstanceOf[Term])
+//    else None
+//  }
 
   def unapply(t: Term)(implicit ctx: RewriteEnvironment): Option[Term] = {
-//    if(t.isInstanceOf[])
-//    None
-    ???
+    if(t.getName == variable_name && t.getArity == 1) Some(t) else None
   }
 
   def apply(name: String): Term = {
-    Term(variable_name, name)
+    Term(variable_name, Term(name))
   }
 
   def isBound(name: Term)(implicit ctx: RewriteEnvironment): Boolean = {
     if(isVariable(name)) {
       // this needs to lookup if the variable is bound in the runtime environment
+      val possible_assignments = ctx.lookup(name.getArgument_Term(0), "=")
       ???
       false
     } else {
