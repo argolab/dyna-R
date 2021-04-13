@@ -77,6 +77,24 @@ class Term:
 
     def __repr__(self): return str(self)
 
+    def indented_str(self, indent=0):
+        if self.name == '$VARIABLE' and self.arity == 1:
+            return ' '*indent + f'$VARIABLE({self.arguments[0]})'
+        ret = [' '*indent + self.name]
+        if self.arity > 0:
+            ret.append('(\n')
+        for a in self.arguments:
+            if hasattr(a, 'indented_str'):
+                ret.append(a.indented_str(indent+1))
+                ret.append(',\n')
+            else:
+                ret.append(' '*(indent + 1))
+                ret.append(str(a))
+                ret.append(',\n')
+        if self.arity > 0:
+            ret.append(' '*indent + ')')
+        return ''.join(ret)
+
 
 def Variable(name):
     return Term('$VARIABLE', (name,))
@@ -132,19 +150,83 @@ class RewriteContext(set):
     expressions more efficiently and retrieving the assignment of a variable
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, set_vals=None):
+        super().__init__()
         self._parent = parent
         self._assign_index = {}
         self._unifies_index = defaultdict(set)
         self._kind_index = defaultdict(set)
-        self._multiplicity = 1  # a tracker on the multiplicity of the
-                                # expression so things get multiplied together
 
-    def _build_assign_index(self):
-        for r in self:
-            if r.name == '=' and r.arity == 2:
-                # if there are two values for the
-                self._assign_index[r.get_argument(0)] = r
+        if set_vals is not None:
+            for s in set_vals:
+                self.add_rexpr(s)
+
+        # if set_vals is not None:
+        #     super().__init__(set_vals)
+        #     self._build_indexes()
+        # else:
+        #     super().__init__()
+        # # self._multiplicity = 1  # a tracker on the multiplicity of the
+        # #                         # expression so things get multiplied together
+
+    def _index_unify_rexpr(self, r):
+        a,b = r.arguments
+        if isVariable(a) and isVariable(b):
+            # then this is a unification between two variables with neither ground
+            # if either of these are set, then the other one should also become set
+            av, bv = self.get_value(a), self.get_value(b)
+            if av is None and bv is None:
+                # then this is just a unification between these two variables
+                self._unifies_index[a].add(b)
+                self._unifies_index[b].add(a)
+            elif av is None:
+                # then assign a the value of the variable b
+                self._set_variable(a, bv)
+            elif bv is None:
+                self._set_variable(b, av)
+            elif av != bv:
+                # both are assigned, but they are not values that unify together
+                raise UnificationFailure()
+        else:
+            if isVariable(b) and not isVariable(a):
+                # swap a and b so that a is always the variable
+                a,b = b,a
+            av = self.get_value(a)
+            if av is not None:
+                if av != b:
+                    # the value of b does not match
+                    raise UnificationFailure()
+            else:
+                # save the result of this assignment in the index
+                self._set_variable(a, b)
+
+    # def _build_indexes(self, adding):
+    #     for r in adding:
+    #         self.add_rexpr(r)
+    #         # if r.name == '=' and r.arity == 2:
+    #         #     # if there are two values for the
+    #         #     self._index_unify_rexpr(r)
+
+    def _set_variable(self, var, val):
+        assert isVariable(var)
+        cv = self.get_value(var)
+        if cv is not None:
+            if cv != val:
+                raise UnificationFailure()
+        else:
+            self._assign_index[var] = val
+            # set the value of all variables that this variable is unified with
+            # so this is eager propagating in the context for unification of constants
+            # which is maybe a slight difference from what is written in the paper currently?
+            for unified in self._get_unified(var):
+                self._set_variable(unified, val)
+
+    def _get_unified(self, var):
+        if self._parent is not None:
+            yield from self._parent._get_unified(var)
+        if var in self._unifies_index:
+            yield from self._unifies_index[var]
+
 
     def add_rexpr(self, r):
         assert isinstance(r, Term)
@@ -172,55 +254,7 @@ class RewriteContext(set):
             # return
 
         if r.name == '=' and r.arity == 2:
-            a,b = r.arguments
-            if isVariable(a) and isVariable(b):
-                # then this is a unification between two variables with neither ground
-                # if either of these are set, then the other one should also become set
-                av, bv = self.get_value(a), self.get_value(b)
-                if av is None and bv is None:
-                    # then this is just a unification between these two variables
-                    self._unifies_index[a].add(b)
-                    self._unifies_index[b].add(a)
-                elif av is None:
-                    # then assign a the value of the variable b
-                    self._set_variable(a, bv)
-                elif bv is None:
-                    self._set_variable(b, av)
-                elif av != bv:
-                    # both are assigned, but they are not values that unify together
-                    raise UnificationFailure()
-            else:
-                if isVariable(b) and not isVariable(a):
-                    # swap a and b so that a is always the variable
-                    a,b = b,a
-                av = self.get_value(a)
-                if av is not None:
-                    if av != b:
-                        # the value of b does not match
-                        raise UnificationFailure()
-                else:
-                    # save the result of this assignment in the index
-                    self._set_variable(a, b)
-
-    def _set_variable(self, var, val):
-        assert isVariable(var)
-        cv = self.get_value(var)
-        if cv is not None:
-            if cv != val:
-                raise UnificationFailure()
-        else:
-            self._assign_index[var] = val
-            # set the value of all variables that this variable is unified with
-            # so this is eager propagating in the context for unification of constants
-            # which is maybe a slight difference from what is written in the paper currently?
-            for unified in self._get_unified(var):
-                self._set_variable(unified, val)
-
-    def _get_unified(self, var):
-        if self._parent is not None:
-            yield from self._parent._get_unified(var)
-        if var in self._unifies_index:
-            yield from self._unifies_index[var]
+            self._index_unify_rexpr(r)
 
     # override the set method to also add rexprs
     add = add_rexpr
@@ -242,21 +276,47 @@ class RewriteContext(set):
         assert isinstance(o, RewriteContext) and o._parent is self._parent
         # this is the things which are shared between both of these expressions
         # if there is something which
-        assert False
+        if self is o:
+            # this would need to be a copy, so it would want to copy itself
+            return self
 
+        # this is going to rebuild the index which is "slow" but should still be ok with this working
+        res = RewriteContext(parent=self._parent, set_vals=super().__and__(o))
+        return res
 
     def __sub__(self, o):
         assert isinstance(o, RewriteContext) and o._parent is self._parent
         # if this is subtracting one thing from another, then the parent should not be included
+        if self is o:
+            # tihs is going to have to rewrite an empty environment as these are equivalent or something?
+            return RewriteContext()
 
+        if bool(o) is False:
+            # then the other thing is empty, so we can just return ourselves without changes
+            return self
+
+        import ipdb; ipdb.set_trace()
         assert False
 
     # don't use the inplace expressions for now, though these might make it more efficient in the future?
     def __iand__(self, o):
-        raise NotImplemented()
+        assert isinstance(o, RewriteContext) and o._parent is self._parent
+
+        if self is o:
+            # this is itself, there is no modification that is required
+            return self
+
+
+        return NotImplemented
 
     def __isub__(self, o):
-        raise NotImplemented()
+        assert isinstance(o, RewriteContext) and o._parent is self._parent
+
+        if self is o:
+            # this is going to have to return an empty value, which means that
+            return NotImplemented
+
+        return NotImplemented
 
     def get_value(self, variable):
         if isVariable(variable):
@@ -287,7 +347,10 @@ class RewriteContext(set):
         # if there are assignments, then those should be placed first
 
         res = tuple(self.iter_local())
-        return Term('*', res)  # this is just a conjunction of the constraints which are present
+        r = Term('*', res)  # this is just a conjunction of the constraints which are present
+
+        #import ipdb; ipdb.set_trace()
+        return r
 
 
 class RewriteCollection:
@@ -402,16 +465,22 @@ class RewriteEngine:
         try:
             for func in self.rewrites.get_matching_rewrites(rexpr, self):
                 res = func(self, rexpr)
+                assert res is not None  # error as this means the implementation is incomplete
                 if res != rexpr:
                     self.context.add_rexpr(res)  # this is going to add the new R-expr to the context
                     return res  # stop trying to match the expression and accept this rewrite
             # no rewrite matched, so this is just going to return the R-expr unmodified
+            self.context.add_rexpr(rexpr)  # still add to the environment to track
             return rexpr
         except UnificationFailure:
             return multiplicity(0)
 
-    def __call__(self, rexpr):
-        return self.apply(rexpr)
+    # def __call__(self, rexpr):
+    #     return self.apply(rexpr)
+
+    def rewrite_once(self, rexpr):
+        rexpr = self.apply(rexpr)
+        return make_conjunction(self.context.local_to_rexpr(), rexpr)
 
     def rewrte_fully(self, rexpr):
         while True:
@@ -419,7 +488,7 @@ class RewriteEngine:
             old = rexpr
             rexpr = self.apply(rexpr)
             if old == rexpr: break
-        return rexpr
+        return make_conjunction(self.context.local_to_rexpr(), rexpr)
 
     def get_value(self, rexpr):
         # I think this method should get removed
@@ -516,7 +585,8 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
             if n == 'any':
                 # then this is going to match from here to the end of the expression
                 ret.append(rexpr.arguments[term_idx:])
-                term_idx = len(rexpr.arguments)
+                term_idx = rexpr.arity
+                break
             elif n == 'args':
                 num = int(pattern[match_idx + 1])
                 match_idx += 1
@@ -524,10 +594,11 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                     return []  # successful match
                 else:
                     return None  # unsuccessful
-            res = rec(rexpr.get_argument(term_idx), n)
-            if res is None:
-                return None  # failed recursive match
-            ret += res
+            else:
+                res = rec(rexpr.get_argument(term_idx), n)
+                if res is None:
+                    return None  # failed recursive match
+                ret += res
             term_idx += 1
             match_idx += 1
         if term_idx != rexpr.arity:
@@ -537,10 +608,10 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
 
     #ret = []
     for e in expr:
-        res= rec(rexpr, e)
+        res = rec(rexpr, e)
         if res is None:
             return []  # meaning that the match has failed
-        returning_match.insert(len(returning_match), res)
+        returning_match.extend(res)
     assert res is not None
     # this is to return an iterable over the values.  The returned iterable should always be length 1.
     # this match expression is either going to be used as `for val in match(....)` or `for a,b,c in match(...)`
@@ -550,7 +621,7 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                       # want to return an empty array as that means unsuccessful
     elif len(returning_match) == 1:
         # just return the array in this case as it will have the arguments
-        # this should still be used as for a,b,c in match(....)
+        # this should still be used as `for value in match(....)`
         return [returning_match[0]]
     else:
         # this has to return an iterable over the values, the
@@ -568,57 +639,108 @@ register_rewrite = rewrites.register_function
 @register_rewrite('(* any)')
 def multipliy_base(self, rexpr):
     ret = []
-    #assigns = {}  # these will want to be sorted first into the expression
     mul = 1
     for r in rexpr.arguments:
-        z = self(r)
-        if isMultiplicty(z):  # this is going to want to match the multiplicity for some value
+        z = self.apply(r)
+        if isMultiplicity(z):  # this is going to want to match the multiplicity for some value
             mul *= z
             if mul == 0: return mul  # this has hit the shortcut of reducing to nothing
+        ret.append(z)
 
-        # if z.name == '=' and z.arity == 2:
+    if mul != 1:
+        ret.insert(0, multiplicity(mul))
 
-        #     assigns[z.get_argument(0)] = z.get_argument(1)
-        #     assert False
+    return make_conjunction(*ret)
 
-    assert False
+
+def make_conjunction(*args):
+    # helper function which flattened nested * expressions
+    ret = []
+    mul = 1
+    def add(x):
+        nonlocal mul, ret
+        if isMultiplicity(x):
+            mul *= x
+        elif x.name == '*':
+            for a in x.arguments:
+                add(a)
+        else:
+            assert isinstance(x, Term)
+            ret.append(x)
+    for a in args:
+        add(a)
+    if mul != 1:
+        ret.insert(0, mul)
+    if len(ret) == 0:
+        return multiplicity(1)
+    if len(ret) == 1:
+        return ret[0]
+    return Term('*', ret)
+
 
 @register_rewrite('(+ any)')
 def add_base(self, rexpr):
     if rexpr.arity == 1:
         # then there is only 1 disjunction, so we should just remove the disjunction expression
-        return self(rexpr)
+        return self.apply(rexpr)
 
     ret = []
-    env_prev = self.context
+    env_outer= self.context
     try:
         for r in rexpr.arguments:
             # this will need to merge the common environments together
             # which means that this will need
-            self.context = env_prev.copy()
+            self.context = env_outer.copy()
             try:
-                r = self(r)
-                if not (isMultiplicty(r) and r == 0):
+                r = self.apply(r)
+                if not (isMultiplicity(r) and r == 0):  # ignore branches hwich are eleminated with 0 mult
                     ret.append((r, self.context))
             except UnificationFailure:
+                assert False  # this should not get thrown (I think)
                 # just ignore these branches
                 pass
 
+        # identify the common elements which are tracked in the environments by interesting the sets
         res_env = ret[0][1]
         for _, env in ret:
-            res_env &= env  # construct
+            res_env &= env
 
         for i in range(len(ret)):
             # now that the resulting environment has been identified, this can subtract
             # off that env and construct the resulting term for each sub expression
-            pass
+            re = ret[i][1] - res_env
+            ret[i] = make_conjunction(ret[i][0], re.local_to_rexpr())
 
-        import ipdb; ipdb.set_trace()
+        env_outer = res_env
+        self.context = env_outer
+        return make_disjunction(*ret)
     finally:
         # this will need to update the env_prev with whatever is the new content which
-        self.context = env_prev
+        self.context = env_outer
     # this will need to determine what is the common sets of these elements.  From there it will
 
+def make_disjunction(*args):
+    ret = []
+    mul = 0
+    def add(x):
+        nonlocal mul, ret
+        if isMultiplicity(x):
+            mul += 1
+        elif x.name == '+':
+            for a in x.arguments:
+                add(a)
+        else:
+            assert isinstance(x, Term)
+            ret.append(x)
+    for a in args:
+        add(a)
+    if mul != 0:
+        ret.insert(0, mul)
+    if len(ret) == 0:
+        return multiplicity(0)
+    if len(ret) == 1:
+        return ret[0]
+    return Term('+', ret)
 
 
 @register_rewrite('(= args 2)')
@@ -630,8 +752,18 @@ def unify(self, rexpr):
         return Term('=', (vb, a))
     for va, b in match(self, rexpr, '(= var ground)'):
         return Term('=', (va, b))
+    for va, vb in match(self, rexpr, '(= var var)'):
+        if va == vb:
+            # this is trivally tru, so just remove
+            return multiplicity(1)
+
+    # this is going to go into the environment, and then later pulled back out of the environment
+    # so we don't want this to remain as it would end up duplicated
+    self.context.add_rexpr(rexpr)
+    return multiplicity(1)
+
     # if there is an ordering on the vraiable names, then we should consider that
-    return rexpr
+    #return rexpr
 
 @register_rewrite('(structure ground any)')
 def unify_structure(self, rexpr):
@@ -667,9 +799,53 @@ def unify_structure(self, rexpr):
 @register_rewrite('(proj var rexpr)')
 def proj(self, rexpr):
     for v, r in match(self, rexpr, '(proj var rexpr)'):
-        rr = self(r)  # this is going to apply the values to the
+        rr = self.apply(r)  # this is going to apply rewrites to the inner body
+        vv = self.context.get_value(v)
 
-    assert False
+        if vv is not None:
+            # then we are going to go through and do a replace and then just return the body
+            assert False
+
+        # remove disjunctive and conjunctive expressions out
+        for ags in match(self, rr, '(+ any)'):
+            ret = []
+            for a in ags:
+                if vv is not None:
+                    a = make_conjunction(Term('=', (v, vv)), a)
+                a = Term('proj', (v, a))
+                ret.append(a)
+            return make_disjunction(*ret)
+
+        for ags in match(self, rr, '(* any)'):
+            not_depends = []
+            depends = []
+            if vv is not None:
+                depends.append(Term('=', (v, vv)))
+            # anything which does not mention the variable v can be lifted out of the project statement
+            for a in ags:
+                if contains_variable(a, v):
+                    depends.append(a)
+                else:
+                    not_depends.append(a)
+            if not_depends:
+                return make_conjunction(*not_depends, Term('proj', (v, make_conjunction(*depends))))
+
+        if vv is not None:
+
+
+        for _ in match(self, rr, '(= (param 0) ground)', v):
+            # this is proj(X, (X=5)) -> 1
+            return multiplicity(1)
+
+        for _, _, nested_rexpr in match(self, rr, '(aggregator ground (param 0) var rexpr)', v):
+            # this is proj(X, (X=sum(Y, ...)))
+            if not contains_variable(nested_rexpr, v):
+                return multiplicity(1)
+
+
+        return Term('proj', (v, rr))
+
+
 
 @register_rewrite('(aggregator ground var var rexpr)')
 def aggregator(self, rexpr):
@@ -694,7 +870,7 @@ def aggregator(self, rexpr):
 
     for op, resulting, incoming, rxp in match(self, rexpr, '(aggregator ground var var rexpr)'):
         # this will need to match against the body of the expression
-        rxp = self(rxp)  # this should attempt to
+        rxp = self.apply(rxp)  # this should attempt to simplify the expression
         for _ in match(self, rxp, '(mul 0)'):
             return Term('=', (resulting, identity[op]))
         for res in match(self, rxp, '(= (param 0) ground)', incoming):
@@ -784,7 +960,7 @@ generated_var_cnt = 0
 def generate_var():
     global generated_var_cnt
     generated_var_cnt += 1
-    return f'$VAR_{generated_var_cnt}'
+    return Variable(f'$VAR_{generated_var_cnt}')
 
 def uniquify_variables(rexpr, mapping=None):
     if not isinstance(rexpr, Term):
@@ -825,20 +1001,46 @@ def uniquify_variables(rexpr, mapping=None):
             return rexpr
 
 
+def walk_rexpr(rexpr, func):
+    # match against the R-exprs which have nested expressions
+    def w(r):
+        func(r)
+        if r.name in ('+', '*'):
+            for a in r.arguments: w(a)
+        elif r.name == 'proj' and r.arity == 2:
+            w(r.get_argument(1))
+        elif r.name == 'aggregate' and r.arity == 4:
+            w(r.get_argument(3))
+    w(rexpr)
+
+def contains_variable(rexpr, var):
+    if rexpr == var:
+        return True
+    found = False
+    def walker(rx):
+        nonlocal found
+        for a in rx.arguments:
+            if a == var: found = True
+    walk_rexpr(rexpr, walker)
+    return found
+
+
+
+
 ####################################################################################################
 
 
 
 def main():
-    rexpr = Term('plus', (1,2,Variable('x')))
+    #rexpr = Term('plus', (1,2,Variable('x')))
 
-    #rexpr = Term('aggregator', ('sum', Variable('x'), Variable('y'), Term('+', (Term('=', (Variable('y'), 7)), Term('=', (Variable('y'), 10))))  ))  # (X=sum(Y, (Y=7)))
+    rexpr = Term('aggregator', ('sum', Variable('x'), Variable('y'), Term('+', (Term('=', (Variable('y'), 7)), Term('=', (Variable('y'), 10))))  ))  # (X=sum(Y, (Y=7)))
 
     ctx = RewriteContext()
     simplify = RewriteEngine()
-    r = simplify(rexpr)
+    r = simplify.rewrite_once(rexpr)
 
-    print(r)
+    print(r.indented_str())
 
 if __name__ == '__main__':
     main()
