@@ -85,7 +85,7 @@ def isVariable(x):
     return isinstance(x, Term) and x.name == '$VARIABLE' and x.arity == 1
 
 
-class _multiplictyTerm(Term):
+class _multiplicityTerm(Term):
     def __init__(self, val):
         assert isinstance(val, int) and val >= 0
         super().__init__('$MUL', (val,))
@@ -156,7 +156,7 @@ class RewriteContext(set):
         self._kind_index[(r.name, r.arity)].add(r)
         super().add(r)  # this is just tracking the standard r-expr term
 
-        if isMultiplicty(r):
+        if isMultiplicity(r):
             # we ignore tracking of multiplicies here as this is just a _set_
             # these are returned else where such that it will find
             return
@@ -383,7 +383,7 @@ class RewriteEngine:
     Recursively applies itself to the R-expr until it is rewritten
     """
 
-    def __init__(self, *, rewrites=None :RewriteCollection, kind='simple', context=None):
+    def __init__(self, *, rewrites: RewriteCollection=None, kind='simple', context=None):
         self.__rewrites = rewrites or globals()['rewrites']
         assert kind in ('simple', 'full')
         self.__kind = kind
@@ -398,44 +398,10 @@ class RewriteEngine:
     @property
     def rewrites(self): return self.__rewrites
 
-    # def apply(self, rexpr):
-    #     try:
-    #         name, arity = rexpr.name, rexpr.arity
-
-    #         # this tracks that we have seen this, assignments will be placed first in the expression so those should be made avaliable before
-    #         # we encounter something that will make use of the expression.
-    #         self.context.add_rexpr(rexpr)
-
-    #         if (name, arity) in self.rewrites:
-    #             res = self.rewrites[(name, arity)](self, rexpr)
-    #             assert res is not None
-    #             if res != rexpr:
-    #                 return res
-
-    #         if name in self.rewrites:
-    #             res = self.rewrites[name](self, context)
-    #             assert res is not None
-    #             if res != rexpr:
-    #                 return res
-
-    #         for key, r in self.rewrites.items():
-    #             if isinstance(key, str) and '(' in key:  # this can enable the more power pattern matching for the rewrites
-    #                 for _ in match(self, rexpr, key):
-    #                     res = r(self, rexpr)
-    #                     assert res is not None
-    #                     if res != rexpr:
-    #                         return res
-    #     except UnificationFailure:
-    #         # then this will be a zero for these expressions
-    #         return multiplicity(0)
-
-    #     # there is no rewrite here which applies
-    #     return rexpr
-
     def apply(self, rexpr):
         try:
             for func in self.rewrites.get_matching_rewrites(rexpr, self):
-                res = func(rexpr)
+                res = func(self, rexpr)
                 if res != rexpr:
                     self.context.add_rexpr(res)  # this is going to add the new R-expr to the context
                     return res  # stop trying to match the expression and accept this rewrite
@@ -592,8 +558,8 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
 
 
 
-rewrite = RewriteCollection()
-register_rewrite = rewrite.register_function
+rewrites = RewriteCollection()
+register_rewrite = rewrites.register_function
 
 
 ####################################################################################################
