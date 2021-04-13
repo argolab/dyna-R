@@ -11,48 +11,9 @@ from functools import cache
 ####################################################################################################
 # utility functions
 
-# @cache  # this will get called a number of times with the same argument, so just cache the result
-# def parse_sexp(sexp):
-#     # from https://gist.github.com/pib/240957
-#     from string import whitespace
-#     atom_end = set('()"\'') | set(whitespace)
-#     stack, i, length = [[]], 0, len(sexp)
-#     while i < length:
-#         c = sexp[i]
-
-#         reading = type(stack[-1])
-#         if reading == list:
-#             if   c == '(': stack.append([])
-#             elif c == ')':
-#                 stack[-2].append(stack.pop())
-#                 if stack[-1][0] == ('quote',): stack[-2].append(stack.pop())
-#             elif c == '"': stack.append('')
-#             elif c == "'": stack.append([('quote',)])
-#             elif c in whitespace: pass
-#             else: stack.append((c,))
-#         elif reading == str:
-#             if   c == '"':
-#                 stack[-2].append(stack.pop())
-#                 if stack[-1][0] == ('quote',): stack[-2].append(stack.pop())
-#             elif c == '\\':
-#                 i += 1
-#                 stack[-1] += sexp[i]
-#             else: stack[-1] += c
-#         elif reading == tuple:
-#             if c in atom_end:
-#                 atom = stack.pop()
-#                 if atom[0][0].isdigit(): stack[-1].append(eval(atom[0]))
-#                 else: stack[-1].append(atom)
-#                 if stack[-1][0] == ('quote',): stack[-2].append(stack.pop())
-#                 continue
-#             else: stack[-1] = ((stack[-1][0] + c),)
-#         i += 1
-#     return stack.pop()
-
-
-def parse_sexp(sexpr):
+def parse_sexp(s):
     # super basic s-expression parser
-    sexpr = sexpr.replace('(', ' ( ').replace(')', ' ) ').split()  # lex the expression
+    sexpr = s.replace('(', ' ( ').replace(')', ' ) ').split()  # lex the expression
     stack = [[]]
     for symbol in sexpr:
         if symbol == '(':
@@ -62,14 +23,14 @@ def parse_sexp(sexpr):
             stack[-1].append(val)
         else:
             stack[-1].append(symbol)
-    assert len(stack) == 1  # otherwise the s-expr is ill-formed
+    if len(stack) != 1:
+        raise RuntimeError(f'S Expression is ill-formed: {s}')
     return tuple(stack[0])
 
 
-
-
 ####################################################################################################
-# base functions for the core
+# base definitions of Term structure.
+# Every term has a name and a variable number of arguments
 
 class Term:
 
@@ -121,7 +82,7 @@ def Variable(name):
     return Term('$VARIABLE', (name,))
 
 def isVariable(x):
-    return x.name == '$VARIABLE' and x.arity == 1
+    return isinstance(x, Term) and x.name == '$VARIABLE' and x.arity == 1
 
 
 class _multiplictyTerm(Term):
@@ -129,40 +90,55 @@ class _multiplictyTerm(Term):
         assert isinstance(val, int) and val >= 0
         super().__init__('$MUL', (val,))
     def __add__(self, other):
-        assert isinstance(other, Term) and other.name == '$MUL' and other.arity == 1
-        return type(self)(self.arguments[0] + other.arguments[0])
+        if not isinstance(other, int):
+            assert isinstance(other, Term) and other.name == '$MUL' and other.arity == 1
+            other = other.arguments[0]
+        return type(self)(self.arguments[0] + other)
     def __mul__(self, other):
-        assert isinstance(other, Term) and other.name == '$MUL' and other.arity == 1
-        return type(self)(self.arguments[0] * other.arguments[0])
+        if not isinstance(other, int):
+            assert isinstance(other, Term) and other.name == '$MUL' and other.arity == 1
+            other = other.arguments[0]
+        return type(self)(self.arguments[0] * other)
     def __int__(self): return self.arguments[0]
+    def __eq__(self, other):
+        if isinstance(other, int):
+            return other == self.arguments[0]
+        return super().__eq__(other)
+    def __hash__(self): return super().__hash__()
 
-def multiplicty(val):
+def multiplicity(val):
     if isinstance(val, int):
-        return _multiplictyTerm(val)
-    if isinstance(val, _multiplictyTerm):
+        return _multiplicityTerm(val)
+    if isinstance(val, _multiplicityTerm):
         return val
     assert False  # wtf
-    # assert isinstance(val, int) and val >= 0
-    # # if val == 0:
-    # #     import ipdb; ipdb.set_trace()
-    # return val
-    # #return Term('$MUL', (val,))
 
-def isMultiplicty(val):
-    return isinstance(val, _multiplictyTerm)
+def isMultiplicity(val):
+    return isinstance(val, _multiplicityTerm)
 
+####################################################################################################
+# The core of the rewriting engine and pattern matching
+# These classes are designed to be "mostly" general in that they do not specialize to specific rewrites
+# These do implement the R-expr rewrites which
 
-##################################################
 
 class UnificationFailure(Exception):
     pass
 
 class RewriteContext(set):
+    """This is the context in which a given rewrite is being performed.  This can
+    be though of as an (incomplete) set of conjunctive R-exprs to the current
+    R-expr.  There are methods which are designed to assist with looking up
+    expressions more efficiently and retrieving the assignment of a variable
+    """
 
     def __init__(self, parent=None):
         self._parent = parent
         self._assign_index = {}
+        self._unifies_index = defaultdict(set)
         self._kind_index = defaultdict(set)
+        self._multiplicity = 1  # a tracker on the multiplicity of the
+                                # expression so things get multiplied together
 
     def _build_assign_index(self):
         for r in self:
@@ -171,29 +147,80 @@ class RewriteContext(set):
                 self._assign_index[r.get_argument(0)] = r
 
     def add_rexpr(self, r):
+        assert isinstance(r, Term)
         if self.__contains__(r):
             # this is already tracked, sowe are not going to add it again to the expression
             return
-        if r.name == '=' and r.arity == 2:
-            # then we need to ad this to the index.  This should then this
-            # should check if there is a consistency issue with the value that
-            # is being set.  In which case this can return unification failure
-
-
-
-            val = self.get_value(r.get_argument(0))
-            if val is None:
-                self._assign_index[r.get_argument(0)] = r
-            else:
-                if r.get_argument(1) != val:
-                    import ipdb; ipdb.set_trace()
-                    raise UnificationFailure()
-                return  # there is no need to store this as it is already set
 
         # so that we can find things like lessthan(A,B) by just looking under lessthan/2
         self._kind_index[(r.name, r.arity)].add(r)
-
         super().add(r)  # this is just tracking the standard r-expr term
+
+        if isMultiplicty(r):
+            # we ignore tracking of multiplicies here as this is just a _set_
+            # these are returned else where such that it will find
+            return
+
+            # if r != 1:
+            #     assert False  # multiplicies should not be getting tracked in the context as this is just a _set_
+            # return
+            # # this should track the multiplicitiy
+            # self._multiplicity *= r
+            # if self._multiplicity == 0:
+            #     raise UnificationFailure()
+            # # don't add multiplicies to the set of the expression
+            # return
+
+        if r.name == '=' and r.arity == 2:
+            a,b = r.arguments
+            if isVariable(a) and isVariable(b):
+                # then this is a unification between two variables with neither ground
+                # if either of these are set, then the other one should also become set
+                av, bv = self.get_value(a), self.get_value(b)
+                if av is None and bv is None:
+                    # then this is just a unification between these two variables
+                    self._unifies_index[a].add(b)
+                    self._unifies_index[b].add(a)
+                elif av is None:
+                    # then assign a the value of the variable b
+                    self._set_variable(a, bv)
+                elif bv is None:
+                    self._set_variable(b, av)
+                elif av != bv:
+                    # both are assigned, but they are not values that unify together
+                    raise UnificationFailure()
+            else:
+                if isVariable(b) and not isVariable(a):
+                    # swap a and b so that a is always the variable
+                    a,b = b,a
+                av = self.get_value(a)
+                if av is not None:
+                    if av != b:
+                        # the value of b does not match
+                        raise UnificationFailure()
+                else:
+                    # save the result of this assignment in the index
+                    self._set_variable(a, b)
+
+    def _set_variable(self, var, val):
+        assert isVariable(var)
+        cv = self.get_value(var)
+        if cv is not None:
+            if cv != val:
+                raise UnificationFailure()
+        else:
+            self._assign_index[var] = val
+            # set the value of all variables that this variable is unified with
+            # so this is eager propagating in the context for unification of constants
+            # which is maybe a slight difference from what is written in the paper currently?
+            for unified in self._get_unified(var):
+                self._set_variable(unified, val)
+
+    def _get_unified(self, var):
+        if self._parent is not None:
+            yield from self._parent._get_unified(var)
+        if var in self._unifies_index:
+            yield from self._unifies_index[var]
 
     # override the set method to also add rexprs
     add = add_rexpr
@@ -213,11 +240,23 @@ class RewriteContext(set):
 
     def __and__(self, o):
         assert isinstance(o, RewriteContext) and o._parent is self._parent
+        # this is the things which are shared between both of these expressions
+        # if there is something which
         assert False
+
 
     def __sub__(self, o):
         assert isinstance(o, RewriteContext) and o._parent is self._parent
+        # if this is subtracting one thing from another, then the parent should not be included
+
         assert False
+
+    # don't use the inplace expressions for now, though these might make it more efficient in the future?
+    def __iand__(self, o):
+        raise NotImplemented()
+
+    def __isub__(self, o):
+        raise NotImplemented()
 
     def get_value(self, variable):
         if isVariable(variable):
@@ -242,80 +281,20 @@ class RewriteContext(set):
             yield from self._parent.iter_all()
         yield from self.iter_local()
 
+    def local_to_rexpr(self):
+        # this is going to have to take all of the local conjunctive information and turn it into a R-expr which can
 
-class RewriteEngine:
+        # if there are assignments, then those should be placed first
 
-    def __init__(self, *, rewrites=None, kind='simple', context=None):
-        self.__rewrites = rewrites or globals()['rewrites']
-        assert kind in ('simple', 'full')
-        self.__kind = kind
+        res = tuple(self.iter_local())
+        return Term('*', res)  # this is just a conjunction of the constraints which are present
 
-        # context can be modified as this moves through the different rewrites
-        self.context = context or RewriteContext()
-
-    # these are read only, so make access through a property
-    @property
-    def kind(self): return self.__kind
-
-    @property
-    def rewrites(self): return self.__rewrites
-
-    def apply(self, rexpr):
-        try:
-            name, arity = rexpr.name, rexpr.arity
-
-            # this tracks that we have seen this, assignments will be placed first in the expression so those should be made avaliable before
-            # we encounter something that will make use of the expression.
-            self.context.add_rexpr(rexpr)
-
-            if (name, arity) in self.rewrites:
-                res = self.rewrites[(name, arity)](self, rexpr)
-                assert res is not None
-                if res != rexpr:
-                    return res
-
-            if name in self.rewrites:
-                res = self.rewrites[name](self, context)
-                assert res is not None
-                if res != rexpr:
-                    return res
-
-            for key, r in self.rewrites.items():
-                if isinstance(key, str) and '(' in key:  # this can enable the more power pattern matching for the rewrites
-                    for _ in match(self, rexpr, key):
-                        res = r(self, rexpr)
-                        assert res is not None
-                        if res != rexpr:
-                            return res
-        except UnificationFailure:
-            # then this will be a zero for these expressions
-            return multiplicty(0)
-
-        # there is no rewrite here which applies
-        return rexpr
-
-    def __call__(self, rexpr):
-        return self.apply(rexpr)
-
-    def get_value(self, rexpr):
-        if rexpr.name == '$VARIABLE':
-            name = rexpr.get_argument(0)
-            return self.context.get(name) # this returns the value
-        else:
-            # this must be a constant value
-            return variable
-
-
-def fully_rewrite(rewrite_engine :RewriteEngine, rexpr):
-    while True:
-        old_rexpr = rexpr
-        rexpr = rewrite_engine(rexpr)
-        if old_rexpr == rexpr:  # meaning that there were no rewrites applied to the expression
-            break
 
 class RewriteCollection:
-    """A class for tracking rewrite operators.  Operators are segmented such that they
-    can be looked up quickly using the name of an R-expr or in the case that more advanced matching is required
+    """A class for tracking rewrite operators.  Operators are segmented such that
+    they can be looked up quickly using the name of an R-expr or in the case
+    that more advanced matching is required
+
     """
     def __init__(self):
         self.name_match = defaultdict(list)
@@ -348,6 +327,12 @@ class RewriteCollection:
                 if arity is None:
                     arity = len(args)
                 self.name_arity_match[(name, arity)].append(func)
+
+    def register_function(self, pattern):
+        def f(func):
+            self._register_function(pattern, func)
+            return func
+        return f
 
     def do_user_defined_rewrite(self, rexpr):
         # this should take the name arity of a given expression and then subsuite in new names for the variables
@@ -383,7 +368,7 @@ class RewriteCollection:
         # which means that this is going to be looking.
         # we might want to avoid doing the full matches most of the time, so this will need to be controllable
         # by some expression
-        for key, funcs in self.full_match.items():
+        for pattern, funcs in self.full_match.items():
             if match(context, rexpr, pattern):
                 yield from funcs
 
@@ -392,16 +377,107 @@ class RewriteCollection:
         if n in self.user_defined_rewrites:
             yield self.do_user_defined_rewrite
 
-rewrites = {}
 
-user_defined_rewrites = {}
+class RewriteEngine:
+    """
+    Recursively applies itself to the R-expr until it is rewritten
+    """
+
+    def __init__(self, *, rewrites=None :RewriteCollection, kind='simple', context=None):
+        self.__rewrites = rewrites or globals()['rewrites']
+        assert kind in ('simple', 'full')
+        self.__kind = kind
+
+        # context can be modified as this moves through the different rewrites
+        self.context = context or RewriteContext()
+
+    # these are read only, so make access through a property
+    @property
+    def kind(self): return self.__kind
+
+    @property
+    def rewrites(self): return self.__rewrites
+
+    # def apply(self, rexpr):
+    #     try:
+    #         name, arity = rexpr.name, rexpr.arity
+
+    #         # this tracks that we have seen this, assignments will be placed first in the expression so those should be made avaliable before
+    #         # we encounter something that will make use of the expression.
+    #         self.context.add_rexpr(rexpr)
+
+    #         if (name, arity) in self.rewrites:
+    #             res = self.rewrites[(name, arity)](self, rexpr)
+    #             assert res is not None
+    #             if res != rexpr:
+    #                 return res
+
+    #         if name in self.rewrites:
+    #             res = self.rewrites[name](self, context)
+    #             assert res is not None
+    #             if res != rexpr:
+    #                 return res
+
+    #         for key, r in self.rewrites.items():
+    #             if isinstance(key, str) and '(' in key:  # this can enable the more power pattern matching for the rewrites
+    #                 for _ in match(self, rexpr, key):
+    #                     res = r(self, rexpr)
+    #                     assert res is not None
+    #                     if res != rexpr:
+    #                         return res
+    #     except UnificationFailure:
+    #         # then this will be a zero for these expressions
+    #         return multiplicity(0)
+
+    #     # there is no rewrite here which applies
+    #     return rexpr
+
+    def apply(self, rexpr):
+        try:
+            for func in self.rewrites.get_matching_rewrites(rexpr, self):
+                res = func(rexpr)
+                if res != rexpr:
+                    self.context.add_rexpr(res)  # this is going to add the new R-expr to the context
+                    return res  # stop trying to match the expression and accept this rewrite
+            # no rewrite matched, so this is just going to return the R-expr unmodified
+            return rexpr
+        except UnificationFailure:
+            return multiplicity(0)
+
+    def __call__(self, rexpr):
+        return self.apply(rexpr)
+
+    def rewrte_fully(self, rexpr):
+        while True:
+            # this contains the context values inside of itself
+            old = rexpr
+            rexpr = self.apply(rexpr)
+            if old == rexpr: break
+        return rexpr
+
+    def get_value(self, rexpr):
+        # I think this method should get removed
+        return self.context.get_value(rexpr)
+
+def fully_rewrite(rewrite_engine :RewriteEngine, rexpr):
+    while True:
+        old_rexpr = rexpr
+        rexpr = rewrite_engine(rexpr)
+        if old_rexpr == rexpr:  # meaning that there were no rewrites applied to the expression
+            break
 
 def match(self :RewriteContext, rexpr, pattern, *pattern_args):
     # the pattern should be something which returns the variable
     # I suppose that we could use a for loop and then this would return an iterator in the case that the pattern matches
 
     # match might be outside
-    expr = parse_sexp(pattern)
+    if isinstance(pattern, str):
+        expr = parse_sexp(pattern)
+    else:
+        assert isinstance(pattern, tuple)
+        expr = pattern
+
+    returning_match = []
 
     def rec(rexpr, pattern):
         if isinstance(pattern, str):
@@ -446,6 +522,13 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
             else:
                 return None  # match failed
 
+        elif name == 'match_param':
+            idx = int(pattern[1])
+            if rexpr == returning_match[idx]:
+                return []  # successful matched something that was matched before
+            else:
+                return None
+
         # we are going to match against the name of the R-expr itself
         if rexpr.name != name:
             # the match has failed on the name alone
@@ -456,10 +539,6 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
             else:
                 return None
         # there might be variable length matching here, so we are not going to check that the length matches
-        # else:
-        #     if rexpr.arity + 1 != len(pattern):
-        #         # the arity of a longer term has failed to match
-        #         return None
 
         ret = []
         term_idx = 0
@@ -490,133 +569,31 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
             return None
         return ret
 
-
-
-    # # this should go through and do the matching for the expression
-    # def rec(rexpr, pattern):
-    #     name = pattern[0]
-    #     if isinstance(name, tuple) and len(name) == 1: name = name[0]
-    #     if name == 'OR':
-    #         # then there are a few different things that could match here
-    #         for child in pattern[1:]:
-    #             res = rec(rexpr, child)
-    #             if res is not None:
-    #                 return res
-    #         return  # then none of the OR branches matched, so this is going to
-    #     elif name == 'ground':
-    #         if isVariable(rexpr):
-    #             if self is not None:
-    #                 val = self.get_value(rexpr)
-    #                 if val is not None:
-    #                     return val
-    #             else:
-    #                  return None
-    #         else:
-    #             # this must be a ground value, so we can just return this
-    #             return rexpr
-    #     elif name == 'var':
-    #         if isVariable(rexpr):
-    #             return rexpr
-    #         return  # fail match
-    #     elif name == 'rexpr':
-    #         return rexpr  # just match anything here
-    #     elif isinstance(name, list) and name[0] == 'param':
-    #         idx = name[1]
-    #         if rexpr == pattern_args[idx]:
-    #             return []  # successful match that returns nothing
-    #         else:
-    #             return None  # failed to match
-    #     if rexpr.name != name:
-    #         # then the matching has failed
-    #         return None
-    #     args = pattern[1:]
-    #     ret = []
-    #     for i, a in enumerate(args):
-    #         if a == ('any',):
-    #             # then we are going to match the remainder of the expression
-    #             ret.append(args[i:])
-    #             break
-    #         if a == ('args',):
-    #             num = args[i+1]
-    #             if num == rexpr.arity:
-    #                 return []  # then this matches, but this is not going to match with the values of these arguments
-    #             else:
-    #                 return None
-    #         ri = rexpr.arguments[i]
-    #         # if the pattern does not have the tuple around it
-    #         rr  = rec(ri, a)
-    #         if rr is None:
-    #             return None  # the match failed
-    #         else:
-    #             ret += rr  # then the match return something that we want to accumulate
-
-    #         # if isinstance(a, list) and a[0] == ('param',):
-    #         #     # this for matching expressions like `(something (param 0) var (param 1))`
-    #         #     idx = a[1]
-    #         #     if ri == pattern_args[idx]:
-    #         #         # match was successful, but don't bother returning it
-    #         #         pass
-    #         #     else:
-    #         #         return None  # failed match
-    #         # elif a == ('var',):
-    #         #     if ri.name == '$VARIABLE':
-    #         #         ret.append(ri)
-    #         #     else:
-    #         #         return None  # fail match
-    #         # elif a == ('ground',):
-    #         #     if isinstance(ri, Term) and ri.name == '$VARIABLE':
-    #         #         if self is not None:
-    #         #             val = self.get_value(ri)
-    #         #             if val is not None:
-    #         #                 ret.append(val)
-    #         #             else:
-    #         #                 return None
-    #         #         else:
-    #         #             return None # fail match
-    #         #     else:
-    #         #         # if this is a ground valie, then we should just return that
-    #         #         # though if this is a nested r-expr how would that work
-    #         #         ret.append(ri)
-    #         # elif a == ('rexpr',):
-    #         #     ret.append(ri)
-    #         # elif isinstance(a, list):
-    #         #     # then this is a recursive nested expression
-    #         #     r = rec(args[i], a)
-    #         #     if r is None:
-    #         #         return None  # then the match has failed
-    #         #     ret.append(r)
-    #         # else:
-    #         #assert False  # idk if there should be anything else
-    #     return ret
-
-    res = rec(rexpr, expr[0])
-    if res is not None:
-        if len(res) == 0:
-            # then this is still a successful match, but returning an empty array will fail to do any looping
-            # so we return an array which has size of >0 but there is no content
-            return [None]
-        if len(res) == 1:
-            return res[0]
-        else:
-            return res
-
-
-    # if the result is an empty array then this should return the result
-    # then there is nothing that matches here
-    # this function does not have to use an
-
-    # this will always return something iterable, as this is used within the context of an for loop
-    # but tihs will have that bool([]) == False, so it can also be used inside of a
-    return []
+    #ret = []
+    for e in expr:
+        res= rec(rexpr, e)
+        if res is None:
+            return []  # meaning that the match has failed
+        returning_match.insert(len(returning_match), res)
+    assert res is not None
+    # this is to return an iterable over the values.  The returned iterable should always be length 1.
+    # this match expression is either going to be used as `for val in match(....)` or `for a,b,c in match(...)`
+    # which means that it needs to return the value as something that can be unpacked
+    if len(returning_match) == 0:
+        return [None] # this means the matches was successful, but we do not
+                      # want to return an empty array as that means unsuccessful
+    elif len(returning_match) == 1:
+        # just return the array in this case as it will have the arguments
+        # this should still be used as for a,b,c in match(....)
+        return [returning_match[0]]
+    else:
+        # this has to return an iterable over the values, the
+        return [returning_match]
 
 
 
-def register_rewrite(pattern):
-    return lambda x: x
-    p = parse_sexp(pattern)
-    def f(func):
-        rewrites[pattern] = func
-    return f
+rewrite = RewriteCollection()
+register_rewrite = rewrite.register_function
 
 
 ####################################################################################################
@@ -625,21 +602,27 @@ def register_rewrite(pattern):
 @register_rewrite('(* any)')
 def multipliy_base(self, rexpr):
     ret = []
-    assigns = {}  # these will want to be sorted first into the expression
+    #assigns = {}  # these will want to be sorted first into the expression
     mul = 1
     for r in rexpr.arguments:
         z = self(r)
-        if isinstance(z, int):  # this is going to want to match the multiplicty for some value
+        if isMultiplicty(z):  # this is going to want to match the multiplicity for some value
             mul *= z
             if mul == 0: return mul  # this has hit the shortcut of reducing to nothing
-        if z.name == '=' and z.arity == 2:
-            assigns[z.get_argument(0)] = z.get_argument(1)
-            assert False
 
+        # if z.name == '=' and z.arity == 2:
 
+        #     assigns[z.get_argument(0)] = z.get_argument(1)
+        #     assert False
+
+    assert False
 
 @register_rewrite('(+ any)')
 def add_base(self, rexpr):
+    if rexpr.arity == 1:
+        # then there is only 1 disjunction, so we should just remove the disjunction expression
+        return self(rexpr)
+
     ret = []
     env_prev = self.context
     try:
@@ -647,10 +630,24 @@ def add_base(self, rexpr):
             # this will need to merge the common environments together
             # which means that this will need
             self.context = env_prev.copy()
-            r = self(r)
-            ret.append((r, self.context))
+            try:
+                r = self(r)
+                if not (isMultiplicty(r) and r == 0):
+                    ret.append((r, self.context))
+            except UnificationFailure:
+                # just ignore these branches
+                pass
 
-            import ipdb; ipdb.set_trace()
+        res_env = ret[0][1]
+        for _, env in ret:
+            res_env &= env  # construct
+
+        for i in range(len(ret)):
+            # now that the resulting environment has been identified, this can subtract
+            # off that env and construct the resulting term for each sub expression
+            pass
+
+        import ipdb; ipdb.set_trace()
     finally:
         # this will need to update the env_prev with whatever is the new content which
         self.context = env_prev
@@ -658,11 +655,11 @@ def add_base(self, rexpr):
 
 
 
-@register_rewrite('(= args 2')
+@register_rewrite('(= args 2)')
 #@register_rewrite('(unify args 2)')
 def unify(self, rexpr):
     for a,b in match(self, rexpr, '(= ground ground)'):
-        return multiplicty(1 if a == b else 0)
+        return multiplicity(1 if a == b else 0)
     for a,vb in match(self, rexpr, '(= ground var)'):
         return Term('=', (vb, a))
     for va, b in match(self, rexpr, '(= var ground)'):
@@ -677,7 +674,7 @@ def unify_structure(self, rexpr):
         # this needs to unpack the variables in the expression
         if res_variable.name != name or res_variable.arity != len(args):
             # this has failed to match the given expression
-            return multiplicty(0)
+            return multiplicity(0)
         ret = tuple(Term('=', (var, val)) for val, var in zip(res_variable.arguments, args))
         if len(ret) > 1:
             return Term('*', ret)
@@ -771,19 +768,15 @@ def aggregator(self, rexpr):
 
 @register_rewrite('(plus args 3)')
 def plus(self, rexpr):
-    for _ in match(self, rexpr, '(plus any)'):
-        for a,b,c in match(self, rexpr, '(plus ground ground ground)'):
-            # then this will match the ground values
-            if a+b == c:
-                return multiplicty(1)
-            else:
-                return multiplicty(0)
-        for a,b, vc in match(self, rexpr, '(plus ground ground var)'):
-            return Term('=', (vc, a+b))
-        for a, vb, c in match(self, rexpr, '(plus ground var ground)'):
-            return Term('=', (vb, a-c))
-        for va, b, c in match(self, rexpr, '(plus var ground ground)'):
-            return Term('=', (va, b-c))
+    for a,b,c in match(self, rexpr, '(plus ground ground ground)'):
+        # then this will match the ground values
+        return multiplicity(1 if a+b == c else 0)
+    for a,b, vc in match(self, rexpr, '(plus ground ground var)'):
+        return Term('=', (vc, a+b))
+    for a, vb, c in match(self, rexpr, '(plus ground var ground)'):
+        return Term('=', (vb, a-c))
+    for va, b, c in match(self, rexpr, '(plus var ground ground)'):
+        return Term('=', (va, b-c))
 
     # return unchanged in the case that nothing matches
     return rexpr
@@ -791,7 +784,7 @@ def plus(self, rexpr):
 @register_rewrite('(times args 3)')
 def times(self, rexpr):
     for a,b,c in match(self, rexpr, '(times ground ground ground)'):
-        return multiplicty(1 if a*b == c else 0)
+        return multiplicity(1 if a*b == c else 0)
     for a,b, vc in match(self, rexpr, '(times ground ground var)'):
         return Term('=', (vc, a*b))
     for a, vb, c in match(self, rexpr, '(times ground var ground)'):
@@ -803,7 +796,7 @@ def times(self, rexpr):
 @register_rewrite('(min args 3)')
 def min_rr(self, rexpr):
     for a,b,c in match(self, rexpr, '(min ground ground ground)'):
-        return multiplicty(1 if min(a,b) == c else 0)
+        return multiplicity(1 if min(a,b) == c else 0)
     for a,b,vc in match(self, rexpr, '(min ground ground var)'):
         return Term('=', (vc, min(a,b)))
     return rexpr
@@ -811,7 +804,7 @@ def min_rr(self, rexpr):
 @register_rewrite('(max args 3)')
 def max_rr(self, rexpr):
     for a,b,c in match(self, rexpr, '(min ground ground ground)'):
-        return multiplicty(1 if max(a,b) == c else 0)
+        return multiplicity(1 if max(a,b) == c else 0)
     for a,b,vc in match(self, rexpr, '(max ground ground var)'):
         return Term('=', (vc, max(a,b)))
     return rexpr
@@ -871,9 +864,9 @@ def uniquify_variables(rexpr, mapping=None):
 
 
 def main():
-    #rexpr = Term('plus', (1,2,Variable('x')))
+    rexpr = Term('plus', (1,2,Variable('x')))
 
-    rexpr = Term('aggregator', ('sum', Variable('x'), Variable('y'), Term('+', (Term('=', (Variable('y'), 7)), Term('=', (Variable('y'), 10))))  ))  # (X=sum(Y, (Y=7)))
+    #rexpr = Term('aggregator', ('sum', Variable('x'), Variable('y'), Term('+', (Term('=', (Variable('y'), 7)), Term('=', (Variable('y'), 10))))  ))  # (X=sum(Y, (Y=7)))
 
     ctx = RewriteContext()
     simplify = RewriteEngine()
