@@ -6,6 +6,7 @@ import os
 
 from collections import defaultdict
 from functools import cache
+from textwrap import indent
 
 
 ####################################################################################################
@@ -95,6 +96,33 @@ class Term:
             ret.append(' '*indent + ')')
         return ''.join(ret)
 
+    def stylized_rexpr(self):
+        # return a string for this which is supposed to be close to representtaion used in the paper as possible
+        def nested(r):
+            # print out a nested R-expr, if the expression is big, then it will indent, otherwise it will try and make it inline
+            if isinstance(r, Term):
+                s = r.stylized_rexpr()
+            else:
+                s = str(r)
+            if '\n' in s or len(s) > 50:
+                s = '\n' + indent(s, '  ') + '\n'
+            return s
+
+        if self.name == '$VARIABLE' and self.arity == 1:
+            return str(self.get_argument(0)).capitalize()
+        elif self.name == '=' and self.arity == 2:
+            return f'({nested(self.get_argument(0))}={nested(self.get_argument(1))})'
+        elif self.name == 'aggregator' and self.arity == 4:
+            return f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}({nested(self.get_argument(2))}, {nested(self.get_argument(3))}))'
+        elif self.name == 'structure':
+            return f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}(' + ', '.join(map(nested, self.arguments[2:])) + '))'
+        elif self.name in ('+', '*'):
+            return self.name.join(map(nested,self.arguments))
+        else:
+            # this covers all base cases and expressions like proj & if which are just represented via their name
+            return f'{self.name}(' + ', '.join(map(nested, self.arguments)) + ')'
+
+
 
 def Variable(name):
     return Term('$VARIABLE', (name,))
@@ -105,21 +133,27 @@ def isVariable(x):
 
 class _multiplicityTerm(Term):
     def __init__(self, val):
-        assert isinstance(val, int) and val >= 0
+        assert (isinstance(val, int) and val >= 0) or val == float('inf')
         super().__init__('$MUL', (val,))
     def __add__(self, other):
-        if not isinstance(other, int):
+        if not isinstance(other, (int, float)):
             assert isinstance(other, Term) and other.name == '$MUL' and other.arity == 1
             other = other.arguments[0]
         return type(self)(self.arguments[0] + other)
     def __mul__(self, other):
-        if not isinstance(other, int):
+        if not isinstance(other, (int, float)):
             assert isinstance(other, Term) and other.name == '$MUL' and other.arity == 1
             other = other.arguments[0]
-        return type(self)(self.arguments[0] * other)
+        a = self.arguments[0]
+        # if either value is inf, then having 0*inf == nan, but we would like it to be 0
+        if a == 0 or other == 0:
+            return type(self)(0)
+        return type(self)(a * other)
+    __rmul__ = __mul__  # the direction of this does not matter, but it might be called with an int on the lhs
+    __radd__ = __add__
     def __int__(self): return self.arguments[0]
     def __eq__(self, other):
-        if isinstance(other, int):
+        if isinstance(other, (int, float)):
             return other == self.arguments[0]
         return super().__eq__(other)
     def __hash__(self): return super().__hash__()
@@ -129,6 +163,8 @@ def multiplicity(val):
         return _multiplicityTerm(val)
     if isinstance(val, _multiplicityTerm):
         return val
+    if val == float('inf'):
+        return _multiplictyTerm(val)
     assert False  # wtf
 
 def isMultiplicity(val):
@@ -156,6 +192,7 @@ class RewriteContext(set):
         self._assign_index = {}
         self._unifies_index = defaultdict(set)
         self._kind_index = defaultdict(set)
+        self._argument_index = defaultdict(set)
 
         if set_vals is not None:
             for s in set_vals:
@@ -234,24 +271,18 @@ class RewriteContext(set):
             # this is already tracked, sowe are not going to add it again to the expression
             return
 
-        # so that we can find things like lessthan(A,B) by just looking under lessthan/2
-        self._kind_index[(r.name, r.arity)].add(r)
-        super().add(r)  # this is just tracking the standard r-expr term
-
         if isMultiplicity(r):
             # we ignore tracking of multiplicies here as this is just a _set_
             # these are returned else where such that it will find
             return
 
-            # if r != 1:
-            #     assert False  # multiplicies should not be getting tracked in the context as this is just a _set_
-            # return
-            # # this should track the multiplicitiy
-            # self._multiplicity *= r
-            # if self._multiplicity == 0:
-            #     raise UnificationFailure()
-            # # don't add multiplicies to the set of the expression
-            # return
+        # so that we can find things like lessthan(A,B) by just looking under lessthan/2
+        self._kind_index[(r.name, r.arity)].add(r)
+        super().add(r)  # this is just tracking the standard r-expr term
+
+        for a in r.arguments:
+            # track that this argument appeared in this expression
+            self._argument_index[a].add(r)
 
         if r.name == '=' and r.arity == 2:
             self._index_unify_rexpr(r)
@@ -748,14 +779,16 @@ def make_disjunction(*args):
 def unify(self, rexpr):
     for a,b in match(self, rexpr, '(= ground ground)'):
         return multiplicity(1 if a == b else 0)
-    for a,vb in match(self, rexpr, '(= ground var)'):
-        return Term('=', (vb, a))
-    for va, b in match(self, rexpr, '(= var ground)'):
-        return Term('=', (va, b))
     for va, vb in match(self, rexpr, '(= var var)'):
         if va == vb:
-            # this is trivally tru, so just remove
+            # this is trivally true, so just remove
             return multiplicity(1)
+
+    for a,vb in match(self, rexpr, '(= ground var)'):
+        # flip the direction
+        return Term('=', (vb, a))
+    # for va, b in match(self, rexpr, '(= var ground)'):
+    #     return Term('=', (va, b))
 
     # this is going to go into the environment, and then later pulled back out of the environment
     # so we don't want this to remain as it would end up duplicated
@@ -830,8 +863,6 @@ def proj(self, rexpr):
             if not_depends:
                 return make_conjunction(*not_depends, Term('proj', (v, make_conjunction(*depends))))
 
-        if vv is not None:
-
 
         for _ in match(self, rr, '(= (param 0) ground)', v):
             # this is proj(X, (X=5)) -> 1
@@ -881,8 +912,8 @@ def aggregator(self, rexpr):
             intermediate_vars = [generate_var() for _ in range(len(ags))]
             nested_exprs = []
             additional_exprs = []
-            for nr, nv in zip(ags, intermediate_vars):
-                nested_exprs.append(Term('aggregator', (op, nr, incoming, nv)))
+            for nested_r, nv in zip(ags, intermediate_vars):
+                nested_exprs.append(Term('aggregator', (op, nv, incoming, nested_r)))
             while len(intermediate_vars) > 2:
                 # this is going to combine two of the variables together and generate a new variable to be the result
                 new_var = generate_var()
@@ -1024,7 +1055,21 @@ def contains_variable(rexpr, var):
     walk_rexpr(rexpr, walker)
     return found
 
-
+def replace_term(expr, mapping):
+    if expr in mapping:
+        return mapping[expr]
+    elif isinstance(expr, Term):
+        ret = []
+        did_change = False
+        for a in expr.arguments:
+            n = replace_term(a, mapping)
+            if n != a: did_change = True
+            ret.append(n)
+        if did_change:
+            return Term(expr.name, ret)
+        return expr  # return unmodified if nothing changes
+    else:
+        return expr
 
 
 ####################################################################################################
@@ -1040,7 +1085,7 @@ def main():
     simplify = RewriteEngine()
     r = simplify.rewrite_once(rexpr)
 
-    print(r.indented_str())
+    print(r.stylized_rexpr())
 
 if __name__ == '__main__':
     main()
