@@ -251,6 +251,7 @@ class RewriteContext(set):
             if cv != val:
                 raise UnificationFailure()
         else:
+            assert not contains_any_variable(val)
             self._assign_index[var] = val
             # set the value of all variables that this variable is unified with
             # so this is eager propagating in the context for unification of constants
@@ -274,6 +275,11 @@ class RewriteContext(set):
         if isMultiplicity(r):
             # we ignore tracking of multiplicies here as this is just a _set_
             # these are returned else where such that it will find
+            return
+
+        if r.name in ('+', '*') or (r.name, r.arity) in (('proj', 2), ('aggregate', 4), ('if', 3)):
+            # ignore expressions which are the disjunctions/conjunctions themselves.
+            # These are nested expressions
             return
 
         # so that we can find things like lessthan(A,B) by just looking under lessthan/2
@@ -336,8 +342,6 @@ class RewriteContext(set):
         if self is o:
             # this is itself, there is no modification that is required
             return self
-
-
         return NotImplemented
 
     def __isub__(self, o):
@@ -377,12 +381,30 @@ class RewriteContext(set):
 
         # if there are assignments, then those should be placed first
 
-        res = tuple(self.iter_local())
-        r = Term('*', res)  # this is just a conjunction of the constraints which are present
+        #res = tuple(self.iter_local())
+
+        res = []
+        for var, val in self._assign_index.items():
+            res.append(Term('=', (var, val)))  # this is just the assignments to ground variables, all of the other expressions should still be in the R-expr
+
+        r = make_conjunction(*res)  # this is just a conjunction of the constraints which are present
 
         #import ipdb; ipdb.set_trace()
         return r
 
+    def get_associated_with_var(self, var):
+        assert isVariable(var)
+        if self._parent is not None:
+            yield from self._parent.get_associated_with_var(var)
+        if var in self._argument_index:
+            yield from self._argument_index[var]
+
+    def pop_variable(self, var):
+        assert isVariable(var)
+        # this will need to remove anything which contains the variable
+        # this means that these expressions are no longer
+
+        raise NotImplementedError()
 
 class RewriteCollection:
     """A class for tracking rewrite operators.  Operators are segmented such that
@@ -525,12 +547,12 @@ class RewriteEngine:
         # I think this method should get removed
         return self.context.get_value(rexpr)
 
-def fully_rewrite(rewrite_engine :RewriteEngine, rexpr):
-    while True:
-        old_rexpr = rexpr
-        rexpr = rewrite_engine(rexpr)
-        if old_rexpr == rexpr:  # meaning that there were no rewrites applied to the expression
-            break
+# def fully_rewrite(rewrite_engine :RewriteEngine, rexpr):
+#     while True:
+#         old_rexpr = rexpr
+#         rexpr = rewrite_engine(rexpr)
+#         if old_rexpr == rexpr:  # meaning that there were no rewrites applied to the expression
+#             break
 
 def match(self :RewriteContext, rexpr, pattern, *pattern_args):
     # the pattern should be something which returns the variable
@@ -563,6 +585,13 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                 if res is None:
                     return None  # failed to match one of the expressions
             return res  # match was successful, return the last thing
+        elif name == 'NOT':
+            res = rec(rexpr, pattern[1])
+            if res is None:
+                return []  # the match was unsuccessful, so this means we are negated in what is matched
+            else:
+                # there was some mat
+                return None
         # TODO: maybe var, ground rexpr should be VAR GROUND REXPR so that it is clear they are meta
         elif name == 'var':
             if isVariable(rexpr):
@@ -576,6 +605,11 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                         return [val]
                 else:
                      return None  # not ground, so fail match
+            elif contains_any_variable(rexpr):
+                # then this would require looking up the variables to match a given expression
+                # if there is something that does not match, then that means that this would
+
+                assert False
             else:
                 # this must be a ground value, so we can just return this
                 return [rexpr]
@@ -756,7 +790,7 @@ def make_disjunction(*args):
     def add(x):
         nonlocal mul, ret
         if isMultiplicity(x):
-            mul += 1
+            mul += x
         elif x.name == '+':
             for a in x.arguments:
                 add(a)
@@ -786,9 +820,15 @@ def unify(self, rexpr):
 
     for a,vb in match(self, rexpr, '(= ground var)'):
         # flip the direction
-        return Term('=', (vb, a))
+        rexpr = Term('=', (vb, a))
     # for va, b in match(self, rexpr, '(= var ground)'):
     #     return Term('=', (va, b))
+
+    for va, vb in match(self, rexpr, '(AND (NOT (= var var)) (= rexpr rexpr))'):
+        # then either this is a structured term, and we need to expand this out, or there  is some variable.
+        # in this case, we do not want to track it as an assignment
+        assert False
+        pass
 
     # this is going to go into the environment, and then later pulled back out of the environment
     # so we don't want this to remain as it would end up duplicated
@@ -832,60 +872,72 @@ def unify_structure(self, rexpr):
 @register_rewrite('(proj var rexpr)')
 def proj(self, rexpr):
     for v, r in match(self, rexpr, '(proj var rexpr)'):
-        rr = self.apply(r)  # this is going to apply rewrites to the inner body
-        vv = self.context.get_value(v)
+        outer_context = self.context
+        try:
+            self.context = outer_context.copy()
+            rr = self.apply(r)  # this is going to apply rewrites to the inner body
+            vv = self.context.get_value(v)
 
-        if vv is not None:
-            # then we are going to go through and do a replace and then just return the body
-            assert False
-
-        # remove disjunctive and conjunctive expressions out
-        for ags in match(self, rr, '(+ any)'):
-            ret = []
-            for a in ags:
-                if vv is not None:
-                    a = make_conjunction(Term('=', (v, vv)), a)
-                a = Term('proj', (v, a))
-                ret.append(a)
-            return make_disjunction(*ret)
-
-        for ags in match(self, rr, '(* any)'):
-            not_depends = []
-            depends = []
             if vv is not None:
-                depends.append(Term('=', (v, vv)))
-            # anything which does not mention the variable v can be lifted out of the project statement
-            for a in ags:
-                if contains_variable(a, v):
-                    depends.append(a)
-                else:
-                    not_depends.append(a)
-            if not_depends:
-                return make_conjunction(*not_depends, Term('proj', (v, make_conjunction(*depends))))
+                # then we are going to go through and do a replace and then just return the body
+                assert False
+
+            import ipdb; ipdb.set_trace()
+
+            # remove disjunctive and conjunctive expressions out
+            for ags in match(self, rr, '(+ any)'):
+                ret = []
+                for a in ags:
+                    if vv is not None:
+                        a = make_conjunction(Term('=', (v, vv)), a)
+                    a = Term('proj', (v, a))
+                    ret.append(a)
+                return make_disjunction(*ret)
+
+            for ags in match(self, rr, '(* any)'):
+                not_depends = []
+                depends = []
+                if vv is not None:
+                    depends.append(Term('=', (v, vv)))
+                # anything which does not mention the variable v can be lifted out of the project statement
+                for a in ags:
+                    if contains_variable(a, v):
+                        depends.append(a)
+                    else:
+                        not_depends.append(a)
+                if not_depends:
+                    return make_conjunction(*not_depends, Term('proj', (v, make_conjunction(*depends))))
 
 
-        for _ in match(self, rr, '(= (param 0) ground)', v):
-            # this is proj(X, (X=5)) -> 1
-            return multiplicity(1)
-
-        for _, _, nested_rexpr in match(self, rr, '(aggregator ground (param 0) var rexpr)', v):
-            # this is proj(X, (X=sum(Y, ...)))
-            if not contains_variable(nested_rexpr, v):
+            for _ in match(self, rr, '(= (param 0) ground)', v):
+                # this is proj(X, (X=5)) -> 1
                 return multiplicity(1)
 
+            for _, _, nested_rexpr in match(self, rr, '(aggregator ground (param 0) var rexpr)', v):
+                # this is proj(X, (X=sum(Y, ...)))
+                if not contains_variable(nested_rexpr, v):
+                    return multiplicity(1)
 
-        return Term('proj', (v, rr))
+
+            return Term('proj', (v, rr))
+        finally:
+            self.context = outer_context
 
 
 
 @register_rewrite('(aggregator ground var var rexpr)')
 def aggregator(self, rexpr):
-    operator = {
-        'sum': sum,
-        'prod': lambda a,b: a*b,
-        'min': min,
-        'max': max,
-    }
+
+    # as described in the paper, the only way in which aggregators run is when there is a single element
+    # though in practice we would like to handle multiple values directly.  Given that we are trying to be as close as possible to the paper
+    # we are just going to always cause an aggregator R-expr to split before teh result is returned
+    # operator = {
+    #     'sum': sum,
+    #     'prod': lambda a,b: a*b,
+    #     'min': min,
+    #     'max': max,
+    # }
+
     identity = {
         'sum': 0,
         'prod': 1,
@@ -901,41 +953,83 @@ def aggregator(self, rexpr):
 
     for op, resulting, incoming, rxp in match(self, rexpr, '(aggregator ground var var rexpr)'):
         # this will need to match against the body of the expression
-        rxp = self.apply(rxp)  # this should attempt to simplify the expression
-        for _ in match(self, rxp, '(mul 0)'):
-            return Term('=', (resulting, identity[op]))
-        for res in match(self, rxp, '(= (param 0) ground)', incoming):
-            return Term('=', (resulting, res))
-        for ags in match(self, rxp, '(+ any)'):
-            # this is a disjunction between many different variables
-            # this is going to have to construct many projects and new variables
-            intermediate_vars = [generate_var() for _ in range(len(ags))]
-            nested_exprs = []
-            additional_exprs = []
-            for nested_r, nv in zip(ags, intermediate_vars):
-                nested_exprs.append(Term('aggregator', (op, nv, incoming, nested_r)))
-            while len(intermediate_vars) > 2:
-                # this is going to combine two of the variables together and generate a new variable to be the result
-                new_var = generate_var()
-                *intermediate_vars, v1, v2 = [new_var] + intermediate_vars
-                additional_exprs.append(Term(split_op[op], (v1, v2, new_var)))  # this is going to be like plus or times in the case
+        outer_context = self.context
+        try:
+            self.context = outer_context.copy()
 
-            if len(intermediate_vars) == 2:
-                additional_exprs.append(Term(split_op[op], (*intermediate_vars, resulting)))
-            elif len(intermediate_vars) == 1:
-                additional_exprs.append(Term('=', (resulting, intermediate_vars[0])))
-            else:
-                assert False  # shuld never happen
+            rxp = self.apply(rxp)  # this should attempt to simplify the expression
+            for _ in match(self, rxp, '(mul 0)'):
+                return Term('=', (resulting, identity[op]))
+            for res in match(self, rxp, '(= (param 0) ground)', incoming):
+                return Term('=', (resulting, res))
+            for ags in match(self, rxp, '(+ any)'):
+                # this is a disjunction between many different variables
+                # this is going to have to construct many projects and new variables
+                intermediate_vars = [generate_var() for _ in range(len(ags))]
+                nested_exprs = []
+                additional_exprs = []
+                for nested_r, nv in zip(ags, intermediate_vars):
+                    nested_exprs.append(Term('aggregator', (op, nv, incoming, nested_r)))
+                while len(intermediate_vars) > 2:
+                    # this is going to combine two of the variables together and generate a new variable to be the result
+                    new_var = generate_var()
+                    *intermediate_vars, v1, v2 = [new_var] + intermediate_vars
+                    additional_exprs.append(Term(split_op[op], (v1, v2, new_var)))  # this is going to be like plus or times in the case
 
-            # now this needs to construc the expression with all of the variables combined together
-            nested_r = Term('*', nested_exprs + additional_exprs)
-            for nv in intermediate_vars:
-                nested_r = Term('proj', (nv, nested_r))
-            return nested_r
+                if len(intermediate_vars) == 2:
+                    additional_exprs.append(Term(split_op[op], (*intermediate_vars, resulting)))
+                elif len(intermediate_vars) == 1:
+                    additional_exprs.append(Term('=', (resulting, intermediate_vars[0])))
+                else:
+                    assert False  # shuld never happen
+
+                # now this needs to construc the expression with all of the variables combined together
+                nested_r = Term('*', nested_exprs + additional_exprs)
+                for nv in intermediate_vars:
+                    nested_r = Term('proj', (nv, nested_r))
+                return nested_r
+        finally:
+            self.context = outer_context
 
         # there are no rewrites which can be applied here
         return rexpr
 
+@register_rewrite('(if args 3)')
+def if_rr(self, rexpr):
+    for cond, true_r, false_r in match(self, rexpr, '(if rexpr rexpr rexpr)'):
+        # this needs to determine if the true branch matches something where there is non-zero multiplicity on one of the branches
+        env_prev = self.context
+        condition_res = None
+        try:
+            self.context = self.context.copy()
+            cond = self.apply(cond)
+            if isMultiplicity(cond):
+                # check if the expression is like if(0,R,S) or if(1, R,S)
+                if cond == 0: condition_res = False
+                else: condition_res = True
+            else:
+                # check if the expression is like if(1+Q, R, S) in which case it is now true regardless of R
+                for ags in match(self, cond, '(+ any)'):
+                    for a in ags:
+                        if isMultiplicity(a):
+                            assert a.get_argument(0) > 0
+                            condition_res = True
+                            break
+        finally:
+            self.context = env_prev
+
+
+        if condition_res is True:
+            return self.apply(true_r)
+        elif condition_res is False:
+            return self.apply(false_r)
+        else:
+            # return unmodified as this was unable to determine if the condition is true or false
+            # TODO: we could return the updated condition
+            # it is "possible" to rewrite the true/false branches, but that
+            return rexpr
+
+    return rexpr
 ##################################################
 
 
@@ -1045,15 +1139,27 @@ def walk_rexpr(rexpr, func):
     w(rexpr)
 
 def contains_variable(rexpr, var):
+    assert isVariable(var)
     if rexpr == var:
         return True
-    found = False
-    def walker(rx):
-        nonlocal found
-        for a in rx.arguments:
-            if a == var: found = True
-    walk_rexpr(rexpr, walker)
-    return found
+    if isinstance(rexpr, Term):
+        for a in rexpr.arguments:
+            if contains_variable(a, var): return True
+    return False
+    # found = False
+    # def walker(rx):
+    #     nonlocal found
+    #     for a in rx.arguments:
+    #         if a == var: found = True
+    # walk_rexpr(rexpr, walker)
+    # return found
+
+def contains_any_variable(rexpr):
+    if isVariable(rexpr): return True
+    if isinstance(rexpr, Term):
+        for a in rexpr.arguments:
+            if contains_any_variable(a): return True
+    return False
 
 def replace_term(expr, mapping):
     if expr in mapping:
@@ -1071,6 +1177,32 @@ def replace_term(expr, mapping):
     else:
         return expr
 
+class IdentityWrapper:
+    def __init__(self, v): self.v = v
+    def __eq__(self, o): return isinstance(IdentityWrapper, o) and self.v is o.v
+    def __hash__(self): return id(self.v)
+
+def replace_identicial_term(expr, mapping):
+    # there needs to be a method for replacing an expression which is a particular instances, using the IS expression
+    # though if something is duplicated more than once in the expression (as these are read only pointers already), then that might
+    # cause a particular problem?  I suppose that this would require a particular path through the expression, or we could just
+    # make local copies throughout the expression such that unified expressions are distinct in memory
+    i = IdentityWrapper(expr)
+    if i in mapping:
+        return mapping[i]
+    elif isinstance(expr, Term):
+        ret = []
+        did_change = False
+        for a in expr.arguments:
+            n = replace_identicial_term(a, mapping)
+            if n is not a: did_change = True
+            ret.append(n)
+        if did_change:
+            return Term(expr.name, ret)
+        return expr  # return unmodified if nothing changes
+    else:
+        return expr
+
 
 ####################################################################################################
 
@@ -1080,6 +1212,9 @@ def main():
     #rexpr = Term('plus', (1,2,Variable('x')))
 
     rexpr = Term('aggregator', ('sum', Variable('x'), Variable('y'), Term('+', (Term('=', (Variable('y'), 7)), Term('=', (Variable('y'), 10))))  ))  # (X=sum(Y, (Y=7)))
+
+    print(rexpr.stylized_rexpr())
+    print('-'*50)
 
     ctx = RewriteContext()
     simplify = RewriteEngine()
