@@ -12,6 +12,7 @@ from textwrap import indent
 ####################################################################################################
 # utility functions
 
+@cache
 def parse_sexp(s):
     # super basic s-expression parser
     sexpr = s.replace('(', ' ( ').replace(')', ' ) ').split()  # lex the expression
@@ -359,6 +360,7 @@ class RewriteContext(set):
             if r is None and self._parent is not None:
                 return self._parent.get_value(variable)
         else:
+            assert not contains_any_variable(variable)
             # this is not a variable, so just return the value back.  if there is nothing here,
             return variable
 
@@ -609,6 +611,9 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                 # then this would require looking up the variables to match a given expression
                 # if there is something that does not match, then that means that this would
 
+                # question: if the variables have known values, should those get unified in when returning, or should this just error out
+                # and let those get unifie din elsewhere first.
+
                 assert False
             else:
                 # this must be a ground value, so we can just return this
@@ -818,17 +823,28 @@ def unify(self, rexpr):
             # this is trivally true, so just remove
             return multiplicity(1)
 
-    for a,vb in match(self, rexpr, '(= ground var)'):
+    for a,vb in match(self, rexpr, '(AND (NOT (= var rexpr)) (= rexpr var))'):
         # flip the direction
         rexpr = Term('=', (vb, a))
-    # for va, b in match(self, rexpr, '(= var ground)'):
-    #     return Term('=', (va, b))
 
-    for va, vb in match(self, rexpr, '(AND (NOT (= var var)) (= rexpr rexpr))'):
+    # rexpr here matches any term.  So if nither of these have a variable, then it will match this expression
+    for va, vb in match(self, rexpr, '(AND (NOT (= var rexpr)) (NOT (= rexpr var)) (= rexpr rexpr))'):
         # then either this is a structured term, and we need to expand this out, or there  is some variable.
         # in this case, we do not want to track it as an assignment
+        assert isinstance(va, Term) and isinstance(vb, Term)
+
         assert False
-        pass
+
+        if va.name != vb.name or va.arity != vb.arity:
+            # the arity on these expressions does not match
+            return multiplicity(0)
+
+        # this is something like (f(x,y,z)=f(a,b,c)) so we want to expanded and construct a new term
+
+        ret = [Term('=', (aa,bb)) in zip(va.arguments, vb.arguments)]
+        rr = make_conjunction(*ret)
+
+        return self.apply(rr)
 
     # this is going to go into the environment, and then later pulled back out of the environment
     # so we don't want this to remain as it would end up duplicated
@@ -882,7 +898,7 @@ def proj(self, rexpr):
                 # then we are going to go through and do a replace and then just return the body
                 assert False
 
-            import ipdb; ipdb.set_trace()
+            #import ipdb; ipdb.set_trace()
 
             # remove disjunctive and conjunctive expressions out
             for ags in match(self, rr, '(+ any)'):
@@ -956,6 +972,8 @@ def aggregator(self, rexpr):
         outer_context = self.context
         try:
             self.context = outer_context.copy()
+
+            import ipdb; ipdb.set_trace()
 
             rxp = self.apply(rxp)  # this should attempt to simplify the expression
             for _ in match(self, rxp, '(mul 0)'):
@@ -1219,6 +1237,10 @@ def main():
     ctx = RewriteContext()
     simplify = RewriteEngine()
     r = simplify.rewrite_once(rexpr)
+
+    print(r.stylized_rexpr())
+    print('-'*50)
+    r = simplify.rewrite_once(r)
 
     print(r.stylized_rexpr())
 
