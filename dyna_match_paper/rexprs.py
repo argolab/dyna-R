@@ -1227,8 +1227,13 @@ def lessthan_eq(self, rexpr):
 
     return rexpr
 
-def
+@register_rewrite('(equals args 2)')
+def equals_rr(self, rexpr):
+    for a,b in match(self, rexpr, '(equals ground ground)'):
+        return multiplicity(1 if a == b else 0)
+    return rexpr
 
+# there is also range, not, not equal, abs etc which are not included
 
 
 
