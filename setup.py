@@ -12,9 +12,9 @@ setup(
     name='dyna',
     version='0.0.1',
     description='Dyna language based on R-expression',
-    packages=['dyna'],
+    packages=['dyna', 'dyna_frontend', 'dyna_match_paper'],
     entry_points = {
-        'console_scripts': ['dyna=dyna.repl:main'],
+        'console_scripts': ['dyna=dyna_frontend.repl:main'],
     },
     install_requires= requirements + [
     ]

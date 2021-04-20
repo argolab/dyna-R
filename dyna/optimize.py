@@ -786,18 +786,18 @@ def run_optimizer(R, exposed_variables):
 
     check_R = lambda x, y: None
 
-    if zzz.frame.f_locals.get('term') == ('quicksort', 2):
-        import ipdb; ipdb.set_trace()
+    # if zzz.frame.f_locals.get('term') == ('quicksort', 2):
+    #     #import ipdb; ipdb.set_trace()
 
-        def check_R(rc, frame):
-            from .terms import Term
-            frame = Frame(frame)
-            frame.in_optimizer = False
-            frame[0] = Term.fromlist([3,1,2])
-            rr = saturate(rc, frame)
-            assert rr == Terminal(1)
+    #     def check_R(rc, frame):
+    #         from .terms import Term
+    #         frame = Frame(frame)
+    #         frame.in_optimizer = False
+    #         frame[0] = Term.fromlist([3,1,2])
+    #         rr = saturate(rc, frame)
+    #         assert rr == Terminal(1)
 
-        check_R(R, Frame())
+    #     check_R(R, Frame())
 
     rr, assumptions = run_optimizer_local(R, exposed_variables, check_R=check_R)
 

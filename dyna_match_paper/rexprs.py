@@ -63,6 +63,7 @@ def track_rexpr_constructed(func):
 
 if logging_rewrites:
     logging_rewrite_output = open(os.environ.get('REWITE_LOG', 'rewrite.log'), 'w+')
+    import uuid
 
 
 
@@ -72,7 +73,11 @@ if logging_rewrites:
 
 class Term:
 
-    __slots__ = ('__name', '__arguments', '__hashcache') + (('_debug_active_rewrite', '_debug_constructed_from') if logging_rewrites else ())
+    __slots__ = (
+        ('__name', '__arguments', '__hashcache') +
+        (('_debug_active_rewrite', '_debug_constructed_from', '_debug_unique_id')
+         if logging_rewrites else ())
+    )
 
     def __init__(self, name, arguments):
         #assert all(not isinstance(a, Variable) for a in arguments) and isinstance(name, str)  # there is not a special symbol for variables in this version
@@ -84,7 +89,7 @@ class Term:
         if logging_rewrites:
             self._debug_active_rewrite = active_rewrite.copy()
             self._debug_constructed_from = []
-
+            self._debug_unique_id = f'gened_term:{self.name}_{self.arity}_{uuid.uuid4().hex}'  # make a unique id for this
 
     @property
     def arity(self):
@@ -140,18 +145,26 @@ class Term:
 
     def stylized_rexpr(self):
         # return a string for this which is supposed to be close to representtaion used in the paper as possible
+
         def nested(r):
             # print out a nested R-expr, if the expression is big, then it will indent, otherwise it will try and make it inline
             if isinstance(r, Term):
                 s = r.stylized_rexpr()
             else:
                 s = str(r)
+            s = s.strip()
             if '\n' in s or len(s) > 50:
                 s = '\n' + indent(s, '  ') + '\n'
             return s
 
         if self.name == '$VARIABLE' and self.arity == 1:
-            return str(self.get_argument(0)).capitalize()
+            v = self.get_argument(0)
+            if isinstance(v, int):
+                # becuase ints are used for the arguments, they can be hard to
+                # see in the argument place, so need something more in the
+                # representation here
+                v = f'$ARG_{v}'
+            return str(v).capitalize()
         elif self.name == '=' and self.arity == 2:
             return f'({nested(self.get_argument(0))}={nested(self.get_argument(1))})'
         elif self.name == 'aggregator' and self.arity == 4:
@@ -160,13 +173,26 @@ class Term:
             return f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}(' + ', '.join(map(nested, self.arguments[2:])) + '))'
         elif self.name in ('+', '*'):
             return self.name.join(map(nested,self.arguments))
+        elif self.name == 'proj' and self.arity == 2:
+            # then this is a projection expression, if the nested expression is
+            # also a projection, then we we are not going to nest the expression
+            # so we will get something like proj(A, proj(B,  stuff ))
+            var, body = self.arguments
+            var = nested(var)
+            if isinstance(body, Term) and body.name == 'proj' and body.arity == 2:
+                bodyv = body.stylized_rexpr().strip()
+                return f'proj({var}, {bodyv})'
+            else:
+                return f'proj({var}, {nested(body)})'
         else:
-            # this covers all base cases and expressions like proj & if which are just represented via their name
+            # this covers all base cases and expressions like if which are just represented via their name
             return f'{self.name}(' + ', '.join(map(nested, self.arguments)) + ')'
 
 
 
 def Variable(name):
+    if isinstance(name, Term) and name.name == '$VARIABLE':
+        return name
     return Term('$VARIABLE', (name,))
 
 def isVariable(x):
@@ -294,6 +320,7 @@ class RewriteContext(set):
                 raise UnificationFailure()
         else:
             assert not contains_any_variable(val)
+            #print(f'Variable assigned {var}={val}')
             self._assign_index[var] = val
             # set the value of all variables that this variable is unified with
             # so this is eager propagating in the context for unification of constants
@@ -494,7 +521,7 @@ class RewriteCollection:
             return func
         return f
 
-    def do_user_defined_rewrite(self, rexpr):
+    def do_user_defined_rewrite(self, rewrite_engine, rexpr):
         # this should take the name arity of a given expression and then subsuite in new names for the variables
         n = (rexpr.name, rexpr.arity)
         rxp = self.user_defined_rewrites[n]
@@ -503,11 +530,15 @@ class RewriteCollection:
         for i, new_name in enumerate(rexpr.arguments):
             var_map[Variable(i)] = new_name
 
+        # this will have to replace all of the variables or create new variable names for all of the expression
         rxp = uniquify_variables(rxp, var_map)
 
-        # this will have to replace all of the variables or create new variable names for all of the expressions
-        # when this encounters something that is
-        assert False
+        # we DO NOT immediatly apply rewrites to the returned expression as that could cuase recursive programs to run forever
+
+        # TODO: the depth lmiting is not included in this version currently.  This will have to walk through the R-expr
+        # and identify user calls and add a call depth as some extra hidden meta data on the parameter or something
+
+        return rxp
 
     def define_user_rewrite(self, name, arity, rexpr):
         var_map = {}
@@ -691,6 +722,19 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
             idx = int(pattern[1])
             return [pattern_args[idx]]
 
+        elif name == 'mul':
+            try:
+                val = int(pattern[1])
+                if isMultiplicity(rexpr) and rexpr.get_argument(0) == val:
+                    return []
+                else:
+                    return None
+            except ValueError:
+                if isMultiplicity(rexpr):
+                    return []
+                else:
+                    return None
+
         # we are going to match against the name of the R-expr itself
         if rexpr.name != name:
             # the match has failed on the name alone
@@ -827,6 +871,9 @@ def add_base(self, rexpr):
                 # just ignore these branches
                 pass
 
+        if not ret:  # meaning that all ofthe branches are failed
+            return multiplicity(0)
+
         # identify the common elements which are tracked in the environments by interesting the sets
         res_env = ret[0][1]
         for _, env in ret:
@@ -871,7 +918,6 @@ def make_disjunction(*args):
 
 
 @register_rewrite('(= args 2)')
-#@register_rewrite('(unify args 2)')
 def unify(self, rexpr):
     for a,b in match(self, rexpr, '(= ground ground)'):
         return multiplicity(1 if a == b else 0)
@@ -908,9 +954,6 @@ def unify(self, rexpr):
     self.context.add_rexpr(rexpr)
     return multiplicity(1)
 
-    # if there is an ordering on the vraiable names, then we should consider that
-    #return rexpr
-
 @register_rewrite('(structure ground any)')
 def unify_structure(self, rexpr):
     # there are a variable number of arguments
@@ -939,8 +982,11 @@ def unify_structure(self, rexpr):
                     values.append(val)
 
 
-
-
+def make_project(*args):
+    *var_names, rexpr = args
+    for var in reversed(var_names):
+        rexpr = Term('proj', (Variable(var), rexpr))
+    return rexpr
 
 @register_rewrite('(proj var rexpr)')
 def proj(self, rexpr):
@@ -955,6 +1001,10 @@ def proj(self, rexpr):
                 # then we are going to go through and do a replace and then just return the body
                 rr2 = replace_term(rr, {v: vv})  # replace the variable with its value
                 return rr2
+
+            for _ in match(self, rr, '(mul 0)'):
+                # if the body is zero, then this is also zero
+                return multiplicity(0)
 
             #import ipdb; ipdb.set_trace()
 
@@ -1083,12 +1133,13 @@ def if_rr(self, rexpr):
         try:
             self.context = self.context.copy()
             cond = self.apply(cond)
+            cond = make_conjunction(self.context.local_to_rexpr(), cond)  # if there is an assignment, this should not get removed yet so unless it is already present in a higher context, then this needs to ignore this
             if isMultiplicity(cond):
                 # check if the expression is like if(0,R,S) or if(1, R,S)
                 if cond == 0: condition_res = False
                 else: condition_res = True
             else:
-                # check if the expression is like if(1+Q, R, S) in which case it is now true regardless of R
+                # check if the expression is like if(1+Q, R, S) in which case it is now true regardless of Q
                 for ags in match(self, cond, '(+ any)'):
                     for a in ags:
                         if isMultiplicity(a):
@@ -1121,9 +1172,9 @@ def plus(self, rexpr):
     for a,b, vc in match(self, rexpr, '(plus ground ground var)'):
         return Term('=', (vc, a+b))
     for a, vb, c in match(self, rexpr, '(plus ground var ground)'):
-        return Term('=', (vb, a-c))
+        return Term('=', (vb, c-a))
     for va, b, c in match(self, rexpr, '(plus var ground ground)'):
-        return Term('=', (va, b-c))
+        return Term('=', (va, c-b))
 
     # return unchanged in the case that nothing matches
     return rexpr
@@ -1157,6 +1208,28 @@ def max_rr(self, rexpr):
     return rexpr
 
 
+# technically these operations need to have an additional argument which is for
+# it to always be returned true, as if the expression is `False is (a == b)`
+# then it would be a not equal expressions
+
+@register_rewrite('(lessthan args 2)')
+def lessthan(self, rexpr):
+    for a,b in match(self, rexpr, '(lessthan ground ground)'):
+        return multiplicity(1 if a < b else 0)
+
+    return rexpr
+
+
+@register_rewrite('(lessthan_eq args 2)')
+def lessthan_eq(self, rexpr):
+    for a,b in match(self, rexpr, '(lessthan_eq ground ground)'):
+        return multiplicity(1 if a <= b else 0)
+
+    return rexpr
+
+def
+
+
 
 
 ####################################################################################################
@@ -1167,10 +1240,17 @@ def generate_var():
     generated_var_cnt += 1
     return Variable(f'$VAR_{generated_var_cnt}')
 
+@track_rexpr_constructed
 def uniquify_variables(rexpr, mapping=None):
     if not isinstance(rexpr, Term):
         return rexpr
     if mapping is None: mapping = {}
+    return uniquify_variables_rec(rexpr, mapping)
+
+
+def uniquify_variables_rec(rexpr, mapping):
+    if not isinstance(rexpr, Term):
+        return rexpr
     if isVariable(rexpr):
         # if the variable is contained in the expression, then this is going to give it a new name
         return mapping.get(rexpr, rexpr)
@@ -1180,7 +1260,7 @@ def uniquify_variables(rexpr, mapping=None):
         new_var = generate_var()
         old = mapping.get(var)
         mapping[var] = new_var
-        rxp = uniquify_variables(rxp, mapping)
+        rxp = uniquify_variables_rec(rxp, mapping)
         mapping[var] = old
         return Term('proj', (new_var, rxp))
     elif rexpr.name == 'aggregator' and rexpr.arity == 4:
@@ -1190,14 +1270,14 @@ def uniquify_variables(rexpr, mapping=None):
         resulting = mapping.get(resulting, resulting)  # do the remapping for the returned variable
         old_var = mapping.get(incoming)
         mapping[incoming] = new_var
-        rxp = uniquify_variables(rxp, mapping)
+        rxp = uniquify_variables_rec(rxp, mapping)
         mapping[incoming] = old_var
         return Term('aggregator', (op, resulting, new_var, rxp))
     else:
         # this should attempt to rewrite all of the arguments of the term
         ret = []
         for v in rexpr.arguments:
-            ret.append(uniquify_variables(v, mapping))
+            ret.append(uniquify_variables_rec(v, mapping))
         ret = Term(rexpr.name, ret)
         if ret != rexpr:
             return ret
@@ -1291,16 +1371,43 @@ def replace_identicial_term(expr, mapping):
 def main():
     #rexpr = Term('plus', (1,2,Variable('x')))
 
-    rexpr = Term('aggregator', ('sum', Variable('x'), Variable('y'), Term('+', (Term('=', (Variable('y'), 7)), Term('=', (Variable('y'), 10))))  ))  # (X=sum(Y, (Y=7)))
+    #rexpr = Term('aggregator', ('sum', Variable('x'), Variable('y'), Term('+', (Term('=', (Variable('y'), 7)), Term('=', (Variable('y'), 10))))  ))  # (X=sum(Y, (Y=7)))
 
-    print(rexpr.stylized_rexpr())
+    # rexpr = Term('if', (Term('=', (Variable('x'), 3)), Term('plus', (1,Variable('x'), Variable('y'))), Term('plus', (4,Variable('x'), Variable('y')))))
+
+    # rexpr = Term('*', (Term('=', (Variable('x'), 4)) , rexpr))
 
     ctx = RewriteContext()
     simplify = RewriteEngine()
 
+    rewrites.define_user_rewrite(
+        'fib', 2,
+        make_disjunction(
+            make_conjunction(Term('=', (Variable(0), 0)), Term('=', (Variable(1), 0))),
+            make_conjunction(Term('=', (Variable(0), 1)), Term('=', (Variable(1), 1))),
+            make_project(
+                'sub1', 'sub2', 'res1', 'res2',
+                make_conjunction(
+                    Term('lessthan', (1, Variable(0))),  # var_0 > 1
+                    Term('plus', (Variable('sub1'), 1, Variable(0))),  # var_0 - 1
+                    Term('plus', (Variable('sub2'), 2, Variable(0))),  # var_0 - 2
+                    Term('fib', (Variable('sub1'), Variable('res1'))),  # res1 is fib(var_0 - 1)
+                    Term('fib', (Variable('sub2'), Variable('res2'))),  # res2 is fib(var_0 - 2)
+                    Term('plus', (Variable('res1'), Variable('res2'), Variable(1)))
+                ))
+        )
+    )
 
-    for _ in range(3):
-        print('-'*50)
+
+    rexpr = Term('fib', (10, Variable('res')))
+
+    print('Original R-expr:', '-'*50)
+    print(rexpr.stylized_rexpr())
+
+
+
+    for step in range(16):
+        print('step:', step,'-'*50)
         rexpr = simplify.rewrite_once(rexpr)
         print(rexpr.stylized_rexpr())
 
