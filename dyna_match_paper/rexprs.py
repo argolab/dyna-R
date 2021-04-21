@@ -493,6 +493,8 @@ class RewriteCollection:
         # that are used to replace the given expression
         self.user_defined_rewrites = {}
 
+        self.user_defined_rewrite_memo = {}
+
     def _register_function(self, pattern, func):
         # determine which of the patterns are required for a given expression
         patterns = parse_sexp(pattern)
@@ -524,6 +526,8 @@ class RewriteCollection:
     def do_user_defined_rewrite(self, rewrite_engine, rexpr):
         # this should take the name arity of a given expression and then subsuite in new names for the variables
         n = (rexpr.name, rexpr.arity)
+        if n in self.user_defined_rewrite_memo:
+            return self.do_access_memo(rewrite_engine, rexpr)
         rxp = self.user_defined_rewrites[n]
         # this will have to subsuite in the variable names and create new variable names for the expression
         var_map = {}
@@ -540,6 +544,85 @@ class RewriteCollection:
 
         return rxp
 
+    def do_access_memo(self, rewrite_engine, rexpr):
+        n = (rexpr.name, rexpr.arity)
+
+        rxp = self.user_defined_rewrite_memo[n]
+
+        [[contains_memo,  memos, original_rexpr]] = match(rewrite_engine, rxp, '(if rexpr rexpr rexpr)')
+
+        # make a new context for evaluating the memoized expression
+        # we need to fully evaluate this before the results are returned
+        #run_context = RewriteContext()
+
+        local_simplify = RewriteEngine(rewrites=self)  # this will make a new context for matching the rewrites
+
+        arg_values = []
+        for arg in rexpr.arguments:
+            if isVariable(arg):
+                val = rewrite_engine.context.get_value(arg)  # this will return None if the value is not set yet
+            else:
+                val = arg
+                assert not contains_any_variable(val)
+            arg_values.append(val)
+
+        # add to the context the current value of these variables
+        for i, val in enumerate(arg_values):
+            if val is not None:
+                local_simplify.context.add_rexpr(Term('=', (Variable(i), val)))
+
+        contains_memo_result = local_simplify.rewrite_fully(contains_memo)
+
+        # this needs to match against the contains_memo_result to determine if the if expression would be true or false
+        # or under determined.  if it is underdetermined, then we will _avoid_ reading the memo for now.  Otherwise
+
+        condition_res = None
+
+        for _ in match(local_simplify, contains_memo_result, '(mul 0)'):
+            # meaning that the false branches was selected
+            condition_res = False
+
+        for _ in match(local_simplify, contains_memo_result, '(any-disjunction (mul >= 1))'):
+            condition_res = True
+
+        if condition_res is None:
+            # then this is indeterminate, so we are just going to return the original R-expr in this case
+            return rexpr
+
+        elif condition_res is True:
+            # then this has identified that the R-expr that we are looking for is contained inside of the memo table
+            # so we are going to rewrite that expression to select the branch that we are looking for
+
+            assert False
+
+        elif condition_res is False:
+            # then this needs to take the original R-expr and construct a new memoized expression
+            # though if nothing is set, then we might just defer for a white
+            if rewrite_engine.should_defer_computing_memo(rexpr, arg_values):
+                return rexpr
+
+            assert False
+
+
+
+        # should never get here
+        assert False
+
+    def set_memoized(self, name, arity, kind='none'):
+        assert kind in ('none', 'unk')
+
+        n = (name, arity)
+        if kind == 'none':
+            self.user_defined_rewrites.pop(n)
+        elif kind == 'unk':
+            # meaning that this will just wait until it finds something
+            self.user_defined_rewrite_memo[n] = Term(
+                'if', (
+                    multiplicity(0),  # indicate that nothing is currently memoized
+                    multiplicity(0),  # the memo table is also currently empty
+                    self.user_defined_rewrites[n]  # the original R-expr
+                ))
+
     def define_user_rewrite(self, name, arity, rexpr):
         var_map = {}
         for i in range(arity):  # this will ensure that these variables keep
@@ -548,6 +631,11 @@ class RewriteCollection:
             var_map[v] = v
         rexpr = uniquify_variables(rexpr, var_map)
         self.user_defined_rewrites[(name, arity)] = rexpr
+
+        if (name,arity) in self.user_defined_rewrite_memo:
+            # clear the current memos out and just reset them entirely
+            self.set_memoized(name, arity, 'none')
+            self.set_memoized(name, arity, 'unk')
 
     def get_matching_rewrites(self, rexpr, context=None):
         if rexpr.name in self.name_match:
@@ -611,7 +699,7 @@ class RewriteEngine:
         rexpr = self.apply(rexpr)
         return make_conjunction(self.context.local_to_rexpr(), rexpr)
 
-    def rewrte_fully(self, rexpr):
+    def rewrite_fully(self, rexpr):
         while True:
             # this contains the context values inside of itself
             old = rexpr
@@ -622,6 +710,16 @@ class RewriteEngine:
     def get_value(self, rexpr):
         # I think this method should get removed
         return self.context.get_value(rexpr)
+
+
+    def should_defer_computing_memo(self, rexpr, arguments):
+        # return true in the case there is not enough for this to attempt to memoize.  If this is too eager to try and compute a memo
+        # then there will be _no_ advantage
+        for a in arguments:
+            if a is not None:  # meaning that there is /some/ value for this argument, though this might be less than we really want
+                return False
+        return True
+
 
 # def fully_rewrite(rewrite_engine :RewriteEngine, rexpr):
 #     while True:
@@ -662,6 +760,7 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                     return None  # failed to match one of the expressions
             return res  # match was successful, return the last thing
         elif name == 'NOT':
+            assert len(pattern) == 2
             res = rec(rexpr, pattern[1])
             if res is None:
                 return []  # the match was unsuccessful, so this means we are negated in what is matched
@@ -669,6 +768,7 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                 # there was some mat
                 return None
         elif name == 'GET-VALUE':
+            assert len(pattern) == 2
             # this is going to need to lookup the value of some variable from the envrionment
             res = rec(rexpr, pattern[1])
             if res is None or len(res) != 1:
@@ -699,31 +799,44 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                 # question: if the variables have known values, should those get unified in when returning, or should this just error out
                 # and let those get unifie din elsewhere first.
 
-                assert False
+                # we are not going to allow for this to match currently
+                return None
             else:
                 # this must be a ground value, so we can just return this
                 return [rexpr]
         elif name == 'rexpr':
             return [rexpr]  # always matches
         elif name == 'param':
+            assert len(pattern) == 2
             idx = int(pattern[1])
             if rexpr == pattern_args[idx]:
                 return []  # successful match returns nothing
             else:
                 return None  # match failed
 
-        elif name == 'match_param':
+        elif name == 'match-param':
+            assert len(pattern) == 2
             idx = int(pattern[1])
             if rexpr == returning_match[idx]:
                 return []  # successful matched something that was matched before
             else:
                 return None
         elif name == 'read-param':
+            assert len(pattern) == 2
             idx = int(pattern[1])
             return [pattern_args[idx]]
 
         elif name == 'mul':
+            if pattern[1] == '>=':
+                assert len(pattern) == 3
+                # use like (mul >= 1)
+                if isMultiplicity(rexpr) and rexpr.get_argument(0) >= int(pattern[2]):
+                    return [rexpr.get_argument(0)]
+                else:
+                    return None
+            assert len(pattern) == 2
             try:
+                # use like (mul 0) to match
                 val = int(pattern[1])
                 if isMultiplicity(rexpr) and rexpr.get_argument(0) == val:
                     return []
@@ -735,9 +848,20 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                 else:
                     return None
 
+        elif name == 'any-disjunction':  # match any branch of the the disjunction
+            assert len(pattern) == 2
+            if rexpr.name == '+':
+                for ags in rexpr.arguments:
+                    res = rec(ags, pattern[1])
+                    if res:
+                        return res
+                return None  # failed to match any of the disjunctions
+            return rec(rexpr, pattern[1])  # this is not a disjunction, so just recurse on the expression
+
         # we are going to match against the name of the R-expr itself
         if rexpr.name != name:
             # the match has failed on the name alone
+            assert '-' not in name  # otherwise something is a typo
             return None
         if isinstance(pattern, str):
             if rexpr.arity == 0:
@@ -777,7 +901,6 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
             return None
         return ret
 
-    #ret = []
     for e in expr:
         res = rec(rexpr, e)
         if res is None:
@@ -840,6 +963,9 @@ def make_conjunction(*args):
             ret.append(x)
     for a in args:
         add(a)
+        if mul == 0:
+            # nothing else matters here
+            return multiplicity(0)
     if mul != 1:
         ret.insert(0, mul)
     if len(ret) == 0:
@@ -936,15 +1062,13 @@ def unify(self, rexpr):
         # in this case, we do not want to track it as an assignment
         assert isinstance(va, Term) and isinstance(vb, Term)
 
-        assert False
-
         if va.name != vb.name or va.arity != vb.arity:
             # the arity on these expressions does not match
             return multiplicity(0)
 
         # this is something like (f(x,y,z)=f(a,b,c)) so we want to expanded and construct a new term
 
-        ret = [Term('=', (aa,bb)) in zip(va.arguments, vb.arguments)]
+        ret = [Term('=', (aa,bb)) for aa,bb in zip(va.arguments, vb.arguments)]
         rr = make_conjunction(*ret)
 
         return self.apply(rr)
@@ -1111,7 +1235,7 @@ def aggregator(self, rexpr):
                 elif len(intermediate_vars) == 1:
                     additional_exprs.append(Term('=', (resulting, intermediate_vars[0])))
                 else:
-                    assert False  # shuld never happen
+                    assert False  # should never happen
 
                 # now this needs to construc the expression with all of the variables combined together
                 nested_r = Term('*', nested_exprs + additional_exprs)
@@ -1140,12 +1264,16 @@ def if_rr(self, rexpr):
                 else: condition_res = True
             else:
                 # check if the expression is like if(1+Q, R, S) in which case it is now true regardless of Q
-                for ags in match(self, cond, '(+ any)'):
-                    for a in ags:
-                        if isMultiplicity(a):
-                            assert a.get_argument(0) > 0
-                            condition_res = True
-                            break
+
+                if match(self, cond, '(any-disjunction (mul >= 1))'):
+                    condition_res = True
+
+                # for ags in match(self, cond, '(+ any)'):
+                #     for a in ags:
+                #         if isMultiplicity(a):
+                #             assert a.get_argument(0) > 0
+                #             condition_res = True
+                #             break
         finally:
             self.context = env_prev
 
@@ -1157,7 +1285,7 @@ def if_rr(self, rexpr):
         else:
             # return unmodified as this was unable to determine if the condition is true or false
             # TODO: we could return the updated condition
-            # it is "possible" to rewrite the true/false branches, but that
+            # it is "possible" to rewrite the true/false branches, but that means that it would not have the rewrites working correctly
             return rexpr
 
     return rexpr
@@ -1382,7 +1510,7 @@ def main():
 
     # rexpr = Term('*', (Term('=', (Variable('x'), 4)) , rexpr))
 
-    ctx = RewriteContext()
+    #ctx = RewriteContext()
     simplify = RewriteEngine()
 
     rewrites.define_user_rewrite(
@@ -1405,6 +1533,12 @@ def main():
 
 
     rexpr = Term('fib', (10, Variable('res')))
+
+    #rexpr = Term('=', (Term('f', (1,2,3)), Term('f', (Variable('x'), Variable('y'), 3))))
+
+
+    rewrites.set_memoized('fib', 2, kind='unk')
+
 
     print('Original R-expr:', '-'*50)
     print(rexpr.stylized_rexpr())
