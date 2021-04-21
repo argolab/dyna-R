@@ -37,6 +37,7 @@ def parse_sexp(s):
 
 logging_rewrites = False
 active_rewrite = []
+logging_rewrite_output = None
 
 @contextmanager
 def named_rewrite(name):
@@ -59,6 +60,19 @@ def track_rexpr_constructed(func):
             # maybe this should only include some of the arguments
             r._debug_constructed_from.append(args)
         return r
+    nf.__name__ = func.__name__
+    nf.__doc__ = func.__doc__
+    return nf
+
+def track_constructed(rexpr, rewrite, source):
+    if not logging_rewrites:
+        return rexpr
+    if not isinstance(rewrite, str):
+        # more than one rewrite being used at the same time is passed as a list or tuple
+        rexpr._debug_active_rewrite.append += rewrite
+    else:
+        rexpr._debug_active_rewrite.append(rewrite)
+    return rexpr
 
 
 if logging_rewrites:
@@ -493,10 +507,13 @@ class RewriteCollection:
         # that are used to replace the given expression
         self.user_defined_rewrites = {}
 
-        self.user_defined_rewrite_memo = {}
+        self.user_defined_rewrites_memo = {}
 
     def _register_function(self, pattern, func):
         # determine which of the patterns are required for a given expression
+        if getattr(func, '_matching_pattern', None) is None:
+            func._matching_pattern = []
+        func._matching_pattern.append(pattern)
         patterns = parse_sexp(pattern)
         for pattern in patterns:
             any_arity = False
@@ -526,7 +543,7 @@ class RewriteCollection:
     def do_user_defined_rewrite(self, rewrite_engine, rexpr):
         # this should take the name arity of a given expression and then subsuite in new names for the variables
         n = (rexpr.name, rexpr.arity)
-        if n in self.user_defined_rewrite_memo:
+        if n in self.user_defined_rewrites_memo:
             return self.do_access_memo(rewrite_engine, rexpr)
         rxp = self.user_defined_rewrites[n]
         # this will have to subsuite in the variable names and create new variable names for the expression
@@ -547,7 +564,7 @@ class RewriteCollection:
     def do_access_memo(self, rewrite_engine, rexpr):
         n = (rexpr.name, rexpr.arity)
 
-        rxp = self.user_defined_rewrite_memo[n]
+        rxp = self.user_defined_rewrites_memo[n]
 
         [[contains_memo,  memos, original_rexpr]] = match(rewrite_engine, rxp, '(if rexpr rexpr rexpr)')
 
@@ -616,7 +633,7 @@ class RewriteCollection:
             self.user_defined_rewrites.pop(n)
         elif kind == 'unk':
             # meaning that this will just wait until it finds something
-            self.user_defined_rewrite_memo[n] = Term(
+            self.user_defined_rewrites_memo[n] = Term(
                 'if', (
                     multiplicity(0),  # indicate that nothing is currently memoized
                     multiplicity(0),  # the memo table is also currently empty
@@ -632,7 +649,7 @@ class RewriteCollection:
         rexpr = uniquify_variables(rexpr, var_map)
         self.user_defined_rewrites[(name, arity)] = rexpr
 
-        if (name,arity) in self.user_defined_rewrite_memo:
+        if (name,arity) in self.user_defined_rewrites_memo:
             # clear the current memos out and just reset them entirely
             self.set_memoized(name, arity, 'none')
             self.set_memoized(name, arity, 'unk')
@@ -647,14 +664,57 @@ class RewriteCollection:
         # which means that this is going to be looking.
         # we might want to avoid doing the full matches most of the time, so this will need to be controllable
         # by some expression
-        for pattern, funcs in self.full_match.items():
-            if match(context, rexpr, pattern):
-                yield from funcs
+        if context.kind == 'full':
+            for pattern, funcs in self.full_match.items():
+                if match(context, rexpr, pattern):
+                    yield from funcs
 
         # in the case that the name/arity matches the user defined rewrite, then the generic user
         # rewrite handler will handle it
         if n in self.user_defined_rewrites:
             yield self.do_user_defined_rewrite
+
+    def __str__(self):
+        matches = []
+        for name, vals in self.name_match.items():
+            for val in vals:
+                matches.append((f'{name}(...) -> {val.__name__}', val._matching_pattern))
+        for (name, arity), vals in self.name_arity_match.items():
+            args = ', '.join([f'${i}' for i in range(arity)])
+            for val in vals:
+                matches.append((f'{name}({args}) -> {val.__name__}', val._matching_pattern))
+        for pattern, vals in self.full_match.items():
+            for val in vals:
+                matches.append((f'{pattern} -> {val.__name__}', val._matching_pattern))
+
+        max_prefix_length = 0
+        for a,b in matches:
+            max_prefix_length = max(len(a), max_prefix_length)
+
+        for i in range(len(matches)):
+            a,b = matches[i]
+            # this will render the matches for the builtin rewrites.  The length of the prefix is made the same so we can get the comments at the same point
+            r = '  ' + a + ' '*(max_prefix_length - len(a)) + '     # '
+            r += b[0]
+            matches[i] = r
+
+        user_matches = []
+        for (name, arity), val in self.user_defined_rewrites.items():
+            rexpr_str = val.stylized_rexpr()
+            args = ', '.join([f'$arg_{i}' for i in range(arity)])
+            mt = f'  {name}({args}) -> '
+            rexpr_str = indent(rexpr_str, ' '*len(mt)).lstrip()
+            user_matches.append(mt + rexpr_str)
+
+        return ''.join(['RewriteCollection(\n',
+                        '\n'.join(matches),
+                        '\n',
+                        '-' * 50,
+                        '\n',
+                        '\n'.join(user_matches),
+                        '\n)'])
+
+    def __repr__(self): return str(self)
 
 
 class RewriteEngine:
@@ -825,6 +885,15 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
             assert len(pattern) == 2
             idx = int(pattern[1])
             return [pattern_args[idx]]
+
+        elif name == 'EQ':
+            assert len(pattern) == 3
+            a = rec(rexpr, pattern[1])
+            b = rec(rexpr, pattern[2])
+            if a == b:
+                return []
+            else:
+                return None
 
         elif name == 'mul':
             if pattern[1] == '>=':
@@ -1034,6 +1103,9 @@ def make_disjunction(*args):
             ret.append(x)
     for a in args:
         add(a)
+    if mul == float('inf'):
+        # if this is `\infty + Q` then just return `\infty` as that is the rewrite
+        return track_constructed(multiplicity(float('inf')), 'rr:infity_add', args)
     if mul != 0:
         ret.insert(0, mul)
     if len(ret) == 0:
@@ -1050,11 +1122,11 @@ def unify(self, rexpr):
     for va, vb in match(self, rexpr, '(= var var)'):
         if va == vb:
             # this is trivally true, so just remove
-            return multiplicity(1)
+            return track_constructed(multiplicity(1), 'rr:unify_same', rexpr)
 
     for a,vb in match(self, rexpr, '(AND (NOT (= var rexpr)) (= rexpr var))'):
         # flip the direction
-        rexpr = Term('=', (vb, a))
+        rexpr = track_constructed(Term('=', (vb, a)), 'rr:unify_switch_order', rexpr)
 
     # rexpr here matches any term.  So if nither of these have a variable, then it will match this expression
     for va, vb in match(self, rexpr, '(AND (NOT (= var rexpr)) (NOT (= rexpr var)) (= rexpr rexpr))'):
@@ -1064,11 +1136,14 @@ def unify(self, rexpr):
 
         if va.name != vb.name or va.arity != vb.arity:
             # the arity on these expressions does not match
-            return multiplicity(0)
+            return track_constructed(multiplicity(0), 'rr:struct_unify1', rexpr)
 
         # this is something like (f(x,y,z)=f(a,b,c)) so we want to expanded and construct a new term
 
-        ret = [Term('=', (aa,bb)) for aa,bb in zip(va.arguments, vb.arguments)]
+        ret = [
+            track_constructed(Term('=', (aa,bb)), 'rr:struct_unify2', rexpr)
+            for aa,bb in zip(va.arguments, vb.arguments)
+        ]
         rr = make_conjunction(*ret)
 
         return self.apply(rr)
@@ -1078,32 +1153,32 @@ def unify(self, rexpr):
     self.context.add_rexpr(rexpr)
     return multiplicity(1)
 
-@register_rewrite('(structure ground any)')
-def unify_structure(self, rexpr):
-    # there are a variable number of arguments
-    for name, res_variable, args in match(self, rexpr, '(structure ground ground any)'):
-        # this needs to unpack the variables in the expression
-        if res_variable.name != name or res_variable.arity != len(args):
-            # this has failed to match the given expression
-            return multiplicity(0)
-        ret = tuple(Term('=', (var, val)) for val, var in zip(res_variable.arguments, args))
-        if len(ret) > 1:
-            return Term('*', ret)
-        else:
-            return ret[0]
-    for name, res_variable, args in match(self, rexpr, '(structure ground var any)'):
-        # if all of the variables are ground, then we can construct the resulting term
-        all_ground = True
-        for var in args:
-            if not match(self, var, 'ground'):
-                all_ground = False
-                break
-        if all_ground:
-            # then we can construct the resulting term for this expression
-            values = []
-            for var in args:
-                for val in match(self, var, 'ground'):
-                    values.append(val)
+# @register_rewrite('(structure ground any)')
+# def unify_structure(self, rexpr):
+#     # there are a variable number of arguments
+#     for name, res_variable, args in match(self, rexpr, '(structure ground ground any)'):
+#         # this needs to unpack the variables in the expression
+#         if res_variable.name != name or res_variable.arity != len(args):
+#             # this has failed to match the given expression
+#             return multiplicity(0)
+#         ret = tuple(Term('=', (var, val)) for val, var in zip(res_variable.arguments, args))
+#         if len(ret) > 1:
+#             return Term('*', ret)
+#         else:
+#             return ret[0]
+#     for name, res_variable, args in match(self, rexpr, '(structure ground var any)'):
+#         # if all of the variables are ground, then we can construct the resulting term
+#         all_ground = True
+#         for var in args:
+#             if not match(self, var, 'ground'):
+#                 all_ground = False
+#                 break
+#         if all_ground:
+#             # then we can construct the resulting term for this expression
+#             values = []
+#             for var in args:
+#                 for val in match(self, var, 'ground'):
+#                     values.append(val)
 
 
 def make_project(*args):
@@ -1128,9 +1203,13 @@ def proj(self, rexpr):
 
             for _ in match(self, rr, '(mul 0)'):
                 # if the body is zero, then this is also zero
-                return multiplicity(0)
+                return track_constructed(multiplicity(0), ('rr:proj_no_var', 'rr:zero_mult'), rexpr)
 
-            #import ipdb; ipdb.set_trace()
+            for _ in match(self, rr, '(any-disjunction (mul >= 1))'):
+                # this is an expression like proj(X, 1+Q)  which rewrites as infinity as the variable X can take on any number of values
+                # to match the paper this requires two rewrites
+                return track_constructed(multiplicity(float('inf')), ('rr:proj_no_var', 'rr:distribute-in-proj'), rexpr)
+
 
             # remove disjunctive and conjunctive expressions out
             for ags in match(self, rr, '(+ any)'):
@@ -1138,7 +1217,7 @@ def proj(self, rexpr):
                 for a in ags:
                     if vv is not None:
                         a = make_conjunction(Term('=', (v, vv)), a)
-                    a = Term('proj', (v, a))
+                    a = track_constructed(Term('proj', (v, a)), 'rr:distribute-in-proj', rexpr)
                     ret.append(a)
                 return make_disjunction(*ret)
 
@@ -1152,24 +1231,25 @@ def proj(self, rexpr):
                     if contains_variable(a, v):
                         depends.append(a)
                     else:
-                        not_depends.append(a)
+                        not_depends.append(track_constructed(a, 'rr:push-in-proj', rexpr))
                 if not_depends:
                     return make_conjunction(*not_depends, Term('proj', (v, make_conjunction(*depends))))
 
 
             for _ in match(self, rr, '(= (param 0) ground)', v):
                 # this is proj(X, (X=5)) -> 1
-                return multiplicity(1)
+                return track_constructed(multiplicity(1), 'rr:proj_occurs', rexpr)
 
             for _, _, nested_rexpr in match(self, rr, '(aggregator ground (param 0) var rexpr)', v):
                 # this is proj(X, (X=sum(Y, ...)))
                 if not contains_variable(nested_rexpr, v):
-                    return multiplicity(1)
+                    return track_constructed(multiplicity(1), 'rr:proj_nested_agg', rexpr)
 
 
             return Term('proj', (v, rr))
         finally:
             self.context = outer_context
+
 
 
 
@@ -1199,6 +1279,11 @@ def aggregator(self, rexpr):
         'max': 'max'
     }
 
+    # aggregators where we have defined custom behavior for the expression
+    special_aggregators = {
+        'exists': 'exists',
+    }
+
     for op, resulting, incoming, rxp in match(self, rexpr, '(aggregator ground var var rexpr)'):
         # this will need to match against the body of the expression
         outer_context = self.context
@@ -1209,13 +1294,13 @@ def aggregator(self, rexpr):
 
             rxp = self.apply(rxp)  # this should attempt to simplify the expression
             for _ in match(self, rxp, '(mul 0)'):
-                return Term('=', (resulting, identity[op]))
+                return track_constructed(Term('=', (resulting, identity[op])), 'rr:agg_sum1', rexpr)
             for res in match(self, rxp, '(= (param 0) ground)', incoming):
-                return Term('=', (resulting, res))
+                return track_constructed(Term('=', (resulting, res)), 'rr:agg_sum2', rexpr)
             if (inc_val := self.context.get_value(incoming)) is not None and isMultiplicity(rxp):
                 # if the body is a multiplicity, then we should just return the resulting value
                 assert rxp == 1  # TODO handle other multiplicies, will require knowing the sum_many operation
-                return Term('=', (resulting, inc_val))
+                return track_constructed(Term('=', (resulting, inc_val)), 'rr:agg_sum2', rexpr)
             for ags in match(self, rxp, '(+ any)'):
                 # this is a disjunction between many different variables
                 # this is going to have to construct many projects and new variables
@@ -1223,7 +1308,10 @@ def aggregator(self, rexpr):
                 nested_exprs = []
                 additional_exprs = []
                 for nested_r, nv in zip(ags, intermediate_vars):
-                    nested_exprs.append(Term('aggregator', (op, nv, incoming, nested_r)))
+                    nested_exprs.append(
+                        track_constructed(Term('aggregator', (op, nv, incoming, nested_r)),
+                                          'rr:agg_sum3', rexpr)
+                        )
                 while len(intermediate_vars) > 2:
                     # this is going to combine two of the variables together and generate a new variable to be the result
                     new_var = generate_var()
@@ -1233,11 +1321,12 @@ def aggregator(self, rexpr):
                 if len(intermediate_vars) == 2:
                     additional_exprs.append(Term(split_op[op], (*intermediate_vars, resulting)))
                 elif len(intermediate_vars) == 1:
+                    # this should never happen as this should only happen in the case that there is some disjunction???
                     additional_exprs.append(Term('=', (resulting, intermediate_vars[0])))
                 else:
                     assert False  # should never happen
 
-                # now this needs to construc the expression with all of the variables combined together
+                # now this needs to construct the expression with all of the variables combined together
                 nested_r = Term('*', nested_exprs + additional_exprs)
                 for nv in intermediate_vars:
                     nested_r = Term('proj', (nv, nested_r))
@@ -1247,6 +1336,13 @@ def aggregator(self, rexpr):
 
         # there are no rewrites which can be applied here
         return rexpr
+
+
+# @register_rewrite('(exists var var rexpr)')
+# def exists_aggregator(self, rexpr):
+#     # if the result of the
+
+
 
 @register_rewrite('(if args 3)')
 def if_rr(self, rexpr):
@@ -1335,7 +1431,6 @@ def max_rr(self, rexpr):
         return Term('=', (vc, max(a,b)))
     return rexpr
 
-
 # technically these operations need to have an additional argument which is for
 # it to always be returned true, as if the expression is `False is (a == b)`
 # then it would be a not equal expressions
@@ -1362,6 +1457,41 @@ def equals_rr(self, rexpr):
     return rexpr
 
 # there is also range, not, not equal, abs etc which are not included
+
+
+@register_rewrite('(bool_or args 3)')
+def bool_or_rr(self, rexpr):
+    for a,b,c in match(self, rexpr, '(bool_or ground ground ground)'):
+        return multiplicity((a or b) == c)
+    for a,b,vc in match(self, rexpr, '(bool_or ground ground var)'):
+        return Term('=', (vc, (a or b)))
+    # if either of the values is true, then we can match directly
+    for a,b,vc in match(self, rexpr, '(AND (OR (bool_or (EQ ground (read-param 0)) rexpr rexpr) (bool_or rexpr (EQ ground (read-param 0)) rexpr)) (bool_or rexpr rexpr var))', True):
+        return Term('=', (vc, True))
+
+    return rexpr
+
+@register_rewrite('(bool_and args 3)')
+def bool_and_rr(self, rexpr):
+    for a,b,c in match(self, rexpr, '(bool_and ground ground ground)'):
+        return multiplicity((a and b) == c)
+    for a,b,vc in match(self, rexpr, '(bool_and ground ground var)'):
+        return Term('=', (vc, (a and b)))
+    # if either of the values is false, then we can match directly
+    for a,b,vc in match(self, rexpr, '(AND (OR (bool_and (EQ ground (read-param 0)) rexpr rexpr) (bool_and rexpr (EQ ground (read-param 0)) rexpr)) (bool_and rexpr rexpr var))', False):
+        return Term('=', (vc, False))
+
+    return rexpr
+
+# define a rewrite which is just another R-expr rather than a "builtin"
+rewrite.define_user_rewrite('bool', 1,
+                            make_disjunction(
+                                Term('=', (Variable(0), True)),
+                                Term('=', (Variable(0), False))
+                            ))
+
+
+
 
 
 
@@ -1531,8 +1661,30 @@ def main():
         )
     )
 
+    rewrites.define_user_rewrite(
+        'peano', 2,
+        make_disjunction(
+            make_conjunction(Term('=', (Variable(0), Term('z', ()))), Term('=', (Variable(1), True))),
+            make_project(
+                'nested',
+                make_conjunction(
+                    Term('=', (Variable(0), Term('s', (Variable('nested'),)))),
+                    Term('peano', (Variable('nested'), True)),
+                    Term('=', (Variable(1), True)),  # this is the aggregator :- which means that there is going to be a true branch here
+                )
+            )
+        )
+    )
 
-    rexpr = Term('fib', (10, Variable('res')))
+    def make_peano(v):
+        r = Term('z', ())
+        for _ in range(v): r = Term('s', (r,))
+        return r
+
+    rexpr = Term('peano', (make_peano(5), Variable('res')))
+
+
+    # rexpr = Term('fib', (10, Variable('res')))
 
     #rexpr = Term('=', (Term('f', (1,2,3)), Term('f', (Variable('x'), Variable('y'), 3))))
 
