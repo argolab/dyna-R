@@ -3,6 +3,7 @@
 
 import sys
 import os
+import atexit
 
 from collections import defaultdict
 from functools import cache
@@ -38,8 +39,16 @@ def parse_sexp(s):
 logging_rewrites = True
 active_rewrite = []
 logging_rewrite_output = None
+color_output_latex = False
 
 event_log = []
+latex_log = []
+
+if logging_rewrites:
+    def latex_exit_handler():
+        s = ''.join(latex_log)
+        s = s.replace('\n', '\verb" \\\\\n\verb"')  # make the new lines escaped using verbatim
+    atexit.register(latex_exit_handler)
 
 @contextmanager
 def named_rewrite(name):
@@ -85,12 +94,29 @@ def log_event(event_kind, *args):
     # we will want to somehow register that this is doing the different operations
     event_log.append((event_kind, args))
 
+    print(event_kind, args)
+
     #logging_rewrite_output.write(
 
+def latex_verbatim_block(text):
+    # make a verbatim block using \verb expressions with \verb" as the escape sequence
+    # if an expression is like we still want for there to be some escape sequence, so that we can encode that
+    # the escape sequnce will be [[[ raw latex code ]]]
+    # so we
+    text = text.replace('"', '\verb"\verb|"|\verb"').replace('\n', '" \\\\\n\verb"').replace('[[[', '"').replace(']]]', '\verb"')
+    return '\verb"' + text + '"'
+
+def color(c, r):
+    if color_output_latex:
+        return '[[[{\color{'+c+'}]]]' + r + '[[[}]]]'  # this will generate something like {\color{xxx}\verb"...."}
+    else:
+        return r
 
 if logging_rewrites:
     logging_rewrite_output = open(os.environ.get('REWITE_LOG', 'rewrite.log'), 'w+')
     import uuid
+
+indent_nested_amount = '  '
 
 
 
@@ -182,14 +208,15 @@ class Term:
                 s = str(r)
             s = s.strip()
             if '\n' in s or len(s) > 50:
-                s = '\n' + indent(s, '  ') + '\n'
+                s = '\n' + indent(s, indent_nested_amount) + '\n'
             return s
 
         def nested_p(r):
             r = nested(r)
             if '+' in r:  # the order of operations might not match what the syntax tree should print out, so this will check for that
-                return '('+r+')'
+                return '('+r.strip()+')'
             return r
+
 
         if self.name == '$VARIABLE' and self.arity == 1:
             v = self.get_argument(0)
@@ -198,13 +225,16 @@ class Term:
                 # see in the argument place, so need something more in the
                 # representation here
                 v = f'$ARG_{v}'
-            return str(v).capitalize()
+            return color('vargreen', str(v).capitalize())
         elif self.name == '=' and self.arity == 2:
             return f'({nested(self.get_argument(0))}={nested(self.get_argument(1))})'
         elif self.name == 'aggregator' and self.arity == 4:
-            return f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}({nested(self.get_argument(2))}, {nested(self.get_argument(3))}))'
-        elif self.name == 'structure':
-            return f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}(' + ', '.join(map(nested, self.arguments[2:])) + '))'
+            return (
+                color('aggblue', f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}({nested(self.get_argument(2))},')+
+                f'{nested(self.get_argument(3))})'+
+                color('aggblue', ')'))
+        # elif self.name == 'structure':
+        #     return f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}(' + ', '.join(map(nested, self.arguments[2:])) + '))'
         elif self.name in ('+', '*'):
             return self.name.join(map(nested_p,self.arguments))
         elif self.name == 'proj' and self.arity == 2:
@@ -307,7 +337,7 @@ def uniquify_variables_rec(rexpr, mapping):
     elif rexpr.name == 'aggregator' and rexpr.arity == 4:
         op, resulting, incoming, rxp = rexpr.arguments
         new_var = generate_var()
-        assert resultin != incoming  # this needs to be handled differently
+        assert resulting != incoming  # this needs to be handled differently
         resulting = mapping.get(resulting, resulting)  # do the remapping for the returned variable
         old_var = mapping.get(incoming)
         mapping[incoming] = new_var
@@ -1539,6 +1569,7 @@ def proj_full(self, rexpr):
 
 @register_rewrite('(aggregator ground var var rexpr)')
 def aggregator(self, rexpr):
+    # op, resulting, incoming, rexpr
 
     # as described in the paper, the only way in which aggregators run is when there is a single element
     # though in practice we would like to handle multiple values directly.  Given that we are trying to be as close as possible to the paper
@@ -1568,7 +1599,7 @@ def aggregator(self, rexpr):
         'exists': 'exists',
     }
 
-    for op, resulting, incoming, rxp in match(self, rexpr, '(aggregator ground var var rexpr)'):
+    for op, resulting, incoming, rxp_orig in match(self, rexpr, '(aggregator ground var var rexpr)'):
         # this will need to match against the body of the expression
         outer_context = self.context
         try:
@@ -1576,7 +1607,7 @@ def aggregator(self, rexpr):
 
             #import ipdb; ipdb.set_trace()
 
-            rxp = self.apply(rxp)  # this should attempt to simplify the expression
+            rxp = self.apply(rxp_orig)  # this should attempt to simplify the expression
             for _ in match(self, rxp, '(mul 0)'):
                 return track_constructed(Term('=', (resulting, identity[op])), 'rr:agg_sum1', rexpr)
             for res in match(self, rxp, '(= (param 0) ground)', incoming):
@@ -1615,11 +1646,19 @@ def aggregator(self, rexpr):
                 for nv in intermediate_vars:
                     nested_r = Term('proj', (nv, nested_r))
                 return nested_r
+
+            # no aggregator specific rewrites could be done, but there are likely rewrites which have been done on the inner part
+            # so we are going to want to return that
+            if rxp == rxp_orig:
+                # don't make something new as this would be the same expression (optimization)
+                return rexpr
+
+            return Term('aggregator', (op, resulting, incoming, rxp))
         finally:
             self.context = outer_context
 
         # there are no rewrites which can be applied here
-        return rexpr
+        #return rexpr
 
 
 # @register_rewrite('(exists var var rexpr)')
@@ -1802,23 +1841,46 @@ def main():
     #ctx = RewriteContext()
     simplify = RewriteEngine()
 
-    rewrites.define_user_rewrite(
-        'fib', 2,
-        make_disjunction(
-            make_conjunction(Term('=', (Variable(0), 0)), Term('=', (Variable(1), 0))),
-            make_conjunction(Term('=', (Variable(0), 1)), Term('=', (Variable(1), 1))),
-            make_project(
-                'sub1', 'sub2', 'res1', 'res2',
-                make_conjunction(
-                    Term('lessthan', (1, Variable(0))),  # var_0 > 1
-                    Term('plus', (Variable('sub1'), 1, Variable(0))),  # var_0 - 1
-                    Term('plus', (Variable('sub2'), 2, Variable(0))),  # var_0 - 2
-                    Term('fib', (Variable('sub1'), Variable('res1'))),  # res1 is fib(var_0 - 1)
-                    Term('fib', (Variable('sub2'), Variable('res2'))),  # res2 is fib(var_0 - 2)
-                    Term('plus', (Variable('res1'), Variable('res2'), Variable(1)))
-                ))
+    if 0:
+        rewrites.define_user_rewrite(
+            'fib', 2,
+            make_disjunction(
+                make_conjunction(Term('=', (Variable(0), 0)), Term('=', (Variable(1), 0))),
+                make_conjunction(Term('=', (Variable(0), 1)), Term('=', (Variable(1), 1))),
+                make_project(
+                    'sub1', 'sub2', 'res1', 'res2',
+                    make_conjunction(
+                        Term('lessthan', (1, Variable(0))),  # var_0 > 1
+                        Term('plus', (Variable('sub1'), 1, Variable(0))),  # var_0 - 1
+                        Term('plus', (Variable('sub2'), 2, Variable(0))),  # var_0 - 2
+                        Term('fib', (Variable('sub1'), Variable('res1'))),  # res1 is fib(var_0 - 1)
+                        Term('fib', (Variable('sub2'), Variable('res2'))),  # res2 is fib(var_0 - 2)
+                        Term('plus', (Variable('res1'), Variable('res2'), Variable(1)))
+                    ))
+            )
         )
-    )
+    else:
+        rewrites.define_user_rewrite(
+            'fib', 2,
+            Term('aggregator',
+                 ('sum', Variable(1), Variable('res'),
+                  make_disjunction(
+                      make_conjunction(Term('=', (Variable(0), 0)), Term('=', (Variable('res'), 0))),
+                      make_conjunction(Term('=', (Variable(0), 1)), Term('=', (Variable('res'), 1))),
+                      make_project(
+                          'sub1', 'sub2', 'res1', 'res2',
+                          make_conjunction(
+                              Term('lessthan', (1, Variable(0))),  # var_0 > 1
+                              Term('plus', (Variable('sub1'), 1, Variable(0))),  # var_0 - 1
+                              Term('plus', (Variable('sub2'), 2, Variable(0))),  # var_0 - 2
+                              Term('fib', (Variable('sub1'), Variable('res1'))),  # res1 is fib(var_0 - 1)
+                              Term('fib', (Variable('sub2'), Variable('res2'))),  # res2 is fib(var_0 - 2)
+                              Term('plus', (Variable('res1'), Variable('res2'), Variable('res')))
+                          ))
+                  )))
+        )
+
+
 
     rewrites.define_user_rewrite(
         'peano', 2,
@@ -1843,25 +1905,28 @@ def main():
     #rexpr = Term('peano', (make_peano(5), Variable('res')))
 
 
-    rewrites.set_memoized('fib', 2, 'unk')
+    #rewrites.set_memoized('fib', 2, 'unk')
 
-    rexpr = Term('fib', (10, Variable('res')))
+    rexpr = Term('fib', (4, Variable('res')))
 
     #rexpr = Term('=', (Term('f', (1,2,3)), Term('f', (Variable('x'), Variable('y'), 3))))
 
-
-    rewrites.set_memoized('fib', 2, kind='unk')
+    simplify.rewrite_fully(rexpr)
 
 
     print('Original R-expr:', '-'*50)
     print(rexpr.stylized_rexpr())
 
+    rexpr = simplify.rewrite_fully(rexpr)
+
+    print('-'*50)
+    print(rexpr)
 
 
-    for step in range(16):
-        print('step:', step,'-'*50)
-        rexpr = simplify.rewrite_once(rexpr)
-        print(rexpr.stylized_rexpr())
+    # for step in range(16):
+    #     print('step:', step,'-'*50)
+    #     rexpr = simplify.rewrite_once(rexpr)
+    #     print(rexpr.stylized_rexpr())
 
 
     # print(rexpr.stylized_rexpr())
