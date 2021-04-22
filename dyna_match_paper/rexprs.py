@@ -39,6 +39,8 @@ logging_rewrites = True
 active_rewrite = []
 logging_rewrite_output = None
 
+event_log = []
+
 @contextmanager
 def named_rewrite(name):
     """
@@ -54,10 +56,11 @@ def named_rewrite(name):
 def track_rexpr_constructed(func):
     if not logging_rewrites:
         return func
-    def nf(*args):
-        r = func(*args)
+    def nf(*args, **kwargs):
+        r = func(*args, **kwargs)
         if isinstance(r, Term):
             # maybe this should only include some of the arguments
+            # ignore the kwargs if there are any passes a those are just other additional information
             r._debug_constructed_from.append(args)
         return r
     nf.__name__ = func.__name__
@@ -73,6 +76,16 @@ def track_constructed(rexpr, rewrite, source):
     else:
         rexpr._debug_active_rewrite.append(rewrite)
     return rexpr
+
+def log_event(event_kind, *args):
+    if logging_rewrites:
+        pass
+    assert event_kind in ('simplify_fast', 'simplify_full', 'memo_indeterminate', 'memo_computed', 'memo_looked_up')
+
+    # we will want to somehow register that this is doing the different operations
+    event_log.append((event_kind, args))
+
+    #logging_rewrite_output.write(
 
 
 if logging_rewrites:
@@ -392,6 +405,24 @@ def replace_identicial_term(expr, mapping):
         return expr
 
 
+def gather_branches(rexpr, *, through_nested=True):
+    if not isinstance(rexpr, Term):
+        return
+    if rexpr.name == '+':
+        yield rexpr
+    if not through_nested and ((rexpr.name == 'proj' and rexpr.arity == 2) or (rexpr.name == 'aggregate' and rexpr.arity == 4)):
+        # in this case, we are not going to want to pass through nested projection or aggregators.
+        return
+    for a in rexpr.arguments:
+        yield from gather_branches(a, through_nested=through_nested)
+
+def gather_environment(rexpr):
+    if not isinstance(rexpr, Term) or rexpr.name == '+' or isVariable(rexpr):
+        return
+    yield rexpr
+    for a in rexpr.arguments:
+        yield from gather_environment(a)
+
 
 ####################################################################################################
 # The core of the rewriting engine and pattern matching
@@ -562,7 +593,6 @@ class RewriteContext(set):
     # don't use the inplace expressions for now, though these might make it more efficient in the future?
     def __iand__(self, o):
         assert isinstance(o, RewriteContext) and o._parent is self._parent
-
         if self is o:
             # this is itself, there is no modification that is required
             return self
@@ -570,11 +600,9 @@ class RewriteContext(set):
 
     def __isub__(self, o):
         assert isinstance(o, RewriteContext) and o._parent is self._parent
-
         if self is o:
             # this is going to have to return an empty value, which means that
             return NotImplemented
-
         return NotImplemented
 
     def get_value(self, variable):
@@ -604,18 +632,10 @@ class RewriteContext(set):
 
     def local_to_rexpr(self):
         # this is going to have to take all of the local conjunctive information and turn it into a R-expr which can
-
-        # if there are assignments, then those should be placed first
-
-        #res = tuple(self.iter_local())
-
         res = []
         for var, val in self._assign_index.items():
             res.append(Term('=', (var, val)))  # this is just the assignments to ground variables, all of the other expressions should still be in the R-expr
-
         r = make_conjunction(*res)  # this is just a conjunction of the constraints which are present
-
-        #import ipdb; ipdb.set_trace()
         return r
 
     def get_associated_with_var(self, var):
@@ -625,12 +645,11 @@ class RewriteContext(set):
         if var in self._argument_index:
             yield from self._argument_index[var]
 
-    def pop_variable(self, var):
-        assert isVariable(var)
-        # this will need to remove anything which contains the variable
-        # this means that these expressions are no longer
-
-        raise NotImplementedError()
+    def update(self, child):
+        assert child._parent is self
+        # this neds to go through and update ourselves with everything from the child
+        for c in child.iter_local():
+            self.add(c)
 
 class RewriteCollection:
     """A class for tracking rewrite operators.  Operators are segmented such that
@@ -750,12 +769,12 @@ class RewriteCollection:
         for _ in match(local_simplify, contains_memo_result, '(mul 0)'):
             # meaning that the false branches was selected
             condition_res = False
-
         for _ in match(local_simplify, contains_memo_result, '(any-disjunction (mul >= 1))'):
             condition_res = True
 
         if condition_res is None:
             # then this is indeterminate, so we are just going to return the original R-expr in this case
+            log_event('memo_indeterminate', n, arg_values)
             return rexpr
 
         elif condition_res is True:
@@ -767,6 +786,8 @@ class RewriteCollection:
                     r = Term('=', (Variable(i), val))
                     memo_simplify.context.add_rexpr(r)
             memos_returned = memo_simplify.rewrite_fully(memos)
+
+            log_event('memo_looked_up', n, arg_values, memos_returned)
 
         elif condition_res is False:
             # then this needs to take the original R-expr and construct a new memoized expression
@@ -790,19 +811,15 @@ class RewriteCollection:
 
             new_condition = make_disjunction(contains_memo, make_conjunction(*new_contains_rexpr))
             new_memo = make_disjunction(memos, memos_returned)
-            import ipdb; ipdb.set_trace()
             # construct a new if-expression which has the newly stored memos
             self.user_defined_rewrites_memo[n] = Term('if', (new_condition, new_memo, original_rexpr))
+
+            log_event('memo_computed', n, arg_values, memos_returned)
 
         # this needs to do renaming on the variables to match the caller's context and make new variables for anything else that is introduced
         var_map = {}
         for i, new_name in enumerate(rexpr.arguments):
             var_map[Variable(i)] = new_name
-
-        # import ipdb; ipdb.set_trace()
-
-        print('================')
-        print(memos_returned)
 
         memos_returned = uniquify_variables(memos_returned, var_map)
 
@@ -926,7 +943,8 @@ class RewriteEngine:
     def rewrites(self): return self.__rewrites
 
     @track_rexpr_constructed
-    def apply(self, rexpr):
+    def apply(self, rexpr, *, top_level_apply=False):
+        old_context = self.context
         try:
             for func in self.rewrites.get_matching_rewrites(rexpr, self):
                 res = func(self, rexpr)
@@ -939,6 +957,9 @@ class RewriteEngine:
             return rexpr
         except UnificationFailure:
             return multiplicity(0)
+        finally:
+            # this should be the same item
+            assert old_context is self.context
 
     # def __call__(self, rexpr):
     #     return self.apply(rexpr)
@@ -949,10 +970,19 @@ class RewriteEngine:
 
     def rewrite_fully(self, rexpr, *, add_context=True):
         while True:
-            # this contains the context values inside of itself
+            self.__kind = 'fast'  # first run fast rewrites
+            while True:
+                # this contains the context values inside of itself
+                old = rexpr
+                rexpr = self.apply(rexpr, top_level_apply=True)
+                if old == rexpr: break
+                log_event('simplify_fast', old, rexpr)
+            self.__kind = 'full'  # run the full rewrites to make this
             old = rexpr
-            rexpr = self.apply(rexpr)
+            rexpr = self.apply(rexpr, top_level_apply=True)
             if old == rexpr: break
+            log_event('simplify_fully', old, rexpr)
+
         if not add_context:
             return rexpr
         return make_conjunction(self.context.local_to_rexpr(), rexpr)
@@ -1218,7 +1248,8 @@ def multipliy_base(self, rexpr):
         if isMultiplicity(z):  # this is going to want to match the multiplicity for some value
             mul *= z
             if mul == 0: return mul  # this has hit the shortcut of reducing to nothing
-        ret.append(z)
+        else:
+            ret.append(z)
 
     if mul != 1:
         ret.insert(0, multiplicity(mul))
@@ -1290,8 +1321,12 @@ def add_base(self, rexpr):
             re = ret[i][1] - res_env
             ret[i] = make_conjunction(ret[i][0], re.local_to_rexpr())
 
-        env_outer = res_env
-        self.context = env_outer
+        # this has to update the context with everything instead of just overriding it
+        env_outer.update(res_env)
+        # env_outer = res_env
+        # self.context = env_outer
+
+
         return make_disjunction(*ret)
     finally:
         # this will need to update the env_prev with whatever is the new content which
@@ -1461,6 +1496,45 @@ def proj(self, rexpr):
             self.context = outer_context
 
 
+
+@register_rewrite('(proj var rexpr)', kind='full')
+def proj_full(self, rexpr):
+    for v, r in match(self, rexpr, '(proj var rexpr)'):
+        # this will want to walk through the expression to determine if there are any places where a variable is mentioned in a nested disjunction
+        branches = list(gather_branches(r, through_nested=False))
+        assert len(branches) == len(set(branches))  # make sure there are no duplicates (for now) as it makes the code easier
+
+        # for every branch in the expression this will want to determine if the different disjunction reference the variable
+        # from there it will want to split itself such that these branches are
+
+        if branches:
+            # this is a rewrite like `proj(V, R*(Q+S)) -> proj(V, R*Q)+proj(V,
+            # R*S)` which could be a combination of the distribute rule with
+            # expanding and then removing dijsunctionves from the expression.
+            # Though we don't in general have this expand these rues out
+            best_branch = None
+            for b in branches:
+                # if there is a branch which contains the variable that we are branching over, then favor that as it will be most helpful to us
+                # this is just a heuristic, we could have selected any of the branches
+                if contains_variable(b, v):
+                    best_branch = b
+                    break
+            if best_branch is None: best_branch = branches[0]
+
+            assert best_branch.name == '+'
+            ret = []
+            # this is going to want to match the disjuntion for a given expression
+            for b in best_branch.arguments:
+                nb = replace_term(r, {best_branch: b})
+                ret.append(Term('proj', (v, nb)))
+
+
+            assert False  # Trying to see if we _need_ this rewrite, as this increase the energy, and isn't quite something that we have in the paper atm
+
+
+            return track_constructed(make_disjunction(*ret), 'unk_????', rexpr)
+
+    return rexpr
 
 
 @register_rewrite('(aggregator ground var var rexpr)')
