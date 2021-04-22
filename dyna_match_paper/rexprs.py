@@ -4,6 +4,7 @@
 import sys
 import os
 import atexit
+import uuid
 
 from collections import defaultdict
 from functools import cache
@@ -40,15 +41,11 @@ logging_rewrites = True
 active_rewrite = []
 logging_rewrite_output = None
 color_output_latex = False
+generating_latex_output = False
 
 event_log = []
 latex_log = []
 
-if logging_rewrites:
-    def latex_exit_handler():
-        s = ''.join(latex_log)
-        s = s.replace('\n', '\verb" \\\\\n\verb"')  # make the new lines escaped using verbatim
-    atexit.register(latex_exit_handler)
 
 @contextmanager
 def named_rewrite(name):
@@ -84,12 +81,13 @@ def track_constructed(rexpr, rewrite, source):
         rexpr._debug_active_rewrite.extend(rewrite)
     else:
         rexpr._debug_active_rewrite.append(rewrite)
+    log_event('applied_rewrite', rewrite, source, rexpr)
     return rexpr
 
 def log_event(event_kind, *args):
     if logging_rewrites:
         pass
-    assert event_kind in ('simplify_fast', 'simplify_full', 'memo_indeterminate', 'memo_computed', 'memo_looked_up')
+    assert event_kind in ('simplify_fast', 'simplify_full', 'memo_indeterminate', 'memo_computed', 'memo_looked_up', 'applied_rewrite', 'original_rexpr')
 
     # we will want to somehow register that this is doing the different operations
     event_log.append((event_kind, args))
@@ -103,20 +101,58 @@ def latex_verbatim_block(text):
     # if an expression is like we still want for there to be some escape sequence, so that we can encode that
     # the escape sequnce will be [[[ raw latex code ]]]
     # so we
-    text = text.replace('"', '\verb"\verb|"|\verb"').replace('\n', '" \\\\\n\verb"').replace('[[[', '"').replace(']]]', '\verb"')
-    return '\verb"' + text + '"'
+    text = text.replace('"', '\\verb"\\verb|"|\\verb"').replace('\n', '" \\\\\n\\verb"').replace('[[[', '"').replace(']]]', '\\verb"')
+    return '\\verb"' + text + '"'
 
 def color(c, r):
     if color_output_latex:
-        return '[[[{\color{'+c+'}]]]' + r + '[[[}]]]'  # this will generate something like {\color{xxx}\verb"...."}
+        return '[[[{\\color{'+c+'}]]]' + r + '[[[}]]]'  # this will generate something like {\color{xxx}\verb"...."}
     else:
         return r
 
+def generate_latex():
+    global color_output_latex, generating_latex_output
+    color_output_latex = True
+    generating_latex_output = True
+    try:
+        ret = []
+        rewrites_performed = defaultdict(set)
+        for kind, args in event_log:
+            if kind == 'original_rexpr':
+                rexpr, = args
+                ret.append(r'\textbf{Original \rexpr:} \\')
+                ret.append(latex_verbatim_block(rexpr.stylized_rexpr()))
+                ret.append(r'\\')
+                ret.append(r'{\centering \rule{4cm}{0.4pt}} \\')
+            elif kind == 'simplify_fast' or kind == 'simplify_full':
+                old, rexpr = args
+
+
+                ret.append(r'\textbf{After simplification:} \\')
+                ret.append(latex_verbatim_block(rexpr.stylized_rexpr()))
+                ret.append(r'\\')
+                ret.append(r'{\centering \rule{4cm}{0.4pt}} \\')
+            elif kind == 'applied_rewrite':
+                which_rewrite, source_rexpr, resulting_rexpr = args
+                # if the source \rexpr has been
+                rewrites_performed[source_rexpr].add(resulting_rexpr)
+
+
+        return '\n'.join(ret)
+    finally:
+        color_output_latex = False
+        generating_latex_output = False
+
+
 if logging_rewrites:
     logging_rewrite_output = open(os.environ.get('REWITE_LOG', 'rewrite.log'), 'w+')
-    import uuid
+    def generate_latex_file():
+        with open(os.environ.get('REWITE_LOG', 'rewrite.log') + '.tex', 'w+') as f:
+            f.write(generate_latex())
 
-indent_nested_amount = '  '
+    atexit.register(generate_latex_file)
+
+indent_nested_amount = ' '
 
 
 
@@ -215,10 +251,12 @@ class Term:
             r = nested(r)
             if '+' in r:  # the order of operations might not match what the syntax tree should print out, so this will check for that
                 return '('+r.strip()+')'
-            return r
+            return r.rstrip()
 
-
-        if self.name == '$VARIABLE' and self.arity == 1:
+        if generating_latex_output and isMultiplicity(self):
+            # then generate some escape sequence for the multiplicity
+            return r'[[[ {\bf \verb|'+str(self.get_argument(0)) + r'|}]]]'  # this is going to cause the width of the character to change....
+        elif self.name == '$VARIABLE' and self.arity == 1:
             v = self.get_argument(0)
             if isinstance(v, int):
                 # becuase ints are used for the arguments, they can be hard to
@@ -247,11 +285,11 @@ class Term:
                 bodyv = body.stylized_rexpr().strip()
                 return f'proj({var}, {bodyv})'
             else:
-                return f'proj({var}, {nested(body)})'
+                bodyv = nested(body)
+                return f'proj({var}, {bodyv})'
         else:
             # this covers all base cases and expressions like if which are just represented via their name
             return f'{self.name}(' + ', '.join(map(nested, self.arguments)) + ')'
-
 
 
 def Variable(name):
@@ -371,19 +409,14 @@ def walk_rexpr(rexpr, func):
 
 def contains_variable(rexpr, var):
     assert isVariable(var)
+    if not isinstance(rexpr, Term):
+        return False
     if rexpr == var:
         return True
     if isinstance(rexpr, Term):
         for a in rexpr.arguments:
             if contains_variable(a, var): return True
     return False
-    # found = False
-    # def walker(rx):
-    #     nonlocal found
-    #     for a in rx.arguments:
-    #         if a == var: found = True
-    # walk_rexpr(rexpr, walker)
-    # return found
 
 def contains_any_variable(rexpr):
     if isVariable(rexpr): return True
@@ -976,6 +1009,14 @@ class RewriteEngine:
     def apply(self, rexpr, *, top_level_apply=False):
         old_context = self.context
         try:
+            if top_level_apply and self.kind == 'full':
+                # then this will want to go through the expression and identify
+                # which expressions this will know all of the conjunctive
+                # constraints which are present.  Variable names should already
+                # be made unique, so we don't have to concern ourselves with
+                # proj/aggregate introducing new variables
+                for e in gather_environment(rexpr):
+                    self.context.add_rexpr(e)
             for func in self.rewrites.get_matching_rewrites(rexpr, self):
                 res = func(self, rexpr)
                 assert res is not None  # error as this means the implementation is incomplete
@@ -995,7 +1036,9 @@ class RewriteEngine:
     #     return self.apply(rexpr)
 
     def rewrite_once(self, rexpr):
+        old = rexpr
         rexpr = self.apply(rexpr)
+        log_event('simplify_'+self.kind, old, rexpr)
         return make_conjunction(self.context.local_to_rexpr(), rexpr)
 
     def rewrite_fully(self, rexpr, *, add_context=True):
@@ -1653,12 +1696,28 @@ def aggregator(self, rexpr):
                 # don't make something new as this would be the same expression (optimization)
                 return rexpr
 
+            rxp = make_conjunction(self.context.local_to_rexpr(), rxp)  # anything from the environment that is set, track that here
+
             return Term('aggregator', (op, resulting, incoming, rxp))
         finally:
             self.context = outer_context
 
         # there are no rewrites which can be applied here
         #return rexpr
+
+
+@register_rewrite('(aggregator ground var var rexpr)', kind='full')
+def aggregator_full(self, rexpr):
+    for op, result, incoming, rxp_orig in match(self, rexpr, '(aggregator ground var var rexpr)'):
+        branches = list(gather_branches(r, through_nested=False))
+        assert len(branches) == len(set(branches))  # make sure there are no duplicates (for now) as it makes the code easier
+        if branches:
+            # TODO: this could break the expression part here using on of the nested branches
+            # this would be something like `A=sum(B, Q*(R+S)) -> ...sum(B, Q*R) + sum(B, Q*S)
+            assert False
+
+        pass
+    return rexpr
 
 
 # @register_rewrite('(exists var var rexpr)')
@@ -1828,6 +1887,26 @@ rewrites.define_user_rewrite('bool', 1,
 ####################################################################################################
 
 
+def example_fib_4_nomemo():
+    simplify = RewriteEngine()
+    rexpr = Term('fib', (4, Variable('res')))
+    log_event('original_rexpr', rexpr)
+    simplify.rewrite_fully(rexpr)
+
+def example_fib_4_memo():
+    simplify = RewriteEngine()
+    rewrites.set_memoized('fib', 2, 'unk')
+    rexpr = Term('fib', (4, Variable('res')))
+    log_event('original_rexpr', rexpr)
+    simplify.rewrite_fully(rexpr)
+
+
+
+def example_peano():
+    pass
+
+
+
 
 def main():
     #rexpr = Term('plus', (1,2,Variable('x')))
@@ -1902,6 +1981,14 @@ def main():
         for _ in range(v): r = Term('s', (r,))
         return r
 
+
+    generate_example = os.environ.get('GENERATE_EXAMPLE')
+    if generate_example:
+        generate_example = generate_example.replace('-', '_')
+        globals()['exmaple_'+generate_example]()
+        return
+
+
     #rexpr = Term('peano', (make_peano(5), Variable('res')))
 
 
@@ -1910,6 +1997,8 @@ def main():
     rexpr = Term('fib', (4, Variable('res')))
 
     #rexpr = Term('=', (Term('f', (1,2,3)), Term('f', (Variable('x'), Variable('y'), 3))))
+
+    log_event('original_rexpr', rexpr)
 
     simplify.rewrite_fully(rexpr)
 
