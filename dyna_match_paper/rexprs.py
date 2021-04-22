@@ -35,7 +35,7 @@ def parse_sexp(s):
 ####################################################################################################
 # for helping with tracking the rewrites (to generate "figures" in the paper)
 
-logging_rewrites = False
+logging_rewrites = True
 active_rewrite = []
 logging_rewrite_output = None
 
@@ -69,7 +69,7 @@ def track_constructed(rexpr, rewrite, source):
         return rexpr
     if not isinstance(rewrite, str):
         # more than one rewrite being used at the same time is passed as a list or tuple
-        rexpr._debug_active_rewrite.append += rewrite
+        rexpr._debug_active_rewrite.extend(rewrite)
     else:
         rexpr._debug_active_rewrite.append(rewrite)
     return rexpr
@@ -135,6 +135,7 @@ class Term:
              self.__arguments == other.__arguments)
 
     def __str__(self):
+        return self.stylized_rexpr()
         return self.name + '(' + ', '.join(map(str, self.arguments)) + ')'
 
     def __repr__(self): return str(self)
@@ -171,6 +172,12 @@ class Term:
                 s = '\n' + indent(s, '  ') + '\n'
             return s
 
+        def nested_p(r):
+            r = nested(r)
+            if '+' in r:  # the order of operations might not match what the syntax tree should print out, so this will check for that
+                return '('+r+')'
+            return r
+
         if self.name == '$VARIABLE' and self.arity == 1:
             v = self.get_argument(0)
             if isinstance(v, int):
@@ -186,7 +193,7 @@ class Term:
         elif self.name == 'structure':
             return f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}(' + ', '.join(map(nested, self.arguments[2:])) + '))'
         elif self.name in ('+', '*'):
-            return self.name.join(map(nested,self.arguments))
+            return self.name.join(map(nested_p,self.arguments))
         elif self.name == 'proj' and self.arity == 2:
             # then this is a projection expression, if the nested expression is
             # also a projection, then we we are not going to nest the expression
@@ -251,6 +258,140 @@ def multiplicity(val):
 
 def isMultiplicity(val):
     return isinstance(val, _multiplicityTerm)
+
+####################################################################################################
+
+
+generated_var_cnt = 0
+def generate_var():
+    global generated_var_cnt
+    generated_var_cnt += 1
+    return Variable(f'$VAR_{generated_var_cnt}')
+
+@track_rexpr_constructed
+def uniquify_variables(rexpr, mapping=None):
+    if not isinstance(rexpr, Term):
+        return rexpr
+    if mapping is None: mapping = {}
+    return uniquify_variables_rec(rexpr, mapping)
+
+
+def uniquify_variables_rec(rexpr, mapping):
+    if not isinstance(rexpr, Term):
+        return rexpr
+    if isVariable(rexpr):
+        # if the variable is contained in the expression, then this is going to give it a new name
+        return mapping.get(rexpr, rexpr)
+    elif rexpr.name == 'proj' and rexpr.arity == 2:
+        var = rexpr.get_argument(0)
+        rxp = rexpr.get_argument(1)
+        new_var = generate_var()
+        old = mapping.get(var)
+        mapping[var] = new_var
+        rxp = uniquify_variables_rec(rxp, mapping)
+        mapping[var] = old
+        return Term('proj', (new_var, rxp))
+    elif rexpr.name == 'aggregator' and rexpr.arity == 4:
+        op, resulting, incoming, rxp = rexpr.arguments
+        new_var = generate_var()
+        assert resultin != incoming  # this needs to be handled differently
+        resulting = mapping.get(resulting, resulting)  # do the remapping for the returned variable
+        old_var = mapping.get(incoming)
+        mapping[incoming] = new_var
+        rxp = uniquify_variables_rec(rxp, mapping)
+        mapping[incoming] = old_var
+        return Term('aggregator', (op, resulting, new_var, rxp))
+    else:
+        # this should attempt to rewrite all of the arguments of the term
+        ret = []
+        for v in rexpr.arguments:
+            ret.append(uniquify_variables_rec(v, mapping))
+        ret = Term(rexpr.name, ret)
+        if ret != rexpr:
+            return ret
+        else:
+            # avoid duplicating this if there are no changes
+            return rexpr
+
+
+def walk_rexpr(rexpr, func):
+    # match against the R-exprs which have nested expressions
+    def w(r):
+        func(r)
+        if r.name in ('+', '*'):
+            for a in r.arguments: w(a)
+        elif r.name == 'proj' and r.arity == 2:
+            w(r.get_argument(1))
+        elif r.name == 'aggregate' and r.arity == 4:
+            w(r.get_argument(3))
+    w(rexpr)
+
+def contains_variable(rexpr, var):
+    assert isVariable(var)
+    if rexpr == var:
+        return True
+    if isinstance(rexpr, Term):
+        for a in rexpr.arguments:
+            if contains_variable(a, var): return True
+    return False
+    # found = False
+    # def walker(rx):
+    #     nonlocal found
+    #     for a in rx.arguments:
+    #         if a == var: found = True
+    # walk_rexpr(rexpr, walker)
+    # return found
+
+def contains_any_variable(rexpr):
+    if isVariable(rexpr): return True
+    if isinstance(rexpr, Term):
+        for a in rexpr.arguments:
+            if contains_any_variable(a): return True
+    return False
+
+def replace_term(expr, mapping):
+    if expr in mapping:
+        return mapping[expr]
+    elif isinstance(expr, Term):
+        ret = []
+        did_change = False
+        for a in expr.arguments:
+            n = replace_term(a, mapping)
+            if n != a: did_change = True
+            ret.append(n)
+        if did_change:
+            return Term(expr.name, ret)
+        return expr  # return unmodified if nothing changes
+    else:
+        return expr
+
+class IdentityWrapper:
+    def __init__(self, v): self.v = v
+    def __eq__(self, o): return isinstance(IdentityWrapper, o) and self.v is o.v
+    def __hash__(self): return id(self.v)
+
+def replace_identicial_term(expr, mapping):
+    # there needs to be a method for replacing an expression which is a particular instances, using the IS expression
+    # though if something is duplicated more than once in the expression (as these are read only pointers already), then that might
+    # cause a particular problem?  I suppose that this would require a particular path through the expression, or we could just
+    # make local copies throughout the expression such that unified expressions are distinct in memory
+    i = IdentityWrapper(expr)
+    if i in mapping:
+        return mapping[i]
+    elif isinstance(expr, Term):
+        ret = []
+        did_change = False
+        for a in expr.arguments:
+            n = replace_identicial_term(a, mapping)
+            if n is not a: did_change = True
+            ret.append(n)
+        if did_change:
+            return Term(expr.name, ret)
+        return expr  # return unmodified if nothing changes
+    else:
+        return expr
+
+
 
 ####################################################################################################
 # The core of the rewriting engine and pattern matching
@@ -498,8 +639,13 @@ class RewriteCollection:
 
     """
     def __init__(self):
+        # these only contain the "fast" rewrites, which is matching on the name or name/arity
         self.name_match = defaultdict(list)
         self.name_arity_match = defaultdict(list)
+
+        # these are additional rewrites which should also consider
+        self.name_match_fulls = defaultdict(list)
+        self.name_arity_match_fulls = defaultdict(list)
         self.full_match = defaultdict(list)
 
         # this would be some one-to-one matching of an expression
@@ -509,9 +655,9 @@ class RewriteCollection:
 
         self.user_defined_rewrites_memo = {}
 
-    def _register_function(self, pattern, func):
+    def _register_function(self, pattern, func, kind='fast'):
         # determine which of the patterns are required for a given expression
-        if getattr(func, '_matching_pattern', None) is None:
+        if not hasattr(func, '_matching_pattern'):
             func._matching_pattern = []
         func._matching_pattern.append(pattern)
         patterns = parse_sexp(pattern)
@@ -528,15 +674,21 @@ class RewriteCollection:
             if complex_pattern:
                 self.full_match[pattern].append(func)
             elif any_arity:
-                self.name_match[name].append(func)
+                if kind == 'fast':
+                    self.name_match[name].append(func)
+                else:
+                    self.name_match_fulls[name].append(func)
             else:
                 if arity is None:
                     arity = len(args)
-                self.name_arity_match[(name, arity)].append(func)
+                if kind == 'fast':
+                    self.name_arity_match[(name, arity)].append(func)
+                else:
+                    self.name_arity_match_fulls[(name, arity)].append(func)
 
-    def register_function(self, pattern):
+    def register_function(self, pattern, kind='fast'):
         def f(func):
-            self._register_function(pattern, func)
+            self._register_function(pattern, func, kind)
             return func
         return f
 
@@ -588,7 +740,7 @@ class RewriteCollection:
             if val is not None:
                 local_simplify.context.add_rexpr(Term('=', (Variable(i), val)))
 
-        contains_memo_result = local_simplify.rewrite_fully(contains_memo)
+        contains_memo_result = local_simplify.rewrite_fully(contains_memo, add_context=False)
 
         # this needs to match against the contains_memo_result to determine if the if expression would be true or false
         # or under determined.  if it is underdetermined, then we will _avoid_ reading the memo for now.  Otherwise
@@ -609,21 +761,52 @@ class RewriteCollection:
         elif condition_res is True:
             # then this has identified that the R-expr that we are looking for is contained inside of the memo table
             # so we are going to rewrite that expression to select the branch that we are looking for
-
-            assert False
+            memo_simplify = RewriteEngine(rewrites=self)
+            for i, val in enumerate(arg_values):
+                if val is not None:
+                    r = Term('=', (Variable(i), val))
+                    memo_simplify.context.add_rexpr(r)
+            memos_returned = memo_simplify.rewrite_fully(memos)
 
         elif condition_res is False:
             # then this needs to take the original R-expr and construct a new memoized expression
             # though if nothing is set, then we might just defer for a white
             if rewrite_engine.should_defer_computing_memo(rexpr, arg_values):
                 return rexpr
+            new_contains_rexpr = []
+            # there might be other stuff which was added to the context that we do not want to "contanimate" the values
+            memo_simplify = RewriteEngine(rewrites=self)
+            for i, val in enumerate(arg_values):
+                if val is not None:
+                    r = Term('=', (Variable(i), val))
+                    memo_simplify.context.add_rexpr(r)
+                    new_contains_rexpr.append(r)
+            # this should add back in the context for this expression, so we do not have to duplicate that here
+            memos_returned = memo_simplify.rewrite_fully(original_rexpr)
 
-            assert False
+            # this is going to have to re-read the values from the memo table, as this might recurse around and have been updated in the process
+            # the paper currently _does not_ handle self cycles, so this version of the code is ok for what we are demonstrating
+            contains_memo, memos, _ = self.user_defined_rewrites_memo[n].arguments
 
+            new_condition = make_disjunction(contains_memo, make_conjunction(*new_contains_rexpr))
+            new_memo = make_disjunction(memos, memos_returned)
+            import ipdb; ipdb.set_trace()
+            # construct a new if-expression which has the newly stored memos
+            self.user_defined_rewrites_memo[n] = Term('if', (new_condition, new_memo, original_rexpr))
 
+        # this needs to do renaming on the variables to match the caller's context and make new variables for anything else that is introduced
+        var_map = {}
+        for i, new_name in enumerate(rexpr.arguments):
+            var_map[Variable(i)] = new_name
 
-        # should never get here
-        assert False
+        # import ipdb; ipdb.set_trace()
+
+        print('================')
+        print(memos_returned)
+
+        memos_returned = uniquify_variables(memos_returned, var_map)
+
+        return memos_returned
 
     def set_memoized(self, name, arity, kind='none'):
         assert kind in ('none', 'unk')
@@ -665,6 +848,11 @@ class RewriteCollection:
         # we might want to avoid doing the full matches most of the time, so this will need to be controllable
         # by some expression
         if context.kind == 'full':
+            if rexpr.name in self.name_match_fulls:
+                yield from self.name_match_fulls[rexpr.name]
+            if n in self.name_arity_match_fulls:
+                yield from self.name_arity_match_fulls[n]
+
             for pattern, funcs in self.full_match.items():
                 if match(context, rexpr, pattern):
                     yield from funcs
@@ -722,9 +910,9 @@ class RewriteEngine:
     Recursively applies itself to the R-expr until it is rewritten
     """
 
-    def __init__(self, *, rewrites: RewriteCollection=None, kind='simple', context=None):
+    def __init__(self, *, rewrites: RewriteCollection=None, kind='fast', context=None):
         self.__rewrites = rewrites or globals()['rewrites']
-        assert kind in ('simple', 'full')
+        assert kind in ('fast', 'full')
         self.__kind = kind
 
         # context can be modified as this moves through the different rewrites
@@ -759,12 +947,14 @@ class RewriteEngine:
         rexpr = self.apply(rexpr)
         return make_conjunction(self.context.local_to_rexpr(), rexpr)
 
-    def rewrite_fully(self, rexpr):
+    def rewrite_fully(self, rexpr, *, add_context=True):
         while True:
             # this contains the context values inside of itself
             old = rexpr
             rexpr = self.apply(rexpr)
             if old == rexpr: break
+        if not add_context:
+            return rexpr
         return make_conjunction(self.context.local_to_rexpr(), rexpr)
 
     def get_value(self, rexpr):
@@ -800,6 +990,8 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
         expr = pattern
 
     returning_match = []
+
+    named_variables = {}
 
     def rec(rexpr, pattern):
         if isinstance(pattern, str):
@@ -839,6 +1031,17 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                     return None
                 res = [v]
             return res
+        elif name == 'let-var':
+            assert len(pattern) == 3
+            res = rec(rexpr, pattern[2])
+            named_variables[pattern[1]] = res
+            return res
+        elif name == 'read-var':
+            assert len(pattern) == 2
+            return named_variables[pattern[1]]  # so that we can match something from before
+        # elif name == 'match-var':
+        #     assert len(pattern) == 2
+
         # TODO: maybe var, ground rexpr should be VAR GROUND REXPR so that it is clear they are meta
         elif name == 'var':
             if isVariable(rexpr):
@@ -894,7 +1097,14 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                 return []
             else:
                 return None
-
+        elif name == 'NOT-EQ':
+            assert len(pattern) == 3
+            a = rec(rexpr, pattern[1])
+            b = rec(rexpr, pattern[2])
+            if a != b:
+                return []
+            else:
+                return None
         elif name == 'mul':
             if pattern[1] == '>=':
                 assert len(pattern) == 3
@@ -1439,9 +1649,17 @@ def max_rr(self, rexpr):
 def lessthan(self, rexpr):
     for a,b in match(self, rexpr, '(lessthan ground ground)'):
         return multiplicity(1 if a < b else 0)
-
     return rexpr
 
+
+@register_rewrite('(lessthan args 2)', kind='full')
+def lessthan_full(self, rexpr):
+    for a,b in match(self, rexpr, '(lessthan var var)'):
+        # this needs to read from the environment, though there might be multiple less than constraints that could work here
+        pass
+
+    # for a,b if match(self, rexpr, '(AND (lessthan (let-var a var) (let-var b ground)) (ENV (lessthan (EQ (read-var a) var) rexpr))'):
+    #     # this needs to read from the environment
 
 @register_rewrite('(lessthan_eq args 2)')
 def lessthan_eq(self, rexpr):
@@ -1484,147 +1702,14 @@ def bool_and_rr(self, rexpr):
     return rexpr
 
 # define a rewrite which is just another R-expr rather than a "builtin"
-rewrite.define_user_rewrite('bool', 1,
-                            make_disjunction(
-                                Term('=', (Variable(0), True)),
-                                Term('=', (Variable(0), False))
-                            ))
+rewrites.define_user_rewrite('bool', 1,
+                             make_disjunction(
+                                 Term('=', (Variable(0), True)),
+                                 Term('=', (Variable(0), False))
+                             ))
 
 
 
-
-
-
-####################################################################################################
-
-generated_var_cnt = 0
-def generate_var():
-    global generated_var_cnt
-    generated_var_cnt += 1
-    return Variable(f'$VAR_{generated_var_cnt}')
-
-@track_rexpr_constructed
-def uniquify_variables(rexpr, mapping=None):
-    if not isinstance(rexpr, Term):
-        return rexpr
-    if mapping is None: mapping = {}
-    return uniquify_variables_rec(rexpr, mapping)
-
-
-def uniquify_variables_rec(rexpr, mapping):
-    if not isinstance(rexpr, Term):
-        return rexpr
-    if isVariable(rexpr):
-        # if the variable is contained in the expression, then this is going to give it a new name
-        return mapping.get(rexpr, rexpr)
-    elif rexpr.name == 'proj' and rexpr.arity == 2:
-        var = rexpr.get_argument(0)
-        rxp = rexpr.get_argument(1)
-        new_var = generate_var()
-        old = mapping.get(var)
-        mapping[var] = new_var
-        rxp = uniquify_variables_rec(rxp, mapping)
-        mapping[var] = old
-        return Term('proj', (new_var, rxp))
-    elif rexpr.name == 'aggregator' and rexpr.arity == 4:
-        op, resulting, incoming, rxp = rexpr.arguments
-        new_var = generate_var()
-        assert resultin != incoming  # this needs to be handled differently
-        resulting = mapping.get(resulting, resulting)  # do the remapping for the returned variable
-        old_var = mapping.get(incoming)
-        mapping[incoming] = new_var
-        rxp = uniquify_variables_rec(rxp, mapping)
-        mapping[incoming] = old_var
-        return Term('aggregator', (op, resulting, new_var, rxp))
-    else:
-        # this should attempt to rewrite all of the arguments of the term
-        ret = []
-        for v in rexpr.arguments:
-            ret.append(uniquify_variables_rec(v, mapping))
-        ret = Term(rexpr.name, ret)
-        if ret != rexpr:
-            return ret
-        else:
-            # avoid duplicating this if there are no changes
-            return rexpr
-
-
-def walk_rexpr(rexpr, func):
-    # match against the R-exprs which have nested expressions
-    def w(r):
-        func(r)
-        if r.name in ('+', '*'):
-            for a in r.arguments: w(a)
-        elif r.name == 'proj' and r.arity == 2:
-            w(r.get_argument(1))
-        elif r.name == 'aggregate' and r.arity == 4:
-            w(r.get_argument(3))
-    w(rexpr)
-
-def contains_variable(rexpr, var):
-    assert isVariable(var)
-    if rexpr == var:
-        return True
-    if isinstance(rexpr, Term):
-        for a in rexpr.arguments:
-            if contains_variable(a, var): return True
-    return False
-    # found = False
-    # def walker(rx):
-    #     nonlocal found
-    #     for a in rx.arguments:
-    #         if a == var: found = True
-    # walk_rexpr(rexpr, walker)
-    # return found
-
-def contains_any_variable(rexpr):
-    if isVariable(rexpr): return True
-    if isinstance(rexpr, Term):
-        for a in rexpr.arguments:
-            if contains_any_variable(a): return True
-    return False
-
-def replace_term(expr, mapping):
-    if expr in mapping:
-        return mapping[expr]
-    elif isinstance(expr, Term):
-        ret = []
-        did_change = False
-        for a in expr.arguments:
-            n = replace_term(a, mapping)
-            if n != a: did_change = True
-            ret.append(n)
-        if did_change:
-            return Term(expr.name, ret)
-        return expr  # return unmodified if nothing changes
-    else:
-        return expr
-
-class IdentityWrapper:
-    def __init__(self, v): self.v = v
-    def __eq__(self, o): return isinstance(IdentityWrapper, o) and self.v is o.v
-    def __hash__(self): return id(self.v)
-
-def replace_identicial_term(expr, mapping):
-    # there needs to be a method for replacing an expression which is a particular instances, using the IS expression
-    # though if something is duplicated more than once in the expression (as these are read only pointers already), then that might
-    # cause a particular problem?  I suppose that this would require a particular path through the expression, or we could just
-    # make local copies throughout the expression such that unified expressions are distinct in memory
-    i = IdentityWrapper(expr)
-    if i in mapping:
-        return mapping[i]
-    elif isinstance(expr, Term):
-        ret = []
-        did_change = False
-        for a in expr.arguments:
-            n = replace_identicial_term(a, mapping)
-            if n is not a: did_change = True
-            ret.append(n)
-        if did_change:
-            return Term(expr.name, ret)
-        return expr  # return unmodified if nothing changes
-    else:
-        return expr
 
 
 ####################################################################################################
@@ -1681,10 +1766,12 @@ def main():
         for _ in range(v): r = Term('s', (r,))
         return r
 
-    rexpr = Term('peano', (make_peano(5), Variable('res')))
+    #rexpr = Term('peano', (make_peano(5), Variable('res')))
 
 
-    # rexpr = Term('fib', (10, Variable('res')))
+    rewrites.set_memoized('fib', 2, 'unk')
+
+    rexpr = Term('fib', (10, Variable('res')))
 
     #rexpr = Term('=', (Term('f', (1,2,3)), Term('f', (Variable('x'), Variable('y'), 3))))
 
