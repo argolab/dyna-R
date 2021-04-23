@@ -87,7 +87,7 @@ def track_constructed(rexpr, rewrite, source):
 def log_event(event_kind, *args):
     if logging_rewrites:
         pass
-    assert event_kind in ('simplify_fast', 'simplify_full', 'memo_indeterminate', 'memo_computed', 'memo_looked_up', 'applied_rewrite', 'original_rexpr')
+    assert event_kind in ('simplify_fast', 'simplify_full', 'memo_indeterminate', 'memo_computed', 'memo_looked_up', 'applied_rewrite', 'original_rexpr', 'rewritten_result')
 
     # we will want to somehow register that this is doing the different operations
     event_log.append((event_kind, args))
@@ -101,12 +101,53 @@ def latex_verbatim_block(text):
     # if an expression is like we still want for there to be some escape sequence, so that we can encode that
     # the escape sequnce will be [[[ raw latex code ]]]
     # so we
-    text = text.replace('"', '\\verb"\\verb|"|\\verb"').replace('\n', '" \\\\\n\\verb"').replace('[[[', '"').replace(']]]', '\\verb"')
-    return '\\verb"' + text + '"'
+
+    color_options = ['green', 'blue', 'orange', 'purple']
+    color_idx = 0
+    res = []
+    paren_order = []
+    for c in text:
+        if c in '()': paren_order.append(c)
+    paren_idx = 0
+    for c in text:
+        if c == '(':
+            if paren_order[paren_idx+1] != ')':
+                res.append(r'[[[{\color{'+color_options[color_idx % len(color_options)] +r'} \Verb|(|}]]]')
+                color_idx += 1
+            else:
+                res.append(c)  # just make this black
+            paren_idx += 1
+        elif c == ')':
+            if paren_order[paren_idx-1] != '(':
+                color_idx -= 1
+                res.append(r'[[[{\color{'+color_options[color_idx % len(color_options)] +r'} \Verb|)|}]]]')
+            else:
+                res.append(c)  # just make this black
+            paren_idx += 1
+        else:
+            res.append(c)
+    assert color_idx == 0  # make sure everything matched
+    text = ''.join(res)
+
+    text = text.strip().replace('"', '\\Verb"\\Verb|"|\\Verb"').replace('\n', '" \\\\\n\\Verb"').replace('[[[', '"').replace(']]]', '\\Verb"')
+    text = '\\Verb"' + text + '"'
+    text = text.replace(r'\Verb""', '')  # delete useless verb blocks
+    return text
+
+def focus_term_print(to_print, alt):
+    # remove parts of the R-expr which are the same in the alt expression.  This
+    # should make the printed R-exprs smaller and easier to read as a result
+    s = {}
+    def a(x):
+        if x._debug_term_size > 100:
+            s[x] = Term('...', ())
+    walk_rexpr(alt, a)
+    return replace_term(to_print, s)
+
 
 def color(c, r):
     if color_output_latex:
-        return '[[[{\\color{'+c+'}]]]' + r + '[[[}]]]'  # this will generate something like {\color{xxx}\verb"...."}
+        return '[[[{\\color{'+c+'}]]]' + r + '[[[}]]]'  # this will generate something like {\color{xxx}\Verb"...."}
     else:
         return r
 
@@ -116,6 +157,7 @@ def generate_latex():
     generating_latex_output = True
     try:
         ret = []
+        source_order = []
         rewrites_performed = defaultdict(set)
         for kind, args in event_log:
             if kind == 'original_rexpr':
@@ -127,16 +169,88 @@ def generate_latex():
             elif kind == 'simplify_fast' or kind == 'simplify_full':
                 old, rexpr = args
 
+                if rewrites_performed:
+                    ret.append(r'\textbf{Rewrites applied:} \\')
+                    ret.append(r'\begin{longtable}{ccc}')
+                    rewrites_done = {}
+                    generated_lines = 0
+                    for s in source_order:
+                        # we will want to generate some kind of two column table with arrows between them
+                        if isinstance(s, tuple):
+                            # meaning that this is some result that we are going to apply to the
+                            rewrites_done[s[0]] = s[1]
+                            continue
+                        dests = rewrites_performed[s]
+                        cnt = 0
+                        if generated_lines != 0:
+                            ret.append(r'\hline')
+                        generated_lines += 1
+                        for which_rewrite, dest_rexpr in dests:
+                            if cnt == 0:
+                                # only print out the source rewrite once, this will want to combine the colums if there are multiple expressions
+                                # if len(dests) != 1:
+                                #     ret.append(r'\multirow{'+str(len(dests))+r'}{*}{')
+                                ns = replace_term(s, rewrites_done)
+                                ret.append(r'\begin{minipage}{.4\textwidth}')
+                                ret.append(latex_verbatim_block(ns.stylized_rexpr()))
+                                ret.append(r'\end{minipage}')
+                                # if len(dests) != 1:
+                                #     ret.append(r'}')
+                                cnt += 1
+
+                            if isinstance(which_rewrite, str):
+                                which_rewrite_str = r'\ref{' + which_rewrite + r'}'
+                            else:
+                                # there might be multiple rewrites which applied here
+                                # so these were registered as some macro step. so report all of them combined
+                                which_rewrite_str = r'\ref{' + r'}, \ref{'.join(which_rewrite) + r'}'
+
+                            ret.append(r' & ${\todocolor{red}\xrightarrow{{\todocolor{blue!50}\footnotesize' + which_rewrite_str + r'}}}\xspace$ & \begin{minipage}{.4\textwidth}')
+                            #ret.append(r'} & junk & \mbox{')
+                            dest_limit = focus_term_print(dest_rexpr, ns)
+                            # if dest_limit != dest_rexpr:
+                            #     import ipdb; ipdb.set_trace()
+                            ret.append(latex_verbatim_block(dest_limit.stylized_rexpr()))
+                            ret.append(r' \end{minipage} \\')
+
+                    ret.append(r'\end{longtable}')
 
                 ret.append(r'\textbf{After simplification:} \\')
                 ret.append(latex_verbatim_block(rexpr.stylized_rexpr()))
                 ret.append(r'\\')
                 ret.append(r'{\centering \rule{4cm}{0.4pt}} \\')
+                rewrites_performed = defaultdict(set)
+                source_order = []
+
             elif kind == 'applied_rewrite':
                 which_rewrite, source_rexpr, resulting_rexpr = args
                 # if the source \rexpr has been
-                rewrites_performed[source_rexpr].add(resulting_rexpr)
+                if source_rexpr not in rewrites_performed:
+                    source_order.append(source_rexpr)
+                rewrites_performed[source_rexpr].add((which_rewrite, resulting_rexpr))
 
+            elif kind == 'rewritten_result':
+                orig_rexpr, new_rexpr = args
+                source_order.append((orig_rexpr, new_rexpr))
+
+            elif kind == 'memo_indeterminate':
+                ret.append(r'\textbf{Memo access operation deferred:}')
+                (name, arity), arg_values = args
+                r = name + '(' + ', '.join(
+                    [str(a) if a is not None else r'[[[\textit{free}]]]' for a in arg_values]) + ')'
+                ret.append(latex_verbatim_block(r))
+                ret.append(r'\\')
+
+            elif kind in ('memo_computed', 'memo_looked_up'):
+                # then we should print something here for this
+                (name, arity), arg_values, returned_rexpr = args
+                ret.append(r'\textbf{Memo ' + ('Computed' if kind == 'memo_computed' else 'Looked Up') + r'}')
+                r = name + '(' + ', '.join(
+                    [str(a) if a is not None else r'[[[\textit{free}]]]' for a in arg_values]) + ')'
+                ret.append(latex_verbatim_block(r))
+                ret.append(r'$\to$')
+                ret.append(latex_verbatim_block(returned_rexpr.stylized_rexpr()))
+                ret.append(r'\\')
 
         return '\n'.join(ret)
     finally:
@@ -164,7 +278,7 @@ class Term:
 
     __slots__ = (
         ('__name', '__arguments', '__hashcache') +
-        (('_debug_active_rewrite', '_debug_constructed_from', '_debug_unique_id')
+        (('_debug_active_rewrite', '_debug_constructed_from', '_debug_unique_id', '_debug_term_size')
          if logging_rewrites else ())
     )
 
@@ -179,6 +293,11 @@ class Term:
             self._debug_active_rewrite = active_rewrite.copy()
             self._debug_constructed_from = []
             self._debug_unique_id = f'gened_term:{self.name}_{self.arity}_{uuid.uuid4().hex}'  # make a unique id for this
+            s = 0
+            for a in self.arguments:
+                if isinstance(a, Term): s += a._debug_term_size
+                else: s += len(str(a))
+            self._debug_term_size = len(self.name) + s + len(self.arguments)*2 + 2  # a rough estimate of how big this term is when printing
 
     @property
     def arity(self):
@@ -247,15 +366,17 @@ class Term:
                 s = '\n' + indent(s, indent_nested_amount) + '\n'
             return s
 
-        def nested_p(r):
-            r = nested(r)
-            if '+' in r:  # the order of operations might not match what the syntax tree should print out, so this will check for that
+        def nested_p(ro):
+            r = nested(ro)
+            if isinstance(ro, Term) and ro.name == '+':  # the order of operations might not match what the syntax tree should print out, so this will check for that
                 return '('+r.strip()+')'
             return r.rstrip()
 
-        if generating_latex_output and isMultiplicity(self):
+        if generating_latex_output and self.name == '...' and self.arity == 0:
+            return r'[[[ $\cdots$ ]]]'  # this is ommited
+        elif generating_latex_output and isMultiplicity(self):
             # then generate some escape sequence for the multiplicity
-            return r'[[[ {\bf \verb|'+str(self.get_argument(0)) + r'|}]]]'  # this is going to cause the width of the character to change....
+            return r'[[[$\overline{\texttt{'+str(self.get_argument(0)) + r'}}$]]]'  # this is going to cause the width of the character to change....
         elif self.name == '$VARIABLE' and self.arity == 1:
             v = self.get_argument(0)
             if isinstance(v, int):
@@ -268,9 +389,8 @@ class Term:
             return f'({nested(self.get_argument(0))}={nested(self.get_argument(1))})'
         elif self.name == 'aggregator' and self.arity == 4:
             return (
-                color('aggblue', f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}({nested(self.get_argument(2))},')+
-                f'{nested(self.get_argument(3))})'+
-                color('aggblue', ')'))
+                '('+color('aggblue', f'{nested(self.get_argument(1))}={nested(self.get_argument(0))}({nested(self.get_argument(2))},')+
+                f'{nested(self.get_argument(3))}))')
         # elif self.name == 'structure':
         #     return f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}(' + ', '.join(map(nested, self.arguments[2:])) + '))'
         elif self.name in ('+', '*'):
@@ -788,6 +908,8 @@ class RewriteCollection:
         # this will have to replace all of the variables or create new variable names for all of the expression
         rxp = uniquify_variables(rxp, var_map)
 
+        rxp = track_constructed(rxp, 'rr:user_defined_rewrite', rexpr)
+
         # we DO NOT immediatly apply rewrites to the returned expression as that could cuase recursive programs to run forever
 
         # TODO: the depth lmiting is not included in this version currently.  This will have to walk through the R-expr
@@ -1021,6 +1143,7 @@ class RewriteEngine:
                 res = func(self, rexpr)
                 assert res is not None  # error as this means the implementation is incomplete
                 if res != rexpr:
+                    log_event('rewritten_result', rexpr, res)  # record what has happened such that we can do replacements in the generated code
                     self.context.add_rexpr(res)  # this is going to add the new R-expr to the context
                     return res  # stop trying to match the expression and accept this rewrite
             # no rewrite matched, so this is just going to return the R-expr unmodified
@@ -1517,6 +1640,7 @@ def proj(self, rexpr):
             if vv is not None:
                 # then we are going to go through and do a replace and then just return the body
                 rr2 = replace_term(rr, {v: vv})  # replace the variable with its value
+                rr2 = track_constructed(rr2, 'rr:equality_prop', Term('*', (Term('=', (v,vv)), rr)))
                 return rr2
 
             for _ in match(self, rr, '(mul 0)'):
@@ -1549,9 +1673,11 @@ def proj(self, rexpr):
                     if contains_variable(a, v):
                         depends.append(a)
                     else:
-                        not_depends.append(track_constructed(a, 'rr:push-in-proj', rexpr))
+                        not_depends.append(a)
                 if not_depends:
-                    return make_conjunction(*not_depends, Term('proj', (v, make_conjunction(*depends))))
+                    return track_constructed(
+                        make_conjunction(*not_depends, Term('proj', (v, make_conjunction(*depends)))),
+                        'rr:push-in-proj', rexpr)
 
 
             for _ in match(self, rr, '(= (param 0) ground)', v):
@@ -1901,7 +2027,6 @@ def example_fib_4_memo():
     simplify.rewrite_fully(rexpr)
 
 
-
 def example_peano():
     pass
 
@@ -1985,7 +2110,7 @@ def main():
     generate_example = os.environ.get('GENERATE_EXAMPLE')
     if generate_example:
         generate_example = generate_example.replace('-', '_')
-        globals()['exmaple_'+generate_example]()
+        globals()['example_'+generate_example]()
         return
 
 
