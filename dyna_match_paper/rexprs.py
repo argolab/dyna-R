@@ -177,6 +177,7 @@ def identify_interesting_part_of_rewrite(from_source, destination):
     obj_source = object()
     obj_dest = object()
     sources = set()
+    dests = set()
     both_count = 0
     both = []
     uniques = []
@@ -212,20 +213,27 @@ def identify_interesting_part_of_rewrite(from_source, destination):
     ps('_debug_parent_term_source')(from_source, 'root')
     ps('_debug_parent_term_dest')(destination, 'root')
 
+    def c(x):
+        x._debug_identified_as_same = None
 
     def s(x):
         x._debug_identified_as_same = obj_source
         sources.add(x)
     def d(x):
         nonlocal both_count
-        if getattr(x, '_debug_identified_as_same', None) is obj_source:
+        if getattr(x, '_debug_identified_as_same', None) == 'both':
+            return  # this is already marked as in both
+        elif getattr(x, '_debug_identified_as_same', None) is obj_source:
             x._debug_identified_as_same = 'both'
             both_count += 1
             both.append(x)
         else:
             assert x not in sources or x._debug_term_size < 15
+            dests.add(x)
             x._debug_identified_as_same = obj_dest
 
+    walk_rexpr(from_source, c)
+    walk_rexpr(destination, c)
     walk_rexpr(from_source, s)
     walk_rexpr(destination, d)  # now we are going to walk all of the fi
 
@@ -378,7 +386,7 @@ def generate_latex():
                     assert kind == 'simplify_full'
                     simplify_full_count += 1
                 #simplify_count += 1
-                ret.append(r'\textbf{\rexpr after \hyperref[function:simplify_once_fast]{\textsc{\SimplifyOnceFast}} ' f'{simplify_fast_count} ' + ('time' if simplify_fast_count <= 1 else 'times') + ((r' and \hyperref[function:simplify_once_fully_partition]{\textsc{\SimplifyOnceFullyPartition}} ' f'{simplify_full_count} ' + ('time' if simplify_full_count <= 1 else 'times')) if simplify_full_count > 0 else '')+ r':} \\')
+                ret.append(r'\textbf{\rexpr after applying \hyperref[function:simplify_once_fast]{\textsc{\SimplifyOnceFast}} ' f'{simplify_fast_count} ' + ('time' if simplify_fast_count <= 1 else 'times') + ((r' and \hyperref[function:simplify_once_fully_partition]{\textsc{\SimplifyOnceFullyPartition}} ' f'{simplify_full_count} ' + ('time' if simplify_full_count <= 1 else 'times')) if simplify_full_count > 0 else '')+ r':} \\')
 
                 ret.append(latex_verbatim_block(reset_print_everything(rexpr).stylized_rexpr()))
                 ret.append(r'\\')
@@ -577,6 +585,8 @@ class Term:
             return r'[[[ $\cdots$ ]]]'  # this is ommited
         elif generating_latex_output and isMultiplicity(self):
             # then generate some escape sequence for the multiplicity
+            if self.get_argument(0) == float('inf'):
+                return '[[[$\overline{\infty}$]]]'
             return r'[[[$\overline{\texttt{'+str(self.get_argument(0)) + r'}}$]]]'  # this is going to cause the width of the character to change....
         elif self.name == '$VARIABLE' and self.arity == 1:
             v = self.get_argument(0)
@@ -2003,7 +2013,9 @@ def unify(self, rexpr):
 def make_project(*args):
     *var_names, rexpr = args
     for var in reversed(var_names):
-        rexpr = Term('proj', (Variable(var), rexpr))
+        v = Variable(var)
+        assert contains_variable(rexpr, v)
+        rexpr = Term('proj', (v, rexpr))
     return rexpr
 
 @register_rewrite('(proj var rexpr)')
@@ -2034,9 +2046,11 @@ def proj(self, rexpr):
             for _ in match(self, rr, '(any-disjunction (mul >= 1))'):
                 # this is an expression like proj(X, 1+Q)  which rewrites as infinity as the variable X can take on any number of values
                 # to match the paper this requires two rewrites
-                return track_constructed(multiplicity(float('inf')), ('rr:proj_no_var', 'rr:distribute-in-proj'),
+                rr2 = track_constructed(multiplicity(float('inf')), ('rr:proj_no_var', 'rr:distribute-in-proj'),
                                          r'The expression \rterm{proj(X, 1)} is rewritten as $\infty$',
                                          rexpr)
+                outer_context.update_except(self.context, v)
+                return rr2
 
 
             # remove disjunctive and conjunctive expressions out
@@ -2088,6 +2102,8 @@ def proj(self, rexpr):
             # if self.context:
             #     import ipdb; ipdb.set_trace()
 
+            assert contains_variable(rr, v)
+
             return Term('proj', (v, rr))
         finally:
             self.context = outer_context
@@ -2133,6 +2149,12 @@ def proj_full(self, rexpr):
             # though this requires
             return track_constructed(make_disjunction(*ret), ('rr:distributivity', 'rr:distribute-in-proj'),
                                      r'Nested distributive expressions under projections such as \rterm{proj(X, R*(Q+S))} is rewritten.',
+                                     rexpr)
+
+        if not contains_variable(r, v):
+            return track_constructed(make_disjunction(multiplicity(float('inf')), r),
+                                     'rr:proj_no_var',
+                                     'The projected variable does not appear in the expression, thus the projection can be removed',
                                      rexpr)
 
     return rexpr
@@ -2543,10 +2565,12 @@ def example_neural():
         Term('aggregator',
              ('sum', Variable(1), Variable('agg_in'),
               make_project(
-                'I', 'J', 'out_res', 'edge_res',
-                  Term('out', (Variable(0), Variable('out_res'))),
-                  Term('edge', (Variable(0), Variable('J'), Variable('edge_res'))),
-                  Term('times', (Variable('out_res'), Variable('edge_res'), Variable('agg_in'))),
+                'I', 'out_res', 'edge_res',
+                  make_conjunction(
+                      Term('out', (Variable('I'), Variable('out_res'))),
+                      Term('edge', (Variable('I'), Variable(0), Variable('edge_res'))),
+                      Term('times', (Variable('out_res'), Variable('edge_res'), Variable('agg_in')))
+                  )
               ))))
     rewrites.define_user_rewrite(
         'out', 2,
