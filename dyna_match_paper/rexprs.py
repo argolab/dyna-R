@@ -212,16 +212,6 @@ def identify_interesting_part_of_rewrite(from_source, destination):
     ps('_debug_parent_term_source')(from_source, 'root')
     ps('_debug_parent_term_dest')(destination, 'root')
 
-    # def ps(x):
-    #     for a in x.arguments:
-    #         if isinstance(a, Term):
-    #             a._debug_parent_term_source = x
-    # walk_rexpr(from_source, ps)
-    # def pd(x):
-    #     for a in x.arguments:
-    #         if isinstance(a, Term):
-    #             a.debug_parent_term_dest = x
-    # walk_rexpr(destination, pd)
 
     def s(x):
         x._debug_identified_as_same = obj_source
@@ -289,7 +279,9 @@ def generate_latex():
     global color_output_latex, generating_latex_output
     color_output_latex = True
     generating_latex_output = True
-    simplify_count = 0
+    #simplify_count = 0
+    simplify_fast_count = 0
+    simplify_full_count = 0
     try:
         ret = []
         source_order = []
@@ -297,13 +289,13 @@ def generate_latex():
         for kind, args in event_log:
             if kind == 'original_rexpr':
                 rexpr, = args
-                ret.append(r'\textbf{Original \rexpr:} \\')
+                ret.append(r'\textbf{Original query represented as a \rexpr:} \\')
                 ret.append(latex_verbatim_block(rexpr.stylized_rexpr()))
                 ret.append(r'\\')
                 ret.append(r'{\centering \rule{4cm}{0.4pt}} \\')
 
                 if rewrites.user_defined_rewrites_used:
-                    ret.append(r'\textbf{Additional user defined rewrites:} \\')
+                    ret.append(r'\textbf{Additional user defined rewrites used for rewritting:} \\')
                     ret.append(r'\begin{longtable}{ccc}')
                     for (name, arity) in rewrites.user_defined_rewrites_used:
                         t = Term(name, (Variable(i) for i in range(arity)))
@@ -324,6 +316,7 @@ def generate_latex():
                     ret.append(r'\begin{longtable}{ccc}')
                     rewrites_done = {}
                     generated_lines = 0
+                    last_textual_description = None
                     for s in source_order:
                         # we will want to generate some kind of two column table with arrows between them
                         if isinstance(s, tuple):
@@ -332,8 +325,8 @@ def generate_latex():
                             continue
                         dests = rewrites_performed[s]
                         cnt = 0
-                        if generated_lines != 0:
-                            ret.append(r'[2pt] \hline \\[2pt]')
+                        # if generated_lines != 0:
+                        #     ret.append(r'[2pt] \hline \\[2pt]')
                         generated_lines += 1
                         ns = replace_term(s, rewrites_done)  # if this is at some intermediate step, then something might have changed
                         reset_rexprs_to_print(ns)
@@ -342,7 +335,14 @@ def generate_latex():
                         for _,_, dest_rexpr in dests:
                             identify_interesting_part_of_rewrite(ns, dest_rexpr)
                         for which_rewrite, textual_description, dest_rexpr in dests:
-                            ret.append(r'\multicolumn{3}{l}{' + textual_description + r'} \\[3pt] \nopagebreak')
+                            if textual_description != last_textual_description:
+                                if generated_lines > 1:
+                                    ret.append(r'[2pt] \hline \\[2pt]')
+                                ret.append(r'\multicolumn{3}{l}{' + textual_description + r'} \\[3pt] \nopagebreak')
+                                last_textual_description = textual_description
+                            else:
+                                if generated_lines > 1:
+                                    ret.append(r' \\[2pt]')
                             #ret.append(textual_description + r' & & \\')
                             if cnt == 0:
                                 # only print out the source rewrite once, this will want to combine the colums if there are multiple expressions
@@ -372,8 +372,13 @@ def generate_latex():
 
                     ret.append(r'\end{longtable}')
 
-                simplify_count += 1
-                ret.append(r'\textbf{\rexpr after simplifying ' f'{simplify_count}' + (r' times:} \\' if simplify_count > 1 else r' time:} \\' ))
+                if kind == 'simplify_fast':
+                    simplify_fast_count += 1
+                else:
+                    assert kind == 'simplify_full'
+                    simplify_full_count += 1
+                #simplify_count += 1
+                ret.append(r'\textbf{\rexpr after \hyperref[function:simplify_once_fast]{\textsc{\SimplifyOnceFast}} ' f'{simplify_fast_count} ' + ('time' if simplify_fast_count <= 1 else 'times') + ((r' and \hyperref[function:simplify_once_fully_partition]{\textsc{\SimplifyOnceFullyPartition}} ' f'{simplify_full_count} ' + ('time' if simplify_full_count <= 1 else 'times')) if simplify_full_count > 0 else '')+ r':} \\')
 
                 ret.append(latex_verbatim_block(reset_print_everything(rexpr).stylized_rexpr()))
                 ret.append(r'\\')
@@ -553,6 +558,13 @@ class Term:
                 s = '\n' + indent(s, indent_nested_amount) + '\n'
             return s
 
+        def nested_value(r):
+            if isinstance(r, str):
+                # then this should wrap the expression in "" when it is printed
+                return '"' + r.replace('"', '\\"').replace('\n', '\\n') + '"'
+            return nested(r)
+
+
         def nested_p(ro):
             r = nested(ro)
             if isinstance(ro, Term) and ro.name == '+':  # the order of operations might not match what the syntax tree should print out, so this will check for that
@@ -587,7 +599,7 @@ class Term:
             else:
                 return color('vargreen', str(v).capitalize())
         elif self.name == '=' and self.arity == 2:
-            return f'({nested(self.get_argument(0))}={nested(self.get_argument(1))})'
+            return f'({nested_value(self.get_argument(0))}={nested_value(self.get_argument(1))})'
         elif self.name == 'aggregator' and self.arity == 4:
             return (
                 '('+color('aggblue', f'{nested(self.get_argument(1))}={nested(self.get_argument(0))}({nested(self.get_argument(2))},')+
@@ -668,6 +680,7 @@ def multiplicity(val):
     if isinstance(val, _multiplicityTerm):
         return val
     if val == float('inf'):
+        import ipdb; ipdb.set_trace()
         return _multiplicityTerm(val)
     assert False  # wtf
 
@@ -1061,6 +1074,13 @@ class RewriteContext(set):
         for c in child.iter_local():
             self.add(c)
 
+    def update_except(self, child, not_include_variable):
+        assert child._parent is self
+        for c in child.iter_local():
+            # this is giong to take everything from the child which does not mention the variable
+            if not contains_variable(c, not_include_variable):
+                self.add(c)
+
 class RewriteCollection:
     """A class for tracking rewrite operators.  Operators are segmented such that
     they can be looked up quickly using the name of an R-expr or in the case
@@ -1365,7 +1385,9 @@ class RewriteCollection:
                                 # their old name rather than getting replaced
             v = Variable(i)
             var_map[v] = v
-        rexpr = uniquify_variables(rexpr, var_map)
+        if not logging_rewrites:
+            # becuase we want something that is nice to print, keeping the origional names should make this a little easier to read
+            rexpr = uniquify_variables(rexpr, var_map)
         self.user_defined_rewrites[(name, arity)] = rexpr
 
         if (name,arity) in self.user_defined_rewrites_memo:
@@ -1999,6 +2021,8 @@ def proj(self, rexpr):
                 rr2 = track_constructed(rr2, 'rr:equality_prop',
                                         f'The projected variable has been assigned and read from the context, its value is propagated through the \\rexpr.',
                                         Term('proj', (v, Term('*', (Term('=', (v,vv)), rr)))))
+                outer_context.update_except(self.context, v)
+                #import ipdb; ipdb.set_trace()
                 return rr2
 
             for _ in match(self, rr, '(mul 0)'):
@@ -2060,6 +2084,9 @@ def proj(self, rexpr):
                                              r'This rewrites expressions like \rterm{proj(X, (X=sum(Y, R)))} $\to$ \rterm{1} as \rterm{(X=sum(Y, R)} will always \emph{eventually} rewrite as \rterm{(X=}\emph{some value}\rterm{)}',
                                              rexpr)
 
+            # ll = self.context.local_to_rexpr()
+            # if self.context:
+            #     import ipdb; ipdb.set_trace()
 
             return Term('proj', (v, rr))
         finally:
@@ -2099,7 +2126,8 @@ def proj_full(self, rexpr):
                 ret.append(Term('proj', (v, nb)))
 
 
-            assert False  # Trying to see if we _need_ this rewrite, as this increase the energy, and isn't quite something that we have in the paper atm
+            # import ipdb; ipdb.set_trace()
+            # assert False  # Trying to see if we _need_ this rewrite, as this increase the energy, and isn't quite something that we have in the paper atm
 
             # this rewrite should be a combination of a distributive rule and the above rule to split a disjunction.
             # though this requires
@@ -2108,6 +2136,22 @@ def proj_full(self, rexpr):
                                      rexpr)
 
     return rexpr
+
+agg_identity = {
+    'sum': 0,
+    'prod': 1,
+    'min': float('inf'),
+    'max': float('-inf'),
+    'equals': Term('nil', ()),
+}
+agg_split_op = {
+    'sum': 'plus',
+    'prod': 'times',
+    'min': 'min',
+    'max': 'max',
+    'equals': 'equals_agg_merge',
+}
+
 
 
 @register_rewrite('(aggregator ground var var rexpr)')
@@ -2124,20 +2168,8 @@ def aggregator(self, rexpr):
     #     'max': max,
     # }
 
-    identity = {
-        'sum': 0,
-        'prod': 1,
-        'min': float('inf'),
-        'max': float('-inf'),
-        'equals': Term('nil', ()),
-    }
-    split_op = {
-        'sum': 'plus',
-        'prod': 'times',
-        'min': 'min',
-        'max': 'max',
-        'equals': 'equals_agg_merge',
-    }
+    identity = agg_identity
+    split_op = agg_split_op
 
     # aggregators where we have defined custom behavior for the expression
     special_aggregators = {
@@ -2220,15 +2252,35 @@ def aggregator(self, rexpr):
 
 @register_rewrite('(aggregator ground var var rexpr)', kind='full')
 def aggregator_full(self, rexpr):
+    split_op = agg_split_op
     for op, result, incoming, rxp_orig in match(self, rexpr, '(aggregator ground var var rexpr)'):
         branches = list(gather_branches(rxp_orig, through_nested=False))
         assert len(branches) == len(set(branches))  # make sure there are no duplicates (for now) as it makes the code easier
         if branches:
             # TODO: this could break the expression part here using on of the nested branches
             # this would be something like `A=sum(B, Q*(R+S)) -> ...sum(B, Q*R) + sum(B, Q*S)
-            assert False
+            branch = branches[0]
+            assert branch.name == '+'
+            intermediate_vars = [generate_var() for _ in range(branch.arity)]
+            nested_exprs = []
+            for iv, b in zip(intermediate_vars, branch.arguments):
+                nested_exprs.append(Term('aggregator', (op, iv, incoming, replace_term(rxp_orig, {branch: b}))))
+            while len(intermediate_vars) > 2:
+                # this is going to combine two of the variables together and generate a new variable to be the result
+                new_var = generate_var()
+                *intermediate_vars, v1, v2 = [new_var] + intermediate_vars
+                nested_exprs.append(Term(split_op[op], (v1, v2, new_var)))  # this is going to be like plus or times in the case
+            assert len(intermediate_vars) == 2
+            nested_exprs.append(Term(split_op[op], (intermediate_vars[0], intermediate_vars[1], result)))
+            nested_r = make_conjunction(*nested_exprs)
+            for nv in intermediate_vars:
+                nested_r = Term('proj', (nv, nested_r))
 
-        pass
+            nested_r = track_constructed(nested_r, ('rr:agg_sum3', 'rr:distributivity'),
+                                         r'Nested disjunctions in an aggregator are split',
+                                         rexpr)
+
+            return nested_r
     return rexpr
 
 
@@ -2593,6 +2645,18 @@ def example_neural():
             Term('=', (Variable(0), x)),
             Term('=', (Variable(1), y))
         ) for (x,y), val in pixel_brightness.items()]))
+
+    target_values = {
+        'cat': 10,
+        'dog': 5
+    }
+
+    rewrites.define_user_rewrite(
+        'target', 2,
+        make_disjunction(*[make_conjunction(
+            Term('=', (Variable(0), x)),
+            Term('=', (Variable(1), y))
+        ) for x,y in target_values.items()]))
 
     # rewrites.define_user_rewrite(
     #     'edge', 3,
