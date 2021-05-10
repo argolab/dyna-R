@@ -1,10 +1,16 @@
-# a simple as possible implementation of R-exprs rewriting engine
-# the term
+# This implementation of R-exprs is designed to be _as simple as possible_
+# and match the peseudo code in the appendix _as closely as possible_
+#
+# Additionally, this version of the code contains lots of logging operations to
+# trace what is happening.  This is used to generate the traces which are
+# contained in the appendix of the paper.
+
 
 import sys
 import os
 import atexit
 import uuid
+import math
 
 from collections import defaultdict
 from functools import cache
@@ -41,7 +47,10 @@ logging_rewrites = True
 active_rewrite = []
 logging_rewrite_output = None
 color_output_latex = False
+color_terminal = False
 generating_latex_output = False
+logging_rewrites_temp_disabled = False
+limit_printed_amount = True  # try and replace expressions which are duplicated with ... so that they do not distract from the core of what is happening
 
 event_log = []
 latex_log = []
@@ -55,9 +64,21 @@ def named_rewrite(name):
     """
     global active_rewrite
     active_rewrite.append(name)
-    yield None
-    assert active_rewrite[-1] == name
-    active_rewrite.pop()
+    try:
+        yield None
+    finally:
+        assert active_rewrite[-1] == name
+        active_rewrite.pop()
+
+@contextmanager
+def no_logging_rewrites():
+    global logging_rewrites_temp_disabled
+    prev_loggin_rewrites = logging_rewrites_temp_disabled
+    logging_rewrites_temp_disabled = True
+    try:
+        yield None
+    finally:
+        logging_rewrites_temp_disabled = prev_loggin_rewrites
 
 def track_rexpr_constructed(func):
     if not logging_rewrites:
@@ -73,7 +94,7 @@ def track_rexpr_constructed(func):
     nf.__doc__ = func.__doc__
     return nf
 
-def track_constructed(rexpr, rewrite, source):
+def track_constructed(rexpr, rewrite, text_description, source):
     if not logging_rewrites:
         return rexpr
     if not isinstance(rewrite, str):
@@ -81,20 +102,15 @@ def track_constructed(rexpr, rewrite, source):
         rexpr._debug_active_rewrite.extend(rewrite)
     else:
         rexpr._debug_active_rewrite.append(rewrite)
-    log_event('applied_rewrite', rewrite, source, rexpr)
+    log_event('applied_rewrite', rewrite, source, text_description, rexpr)
     return rexpr
 
 def log_event(event_kind, *args):
-    if logging_rewrites:
-        pass
     assert event_kind in ('simplify_fast', 'simplify_full', 'memo_indeterminate', 'memo_computed', 'memo_looked_up', 'applied_rewrite', 'original_rexpr', 'rewritten_result')
-
-    # we will want to somehow register that this is doing the different operations
-    event_log.append((event_kind, args))
-
-    print(event_kind, args)
-
-    #logging_rewrite_output.write(
+    if logging_rewrites and not logging_rewrites_temp_disabled:
+        # we will want to somehow register that this is doing the different operations
+        event_log.append((event_kind, args))
+        print(event_kind, args)
 
 def latex_verbatim_block(text):
     # make a verbatim block using \verb expressions with \verb" as the escape sequence
@@ -144,9 +160,127 @@ def focus_term_print(to_print, alt):
     walk_rexpr(alt, a)
     return replace_term(to_print, s)
 
+def reset_rexprs_to_print(rexpr):
+    def a(x):
+        x._debug_printer_controller = 'NO'
+    walk_rexpr(rexpr, a)
+    return rexpr
+
+def reset_print_everything(rexpr):
+    def a(x):
+        x._debug_printer_controller = 'YES'
+    walk_rexpr(rexpr, a)
+    return rexpr
+
+def identify_interesting_part_of_rewrite(from_source, destination):
+    global object_identifier_counter
+    obj_source = object()
+    obj_dest = object()
+    sources = set()
+    both_count = 0
+    both = []
+    uniques = []
+
+    # if from_source.name == 'proj' and 'M' in str(from_source.arguments[0]):
+    #     import ipdb; ipdb.set_trace()
+
+    def similar_exprs(a,b):
+        if a == b:
+            return True
+        return False
+        # if a.name != b.name:
+        #     return False
+        # if a.name == 'proj':
+        #     return a.arguments[0] == b.arguments[0]
+        # if a.name == 'aggregate':
+        #     return a.arguments[0:3] == b.arguments[0:3]
+        # if a.name in ('*', '+'):
+        #     return False  # meaning that there is a difference between their nested arguments
+        return False
+
+    def ps(k):
+        def f(x, parent=None):
+            if x.name == 'proj':
+                parent = ('proj', x.arguments[0])
+            elif x.name == 'aggregator':
+                parent = ('aggregator', x.arguments[0:3])
+            for a in x.arguments:
+                if isinstance(a, Term):
+                    setattr(a, k, parent)
+                    f(a, parent)
+        return f
+    ps('_debug_parent_term_source')(from_source, 'root')
+    ps('_debug_parent_term_dest')(destination, 'root')
+
+    # def ps(x):
+    #     for a in x.arguments:
+    #         if isinstance(a, Term):
+    #             a._debug_parent_term_source = x
+    # walk_rexpr(from_source, ps)
+    # def pd(x):
+    #     for a in x.arguments:
+    #         if isinstance(a, Term):
+    #             a.debug_parent_term_dest = x
+    # walk_rexpr(destination, pd)
+
+    def s(x):
+        x._debug_identified_as_same = obj_source
+        sources.add(x)
+    def d(x):
+        nonlocal both_count
+        if getattr(x, '_debug_identified_as_same', None) is obj_source:
+            x._debug_identified_as_same = 'both'
+            both_count += 1
+            both.append(x)
+        else:
+            assert x not in sources or x._debug_term_size < 15
+            x._debug_identified_as_same = obj_dest
+
+    walk_rexpr(from_source, s)
+    walk_rexpr(destination, d)  # now we are going to walk all of the fi
+
+    def u(x):
+        if x._debug_identified_as_same != 'both' or not similar_exprs(getattr(x, '_debug_parent_term_source', Term('*', ())), getattr(x, '_debug_parent_term_dest', Term('*', ()))):
+            uniques.append(x)
+            x._debug_printer_controller = 'YES'
+    walk_rexpr(from_source, u)
+    walk_rexpr(destination, u)
+
+    # this prevents it from printing something like ...*...*..., but instead will just print ... for the omitted parts
+    def u(x):
+        if x.name in ('*', '+'):
+            x._debug_printer_controller = 'yes'
+            return
+            all_noprint = True
+            for a in x.arguments:
+                if a._debug_printer_controller != 'NO':
+                    all_noprint = False
+            if all_noprint:
+                # all of the children are the same, so don't print this element specifically
+                x._debug_printer_controller = 'NO'
+                return
+    walk_rexpr(from_source, u)
+    walk_rexpr(destination, u)
+
+
+
+
+    # something which is not contained in both should be printed, though this will want
+    # to select the smallest objects which
+
+    # if both_count > 5:
+    #     import ipdb; ipdb.set_trace()
+
+
 
 def color(c, r):
-    if color_output_latex:
+    if color_terminal:
+        color_map = {
+            'vargreen': '\033[92m',
+            'aggblue': '\033[94m'
+        }
+        return color_map[c] + r + '\033[0m'
+    elif color_output_latex:
         return '[[[{\\color{'+c+'}]]]' + r + '[[[}]]]'  # this will generate something like {\color{xxx}\Verb"...."}
     else:
         return r
@@ -155,10 +289,11 @@ def generate_latex():
     global color_output_latex, generating_latex_output
     color_output_latex = True
     generating_latex_output = True
+    simplify_count = 0
     try:
         ret = []
         source_order = []
-        rewrites_performed = defaultdict(set)
+        rewrites_performed = defaultdict(list)
         for kind, args in event_log:
             if kind == 'original_rexpr':
                 rexpr, = args
@@ -166,11 +301,26 @@ def generate_latex():
                 ret.append(latex_verbatim_block(rexpr.stylized_rexpr()))
                 ret.append(r'\\')
                 ret.append(r'{\centering \rule{4cm}{0.4pt}} \\')
+
+                if rewrites.user_defined_rewrites_used:
+                    ret.append(r'\textbf{Additional user defined rewrites:} \\')
+                    ret.append(r'\begin{longtable}{ccc}')
+                    for (name, arity) in rewrites.user_defined_rewrites_used:
+                        t = Term(name, (Variable(i) for i in range(arity)))
+                        ret.append(r'\begin{minipage}{.4\textwidth}')
+                        ret.append(latex_verbatim_block(t.stylized_rexpr()))
+                        ret.append(r'\end{minipage}')
+                        ret.append(r'& $\to$ &')
+                        ret.append(r'\begin{minipage}{.4\textwidth}')
+                        ret.append(latex_verbatim_block(rewrites.user_defined_rewrites[(name, arity)].stylized_rexpr()))
+                        ret.append(r'\end{minipage} \\')
+                    ret.append(r'\end{longtable}')
+
             elif kind == 'simplify_fast' or kind == 'simplify_full':
                 old, rexpr = args
 
                 if rewrites_performed:
-                    ret.append(r'\textbf{Rewrites applied:} \\')
+                    ret.append(r'\textbf{Rewrites applied:} \\ \nopagebreak')
                     ret.append(r'\begin{longtable}{ccc}')
                     rewrites_done = {}
                     generated_lines = 0
@@ -183,14 +333,21 @@ def generate_latex():
                         dests = rewrites_performed[s]
                         cnt = 0
                         if generated_lines != 0:
-                            ret.append(r'\hline')
+                            ret.append(r'[2pt] \hline \\[2pt]')
                         generated_lines += 1
-                        for which_rewrite, dest_rexpr in dests:
+                        ns = replace_term(s, rewrites_done)  # if this is at some intermediate step, then something might have changed
+                        reset_rexprs_to_print(ns)
+                        for _,_, dest_rexpr in dests:
+                            reset_rexprs_to_print(dest_rexpr)
+                        for _,_, dest_rexpr in dests:
+                            identify_interesting_part_of_rewrite(ns, dest_rexpr)
+                        for which_rewrite, textual_description, dest_rexpr in dests:
+                            ret.append(r'\multicolumn{3}{l}{' + textual_description + r'} \\[3pt] \nopagebreak')
+                            #ret.append(textual_description + r' & & \\')
                             if cnt == 0:
                                 # only print out the source rewrite once, this will want to combine the colums if there are multiple expressions
                                 # if len(dests) != 1:
                                 #     ret.append(r'\multirow{'+str(len(dests))+r'}{*}{')
-                                ns = replace_term(s, rewrites_done)
                                 ret.append(r'\begin{minipage}{.4\textwidth}')
                                 ret.append(latex_verbatim_block(ns.stylized_rexpr()))
                                 ret.append(r'\end{minipage}')
@@ -207,27 +364,29 @@ def generate_latex():
 
                             ret.append(r' & ${\todocolor{red}\xrightarrow{{\todocolor{blue!50}\footnotesize' + which_rewrite_str + r'}}}\xspace$ & \begin{minipage}{.4\textwidth}')
                             #ret.append(r'} & junk & \mbox{')
-                            dest_limit = focus_term_print(dest_rexpr, ns)
+                            #dest_limit = focus_term_print(dest_rexpr, ns)
                             # if dest_limit != dest_rexpr:
                             #     import ipdb; ipdb.set_trace()
-                            ret.append(latex_verbatim_block(dest_limit.stylized_rexpr()))
+                            ret.append(latex_verbatim_block(dest_rexpr.stylized_rexpr()))
                             ret.append(r' \end{minipage} \\')
 
                     ret.append(r'\end{longtable}')
 
-                ret.append(r'\textbf{After simplification:} \\')
-                ret.append(latex_verbatim_block(rexpr.stylized_rexpr()))
+                simplify_count += 1
+                ret.append(r'\textbf{\rexpr after simplifying ' f'{simplify_count}' + (r' times:} \\' if simplify_count > 1 else r' time:} \\' ))
+
+                ret.append(latex_verbatim_block(reset_print_everything(rexpr).stylized_rexpr()))
                 ret.append(r'\\')
                 ret.append(r'{\centering \rule{4cm}{0.4pt}} \\')
-                rewrites_performed = defaultdict(set)
+                rewrites_performed = defaultdict(list)
                 source_order = []
 
             elif kind == 'applied_rewrite':
-                which_rewrite, source_rexpr, resulting_rexpr = args
+                which_rewrite, source_rexpr, textual_description, resulting_rexpr = args
                 # if the source \rexpr has been
                 if source_rexpr not in rewrites_performed:
                     source_order.append(source_rexpr)
-                rewrites_performed[source_rexpr].add((which_rewrite, resulting_rexpr))
+                rewrites_performed[source_rexpr].append((which_rewrite, textual_description, resulting_rexpr))
 
             elif kind == 'rewritten_result':
                 orig_rexpr, new_rexpr = args
@@ -251,6 +410,19 @@ def generate_latex():
                 ret.append(r'$\to$')
                 ret.append(latex_verbatim_block(returned_rexpr.stylized_rexpr()))
                 ret.append(r'\\')
+
+
+        if rewrites.user_defined_rewrites_memo:
+            ret.append(r'\textbf{Final Memo Tables} \\')
+            ret.append(r'\begin{longtable}{ccc}')
+            for (name, arity), rexpr in rewrites.user_defined_rewrites_memo.items():
+                r = name + '(' + ', '.join([color('vargreen', f'$arg_{i}') for i in range(arity)]) + ')'
+                ret.append(r'\begin{minipage}{.3\textwidth}')
+                ret.append(latex_verbatim_block(r))
+                ret.append(r'\end{minipage} & $\to$ & \begin{minipage}{.5\textwidth}')
+                ret.append(latex_verbatim_block(rexpr.stylized_rexpr()))
+                ret.append(r'\end{minipage} \\')
+            ret.append(r'\end{longtable}')
 
         return '\n'.join(ret)
     finally:
@@ -276,11 +448,18 @@ indent_nested_amount = ' '
 
 class Term:
 
-    __slots__ = (
-        ('__name', '__arguments', '__hashcache') +
-        (('_debug_active_rewrite', '_debug_constructed_from', '_debug_unique_id', '_debug_term_size')
-         if logging_rewrites else ())
-    )
+    if not logging_rewrites:
+        __slots__ = (
+            # the base methods which are used for actually representing the term
+            ('__name', '__arguments', '__hashcache'))
+
+        #     # a bunch of extra "junk" that we attach to the terms for printing them out into the nice looking form
+        #     ('_debug_active_rewrite', '_debug_constructed_from', '_debug_unique_id', '_debug_term_size',
+        #      '_debug_printer_controller', '_debug_identified_as_same',
+        #      '_debug_should_instead_print',
+        #     )
+        #     #if logging_rewrites else ())
+        # )
 
     def __init__(self, name, arguments):
         #assert all(not isinstance(a, Variable) for a in arguments) and isinstance(name, str)  # there is not a special symbol for variables in this version
@@ -353,6 +532,14 @@ class Term:
         return ''.join(ret)
 
     def stylized_rexpr(self):
+        print_control = getattr(self, '_debug_printer_controller', None)
+        if print_control == 'NO' and limit_printed_amount and not isVariable(self):
+            if generating_latex_output:
+                return r'[[[ $\cdots$ ]]]'
+            return '...'  # omit this item
+        return self.stylized_rexpr_orig()
+
+    def stylized_rexpr_orig(self):
         # return a string for this which is supposed to be close to representtaion used in the paper as possible
 
         def nested(r):
@@ -373,6 +560,8 @@ class Term:
             return r.rstrip()
 
         if generating_latex_output and self.name == '...' and self.arity == 0:
+            assert False  # I don't think that this is used anymore
+            import ipdb; ipdb.set_trace()
             return r'[[[ $\cdots$ ]]]'  # this is ommited
         elif generating_latex_output and isMultiplicity(self):
             # then generate some escape sequence for the multiplicity
@@ -384,7 +573,19 @@ class Term:
                 # see in the argument place, so need something more in the
                 # representation here
                 v = f'$ARG_{v}'
-            return color('vargreen', str(v).capitalize())
+            v = str(v)
+            if v.startswith('$VAR_'):
+                # then convert this into a number and then represent this as a number such that it will be printable as a variable
+                i = int(v[5:])
+                assert i > 0
+                ret = ''
+                letters = 'ABCDEFGHJKLMNTUVW'  # the letters IOQRSXYZP are removed
+                while i != 0:
+                    ret += letters[i % len(letters)]
+                    i = (i - (i % len(letters))) // len(letters)
+                return color('vargreen', ret) # the fastest moving part will be first in the string, which means that it should be easier to read
+            else:
+                return color('vargreen', str(v).capitalize())
         elif self.name == '=' and self.arity == 2:
             return f'({nested(self.get_argument(0))}={nested(self.get_argument(1))})'
         elif self.name == 'aggregator' and self.arity == 4:
@@ -409,7 +610,20 @@ class Term:
                 return f'proj({var}, {bodyv})'
         else:
             # this covers all base cases and expressions like if which are just represented via their name
-            return f'{self.name}(' + ', '.join(map(nested, self.arguments)) + ')'
+            args = [nested(a) for a in self.arguments]
+            for i in range(len(args)-1):
+                s = args[i].lstrip()  # remove any new lines at the start
+                # this needs to add a comma, but would like to do it before any white space at the end
+                j = len(s) - 1
+                while j > 0 and s[j] in '\n\t ':
+                    j -= 1
+                # if '\n' in s:
+                #     import ipdb; ipdb.set_trace()
+                s = s[0:j+1] + ', ' + s[j+1:]
+                args[i] = s
+            args[-1] = args[-1].lstrip()
+
+            return f'{self.name}(' + ''.join(args) + ')'   #', '.join(map(lambda s: s.strip(), map(nested, self.arguments))) + ')'
 
 
 def Variable(name):
@@ -454,7 +668,7 @@ def multiplicity(val):
     if isinstance(val, _multiplicityTerm):
         return val
     if val == float('inf'):
-        return _multiplictyTerm(val)
+        return _multiplicityTerm(val)
     assert False  # wtf
 
 def isMultiplicity(val):
@@ -467,6 +681,7 @@ generated_var_cnt = 0
 def generate_var():
     global generated_var_cnt
     generated_var_cnt += 1
+    assert generated_var_cnt > 0
     return Variable(f'$VAR_{generated_var_cnt}')
 
 @track_rexpr_constructed
@@ -520,11 +735,15 @@ def walk_rexpr(rexpr, func):
     def w(r):
         func(r)
         if r.name in ('+', '*'):
-            for a in r.arguments: w(a)
+            for a in r.arguments:
+                w(a)
         elif r.name == 'proj' and r.arity == 2:
             w(r.get_argument(1))
-        elif r.name == 'aggregate' and r.arity == 4:
+        elif r.name == 'aggregator' and r.arity == 4:
             w(r.get_argument(3))
+        elif r.name == 'if' and r.arity == 3:
+            for i in range(3):
+                w(r.get_argument(i))
     w(rexpr)
 
 def contains_variable(rexpr, var):
@@ -602,6 +821,9 @@ def gather_branches(rexpr, *, through_nested=True):
 def gather_environment(rexpr):
     if not isinstance(rexpr, Term) or rexpr.name == '+' or isVariable(rexpr):
         return
+    if rexpr.name == 'if' and rexpr.arity == 3:
+        # we do not know which branch of an if expression is going to run yet, so it is like a disjunction in that way
+        return
     yield rexpr
     for a in rexpr.arguments:
         yield from gather_environment(a)
@@ -627,7 +849,7 @@ class RewriteContext(set):
         super().__init__()
         self._parent = parent
         self._assign_index = {}
-        self._unifies_index = defaultdict(set)
+        self._unifies_index = defaultdict(set)  # this is currently not used for anything
         self._kind_index = defaultdict(set)
         self._argument_index = defaultdict(set)
 
@@ -670,8 +892,13 @@ class RewriteContext(set):
                 if av != b:
                     # the value of b does not match
                     raise UnificationFailure()
-            else:
-                # save the result of this assignment in the index
+            elif not contains_any_variable(b):  # this means that it is an
+                                                # expression like (A=f(X,Y,Z))
+                                                # which means that the rhs still
+                                                # contains variables, so there
+                                                # is nothing to propagate here
+                                                # save the result of this
+                                                # assignment in the index
                 self._set_variable(a, b)
 
     # def _build_indexes(self, adding):
@@ -857,6 +1084,10 @@ class RewriteCollection:
 
         self.user_defined_rewrites_memo = {}
 
+        self.user_defined_rewrites_used = {}  # when a rewrite is used, add it here so that we know what to print
+
+        self.memo_version_used = 2
+
     def _register_function(self, pattern, func, kind='fast'):
         # determine which of the patterns are required for a given expression
         if not hasattr(func, '_matching_pattern'):
@@ -897,6 +1128,7 @@ class RewriteCollection:
     def do_user_defined_rewrite(self, rewrite_engine, rexpr):
         # this should take the name arity of a given expression and then subsuite in new names for the variables
         n = (rexpr.name, rexpr.arity)
+        self.user_defined_rewrites_used[n] = True
         if n in self.user_defined_rewrites_memo:
             return self.do_access_memo(rewrite_engine, rexpr)
         rxp = self.user_defined_rewrites[n]
@@ -908,7 +1140,10 @@ class RewriteCollection:
         # this will have to replace all of the variables or create new variable names for all of the expression
         rxp = uniquify_variables(rxp, var_map)
 
-        rxp = track_constructed(rxp, 'rr:user_defined_rewrite', rexpr)
+        rxp = track_constructed(rxp, 'rr:user_defined_rewrite',
+                                r'The user defined function \rterm{' f'{rexpr.name}/{rexpr.arity}' r'} is looked up.  '
+                                r'All new variables are given new unique names.',
+                                rexpr)
 
         # we DO NOT immediatly apply rewrites to the returned expression as that could cuase recursive programs to run forever
 
@@ -917,7 +1152,99 @@ class RewriteCollection:
 
         return rxp
 
-    def do_access_memo(self, rewrite_engine, rexpr):
+    def do_access_memo(self, *args):
+        return [
+            None,
+            self.do_access_memo_version1,
+            self.do_access_memo_version2
+        ][self.memo_version_used](*args)
+
+    def do_access_memo_version2(self, rewrite_engine, rexpr):
+        n = (rexpr.name, rexpr.arity)
+        rxp = self.user_defined_rewrites_memo[n]
+
+        local_simplify = RewriteEngine(rewrites=self)
+
+        arg_values = []
+        for arg in rexpr.arguments:
+            if isVariable(arg):
+                val = rewrite_engine.context.get_value(arg)  # this will return None if the value is not set yet
+            else:
+                val = arg
+                assert not contains_any_variable(val)
+            arg_values.append(val)
+
+        # add to the context the current value of these variables
+        for i, val in enumerate(arg_values):
+            if val is not None:
+                local_simplify.context.add_rexpr(Term('=', (Variable(i), val)))
+
+        # identify if the expression is contained in the memo table
+        with no_logging_rewrites():
+            res_rexpr = local_simplify.rewrite_fully(rxp, add_context=False)
+        if match(rewrite_engine, res_rexpr, '($compute_fallback any)'):
+            # then this has to fallback to whatever compute has for these given values
+            # this will need to replace the expression in the memoized R-expr with the new expression.
+
+            if rewrite_engine.should_defer_computing_memo(rexpr, arg_values):
+                # an explicit defer has been requested by something else
+                return rexpr
+
+            new_contains_rexpr = []
+            memo_simplify = RewriteEngine(rewrites=self)
+            for i, val in enumerate(arg_values):
+                if val is not None:
+                    r = Term('=', (Variable(i), val))
+                    memo_simplify.context.add_rexpr(r)
+                    new_contains_rexpr.append(r)
+
+            original_rexpr = self.user_defined_rewrites[n]
+            with no_logging_rewrites():
+                memos_returned = memo_simplify.rewrite_fully(original_rexpr)
+
+            rxp = self.user_defined_rewrites_memo[n]  # reload the original expression as it might have changed
+            # because we do not allow for self cycles in this paper, we know that the version which is contained in the memo table must
+            # not have the current value.  If we were to have a cycle, then it is possible for this to occur
+
+            # wrap the new memo in an if-expression which controlls if this reads the given value
+            memo_access = Term('if', (
+                make_conjunction(*new_contains_rexpr),
+                memos_returned,
+                res_rexpr
+            ))
+
+            rxp2 = replace_term(rxp, {res_rexpr : memo_access})
+
+            # reoptimize the new expression in a new context to combine if expressions (if possible)
+            optimize_memos_simplify = RewriteEngine(rewrites=self)
+            with no_logging_rewrites():
+                rxp2 = optimize_memos_simplify.rewrite_fully(rxp2)
+
+            self.user_defined_rewrites_memo[n] = rxp2
+
+            #import ipdb; ipdb.set_trace()
+
+            # fall through to return memos_returned
+        elif match(rewrite_engine, res_rexpr, '(if rexpr rexpr rexpr)'):
+            # then this is the indeterminate case for the memo where it can not determine if the value is contained
+            return rexpr
+        else:
+            # have to construct an expression which includes the assignment to the variables which might be stored in the context
+            memos_returned = make_conjunction(local_simplify.context.local_to_rexpr(), res_rexpr)
+            # import ipdb; ipdb.set_trace()
+            # assert False
+
+        var_map = {}
+        for i, new_name in enumerate(rexpr.arguments):
+            var_map[Variable(i)] = new_name
+
+        memos_returned = uniquify_variables(memos_returned, var_map)
+
+        return memos_returned
+
+            # then this should return the result and
+
+    def do_access_memo_version1(self, rewrite_engine, rexpr):
         n = (rexpr.name, rexpr.arity)
 
         rxp = self.user_defined_rewrites_memo[n]
@@ -944,7 +1271,8 @@ class RewriteCollection:
             if val is not None:
                 local_simplify.context.add_rexpr(Term('=', (Variable(i), val)))
 
-        contains_memo_result = local_simplify.rewrite_fully(contains_memo, add_context=False)
+        with no_logging_rewrites():
+            contains_memo_result = local_simplify.rewrite_fully(contains_memo, add_context=False)
 
         # this needs to match against the contains_memo_result to determine if the if expression would be true or false
         # or under determined.  if it is underdetermined, then we will _avoid_ reading the memo for now.  Otherwise
@@ -970,7 +1298,8 @@ class RewriteCollection:
                 if val is not None:
                     r = Term('=', (Variable(i), val))
                     memo_simplify.context.add_rexpr(r)
-            memos_returned = memo_simplify.rewrite_fully(memos)
+            with no_logging_rewrites():
+                memos_returned = memo_simplify.rewrite_fully(memos)
 
             log_event('memo_looked_up', n, arg_values, memos_returned)
 
@@ -988,7 +1317,8 @@ class RewriteCollection:
                     memo_simplify.context.add_rexpr(r)
                     new_contains_rexpr.append(r)
             # this should add back in the context for this expression, so we do not have to duplicate that here
-            memos_returned = memo_simplify.rewrite_fully(original_rexpr)
+            with no_logging_rewrites():
+                memos_returned = memo_simplify.rewrite_fully(original_rexpr)
 
             # this is going to have to re-read the values from the memo table, as this might recurse around and have been updated in the process
             # the paper currently _does not_ handle self cycles, so this version of the code is ok for what we are demonstrating
@@ -1018,12 +1348,16 @@ class RewriteCollection:
             self.user_defined_rewrites.pop(n)
         elif kind == 'unk':
             # meaning that this will just wait until it finds something
-            self.user_defined_rewrites_memo[n] = Term(
-                'if', (
-                    multiplicity(0),  # indicate that nothing is currently memoized
-                    multiplicity(0),  # the memo table is also currently empty
-                    self.user_defined_rewrites[n]  # the original R-expr
-                ))
+            if self.memo_version_used == 1:
+                self.user_defined_rewrites_memo[n] = Term(
+                    'if', (
+                        multiplicity(0),  # indicate that nothing is currently memoized
+                        multiplicity(0),  # the memo table is also currently empty
+                        self.user_defined_rewrites[n]  # the original R-expr
+                    ))
+
+            elif self.memo_version_used == 2:
+                self.user_defined_rewrites_memo[n] = Term('$compute_fallback', (Variable(i) for i in range(arity)))
 
     def define_user_rewrite(self, name, arity, rexpr):
         var_map = {}
@@ -1096,12 +1430,23 @@ class RewriteCollection:
             rexpr_str = indent(rexpr_str, ' '*len(mt)).lstrip()
             user_matches.append(mt + rexpr_str)
 
+        user_matches_memos = []
+        for (name, arity), val in self.user_defined_rewrites_memo.items():
+            rexpr_str = val.stylized_rexpr()
+            args = ', '.join([f'$arg_{i}' for i in range(arity)])
+            mt = f'  {name}({args}) -> '
+            rexpr_str = indent(rexpr_str, ' '*len(mt)).lstrip()
+            user_matches_memos.append(mt + rexpr_str)
+
+
         return ''.join(['RewriteCollection(\n',
                         '\n'.join(matches),
                         '\n',
                         '-' * 50,
                         '\n',
                         '\n'.join(user_matches),
+                        '\nMemos: ', '-'*(50-7), '\n',
+                        '\n'.join(user_matches_memos),
                         '\n)'])
 
     def __repr__(self): return str(self)
@@ -1177,7 +1522,7 @@ class RewriteEngine:
             old = rexpr
             rexpr = self.apply(rexpr, top_level_apply=True)
             if old == rexpr: break
-            log_event('simplify_fully', old, rexpr)
+            log_event('simplify_full', old, rexpr)
 
         if not add_context:
             return rexpr
@@ -1546,7 +1891,9 @@ def make_disjunction(*args):
         add(a)
     if mul == float('inf'):
         # if this is `\infty + Q` then just return `\infty` as that is the rewrite
-        return track_constructed(multiplicity(float('inf')), 'rr:infity_add', args)
+        return track_constructed(multiplicity(float('inf')), 'rr:infity_add',
+                                 r'$\infty$\rterm{+Q} is rewritten as $\infty$.',
+                                 args)
     if mul != 0:
         ret.insert(0, mul)
     if len(ret) == 0:
@@ -1563,11 +1910,15 @@ def unify(self, rexpr):
     for va, vb in match(self, rexpr, '(= var var)'):
         if va == vb:
             # this is trivally true, so just remove
-            return track_constructed(multiplicity(1), 'rr:unify_same', rexpr)
+            return track_constructed(multiplicity(1), 'rr:unify_same',
+                                     r'This unification is trivially true, hence rewritten as \rterm{1}.',
+                                     rexpr)
 
     for a,vb in match(self, rexpr, '(AND (NOT (= var rexpr)) (= rexpr var))'):
         # flip the direction
-        rexpr = track_constructed(Term('=', (vb, a)), 'rr:unify_switch_order', rexpr)
+        rexpr = track_constructed(Term('=', (vb, a)), 'rr:unify_switch_order',
+                                  r'Unification expression are normalized such that the variables always appear first.',
+                                  rexpr)
 
     # rexpr here matches any term.  So if nither of these have a variable, then it will match this expression
     for va, vb in match(self, rexpr, '(AND (NOT (= var rexpr)) (NOT (= rexpr var)) (= rexpr rexpr))'):
@@ -1577,15 +1928,20 @@ def unify(self, rexpr):
 
         if va.name != vb.name or va.arity != vb.arity:
             # the arity on these expressions does not match
-            return track_constructed(multiplicity(0), 'rr:struct_unify1', rexpr)
+            return track_constructed(multiplicity(0), 'rr:struct_unify1',
+                                     r'Unification has failed due to mismatched function names: \rterm{'
+                                     f'{va.name}/{va.arity}' r'} $\neq$ \rterm{' f'{vb.name}/{vb.arity}' r'}.',
+                                     rexpr)
 
         # this is something like (f(x,y,z)=f(a,b,c)) so we want to expanded and construct a new term
 
         ret = [
-            track_constructed(Term('=', (aa,bb)), 'rr:struct_unify2', rexpr)
+            Term('=', (aa,bb))
             for aa,bb in zip(va.arguments, vb.arguments)
         ]
-        rr = make_conjunction(*ret)
+        rr = track_constructed(make_conjunction(*ret), 'rr:struct_unify2',
+                               r'This unification is expanded as the outer functor \rterm{' f'{va.name}/{va.arity}' r'} matches.',
+                               rexpr)
 
         return self.apply(rr)
 
@@ -1640,17 +1996,23 @@ def proj(self, rexpr):
             if vv is not None:
                 # then we are going to go through and do a replace and then just return the body
                 rr2 = replace_term(rr, {v: vv})  # replace the variable with its value
-                rr2 = track_constructed(rr2, 'rr:equality_prop', Term('*', (Term('=', (v,vv)), rr)))
+                rr2 = track_constructed(rr2, 'rr:equality_prop',
+                                        f'The projected variable has been assigned and read from the context, its value is propagated through the \\rexpr.',
+                                        Term('proj', (v, Term('*', (Term('=', (v,vv)), rr)))))
                 return rr2
 
             for _ in match(self, rr, '(mul 0)'):
                 # if the body is zero, then this is also zero
-                return track_constructed(multiplicity(0), ('rr:proj_no_var', 'rr:zero_mult'), rexpr)
+                return track_constructed(multiplicity(0), ('rr:proj_no_var', 'rr:zero_mult'),
+                                         r'The body of the projection is empty (\rterm{0})',
+                                         rexpr)
 
             for _ in match(self, rr, '(any-disjunction (mul >= 1))'):
                 # this is an expression like proj(X, 1+Q)  which rewrites as infinity as the variable X can take on any number of values
                 # to match the paper this requires two rewrites
-                return track_constructed(multiplicity(float('inf')), ('rr:proj_no_var', 'rr:distribute-in-proj'), rexpr)
+                return track_constructed(multiplicity(float('inf')), ('rr:proj_no_var', 'rr:distribute-in-proj'),
+                                         r'The expression \rterm{proj(X, 1)} is rewritten as $\infty$',
+                                         rexpr)
 
 
             # remove disjunctive and conjunctive expressions out
@@ -1659,7 +2021,9 @@ def proj(self, rexpr):
                 for a in ags:
                     if vv is not None:
                         a = make_conjunction(Term('=', (v, vv)), a)
-                    a = track_constructed(Term('proj', (v, a)), 'rr:distribute-in-proj', rexpr)
+                    a = track_constructed(Term('proj', (v, a)), 'rr:distribute-in-proj',
+                                          r'Disjunctive expressions like \rterm{proj(X, R+S)} are split into \rterm{proj(X, R)+proj(X, S)}',
+                                          rexpr)
                     ret.append(a)
                 return make_disjunction(*ret)
 
@@ -1677,17 +2041,24 @@ def proj(self, rexpr):
                 if not_depends:
                     return track_constructed(
                         make_conjunction(*not_depends, Term('proj', (v, make_conjunction(*depends)))),
-                        'rr:push-in-proj', rexpr)
+                        'rr:push-in-proj',
+                        r'Sub expressions which do not depend on the projected variable are moved out, e.g. '
+                        r'\rterm{proj(X, (Y=2)*R)} $\to$ \rterm{(Y=2)*proj(X, R)}',
+                        rexpr)
 
 
             for _ in match(self, rr, '(= (param 0) ground)', v):
                 # this is proj(X, (X=5)) -> 1
-                return track_constructed(multiplicity(1), 'rr:proj_occurs', rexpr)
+                return track_constructed(multiplicity(1), 'rr:proj_occurs',
+                                         r'This rewrites expressions like \rterm{proj(X, (X=5))} $\to$ \rterm{1}',
+                                         rexpr)
 
             for _, _, nested_rexpr in match(self, rr, '(aggregator ground (param 0) var rexpr)', v):
                 # this is proj(X, (X=sum(Y, ...)))
                 if not contains_variable(nested_rexpr, v):
-                    return track_constructed(multiplicity(1), 'rr:proj_nested_agg', rexpr)
+                    return track_constructed(multiplicity(1), 'rr:proj_nested_agg',
+                                             r'This rewrites expressions like \rterm{proj(X, (X=sum(Y, R)))} $\to$ \rterm{1} as \rterm{(X=sum(Y, R)} will always \emph{eventually} rewrite as \rterm{(X=}\emph{some value}\rterm{)}',
+                                             rexpr)
 
 
             return Term('proj', (v, rr))
@@ -1730,8 +2101,11 @@ def proj_full(self, rexpr):
 
             assert False  # Trying to see if we _need_ this rewrite, as this increase the energy, and isn't quite something that we have in the paper atm
 
-
-            return track_constructed(make_disjunction(*ret), 'unk_????', rexpr)
+            # this rewrite should be a combination of a distributive rule and the above rule to split a disjunction.
+            # though this requires
+            return track_constructed(make_disjunction(*ret), ('rr:distributivity', 'rr:distribute-in-proj'),
+                                     r'Nested distributive expressions under projections such as \rterm{proj(X, R*(Q+S))} is rewritten.',
+                                     rexpr)
 
     return rexpr
 
@@ -1754,13 +2128,15 @@ def aggregator(self, rexpr):
         'sum': 0,
         'prod': 1,
         'min': float('inf'),
-        'max': float('-inf')
+        'max': float('-inf'),
+        'equals': Term('nil', ()),
     }
     split_op = {
         'sum': 'plus',
         'prod': 'times',
         'min': 'min',
-        'max': 'max'
+        'max': 'max',
+        'equals': 'equals_agg_merge',
     }
 
     # aggregators where we have defined custom behavior for the expression
@@ -1778,13 +2154,19 @@ def aggregator(self, rexpr):
 
             rxp = self.apply(rxp_orig)  # this should attempt to simplify the expression
             for _ in match(self, rxp, '(mul 0)'):
-                return track_constructed(Term('=', (resulting, identity[op])), 'rr:agg_sum1', rexpr)
+                return track_constructed(Term('=', (resulting, identity[op])), 'rr:agg_sum1',
+                                         r"The body of the aggregator is empty, hence the aggregator rewrites as the aggregator's identity: \rterm{(X=sum(Y, 0))}$\to$\rterm{(X=}\emph{identity}\rterm{)}",
+                                         rexpr)
             for res in match(self, rxp, '(= (param 0) ground)', incoming):
-                return track_constructed(Term('=', (resulting, res)), 'rr:agg_sum2', rexpr)
+                return track_constructed(Term('=', (resulting, res)), 'rr:agg_sum2',
+                                         r'The aggregator knows its value as \rterm{(X=sum(Y, (Y=x)))}$\to$\rterm{(X=x)}.',
+                                         rexpr)
             if (inc_val := self.context.get_value(incoming)) is not None and isMultiplicity(rxp):
                 # if the body is a multiplicity, then we should just return the resulting value
                 assert rxp == 1  # TODO handle other multiplicies, will require knowing the sum_many operation
-                return track_constructed(Term('=', (resulting, inc_val)), 'rr:agg_sum2', rexpr)
+                return track_constructed(Term('=', (resulting, inc_val)), 'rr:agg_sum2',
+                                         r"The aggregator knows its value as \rterm{(X=sum(Y, (Y=x)))}$\to$\rterm{(X=x)}, and the variable's value is looked up from the context",
+                                         rexpr)
             for ags in match(self, rxp, '(+ any)'):
                 # this is a disjunction between many different variables
                 # this is going to have to construct many projects and new variables
@@ -1792,10 +2174,11 @@ def aggregator(self, rexpr):
                 nested_exprs = []
                 additional_exprs = []
                 for nested_r, nv in zip(ags, intermediate_vars):
-                    nested_exprs.append(
-                        track_constructed(Term('aggregator', (op, nv, incoming, nested_r)),
-                                          'rr:agg_sum3', rexpr)
-                        )
+                    nested_exprs.append(Term('aggregator', (op, nv, incoming, nested_r)))
+                    # track_constructed(Term('aggregator', (op, nv, incoming, nested_r)),
+                    #                   'rr:agg_sum3',
+                    #                   'Disjunctions in the aggregator are split up into nested \rterm{(X=sum(Y, R+S))}
+                    #                   rexpr)
                 while len(intermediate_vars) > 2:
                     # this is going to combine two of the variables together and generate a new variable to be the result
                     new_var = generate_var()
@@ -1814,6 +2197,9 @@ def aggregator(self, rexpr):
                 nested_r = Term('*', nested_exprs + additional_exprs)
                 for nv in intermediate_vars:
                     nested_r = Term('proj', (nv, nested_r))
+                nested_r = track_constructed(nested_r, 'rr:agg_sum3',
+                                             r'Disjunctions in the aggregators body are split, new intermediate variables are introdcued for the results of these aggregators, and then the final value is set the the output varible',
+                                             rexpr)
                 return nested_r
 
             # no aggregator specific rewrites could be done, but there are likely rewrites which have been done on the inner part
@@ -1835,7 +2221,7 @@ def aggregator(self, rexpr):
 @register_rewrite('(aggregator ground var var rexpr)', kind='full')
 def aggregator_full(self, rexpr):
     for op, result, incoming, rxp_orig in match(self, rexpr, '(aggregator ground var var rexpr)'):
-        branches = list(gather_branches(r, through_nested=False))
+        branches = list(gather_branches(rxp_orig, through_nested=False))
         assert len(branches) == len(set(branches))  # make sure there are no duplicates (for now) as it makes the code easier
         if branches:
             # TODO: this could break the expression part here using on of the nested branches
@@ -1862,6 +2248,11 @@ def if_rr(self, rexpr):
             self.context = self.context.copy()
             cond = self.apply(cond)
             cond = make_conjunction(self.context.local_to_rexpr(), cond)  # if there is an assignment, this should not get removed yet so unless it is already present in a higher context, then this needs to ignore this
+
+            # oadd = self.context._parent.add_rexpr
+            # self.context._parent.add_rexpr = lambda x: oadd(x) if x.name != '=' else 1/0
+            #import ipdb; ipdb.set_trace()
+
             if isMultiplicity(cond):
                 # check if the expression is like if(0,R,S) or if(1, R,S)
                 if cond == 0: condition_res = False
@@ -1871,13 +2262,6 @@ def if_rr(self, rexpr):
 
                 if match(self, cond, '(any-disjunction (mul >= 1))'):
                     condition_res = True
-
-                # for ags in match(self, cond, '(+ any)'):
-                #     for a in ags:
-                #         if isMultiplicity(a):
-                #             assert a.get_argument(0) > 0
-                #             condition_res = True
-                #             break
         finally:
             self.context = env_prev
 
@@ -1891,6 +2275,29 @@ def if_rr(self, rexpr):
             # TODO: we could return the updated condition
             # it is "possible" to rewrite the true/false branches, but that means that it would not have the rewrites working correctly
             return rexpr
+
+    return rexpr
+
+
+
+@register_rewrite('(if args 3)', kind='full')
+def if_rr_full(self, rexpr):
+    def is_disjoint(a,b):
+        local_simplify = RewriteEngine(rewrites=self.rewrites)
+        r = make_conjunction(a,b)
+        r = local_simplify.rewrite_fully(r)
+        if match(local_simplify, r, '(mul 0)'):
+            return True
+        return False
+
+    for cond, true_r, cond2, true2_r, false_both in match(self, rexpr, '(if rexpr rexpr (if rexpr rexpr rexpr))'):
+
+        # check if cond and cond2 are disjoint and if true_r and true2_r are disjoint
+        if is_disjoint(cond, cond2) and is_disjoint(true_r, true2_r):
+            return track_constructed(Term('if', (make_disjunction(cond, cond2), make_disjunction(true_r, true2_r), false_both)),
+                                     'rr:merge_if',
+                                     r'Two non-overlapping if expression can be merged into a single expression to make this more efficient',
+                                     rexpr)
 
     return rexpr
 ##################################################
@@ -1923,6 +2330,18 @@ def times(self, rexpr):
         return Term('=', (va, c/b))
     return rexpr
 
+@register_rewrite('(pow args 3)')
+def power(self, rexpr):
+    for a,b,c in match(self, rexpr, '(pow ground ground ground)'):
+        return multiplicity(1 if a**b == c else 0)
+    for a,b, vc in match(self, rexpr, '(pow ground gournd var)'):
+        return Term('=', (vc, a**b))
+    for a,vb,c in match(self, rexpr, '(pow ground var ground)'):
+        return Term('=', (vb, math.log(c)/math.log(a)))
+    for av,b,c in match(self, rexpr, '(pow var ground ground)'):
+        return Term('=', (va, c**(1/b)))
+    return rexpr
+
 @register_rewrite('(min args 3)')
 def min_rr(self, rexpr):
     for a,b,c in match(self, rexpr, '(min ground ground ground)'):
@@ -1937,6 +2356,21 @@ def max_rr(self, rexpr):
         return multiplicity(1 if max(a,b) == c else 0)
     for a,b,vc in match(self, rexpr, '(max ground ground var)'):
         return Term('=', (vc, max(a,b)))
+    return rexpr
+
+@register_rewrite('(equals_agg_merge args 3)')
+def equals_agg_merge(self, rexpr):
+    for a,b,c in match(self, rexpr, '(equals_agg_merge ground ground ground)'):
+        if a != c or b != c:
+            return multiplicity(0)
+        return multiplicity(1)
+    for a,b,cv in match(self, rexpr, '(equals_agg_merge ground grond var)'):
+        if a == Term('nil', ()):
+            return Term('=', (cv, b))
+        elif b == Term('nil', ()):
+            return Term('=', (cv, a))
+        else:
+            return Term('=', (cv, a)) # return nil
     return rexpr
 
 # technically these operations need to have an additional argument which is for
@@ -2007,7 +2441,16 @@ rewrites.define_user_rewrite('bool', 1,
                              ))
 
 
-
+@register_rewrite('(exp args 2)')
+def exp_rr(self, rexpr):
+    # this is exponential rewrite
+    for a,b in match(self, rexpr, '(exp ground ground)'):
+        return multiplicity(1 if math.exp(a) == b else 0)
+    for a,bv in match(self, rexpr, '(exp ground var)'):
+        return Term('=', (bv, math.exp(a)))
+    for av,b in match(self, rexpr, '(exp var ground)'):
+        return Term('=', (av, math.log(b)))
+    return rexpr
 
 
 ####################################################################################################
@@ -2030,6 +2473,140 @@ def example_fib_4_memo():
 def example_peano():
     pass
 
+
+def example_neural():
+    simplify = RewriteEngine()
+    # signmoid(X) = 1 / (1 + exp(-X))
+    rewrites.define_user_rewrite(
+        'sigmoid', 2,
+        make_project('neg_X', 'exp_res', 'sum_res',
+                     make_conjunction(
+                         Term('times', (Variable(0), -1, Variable('neg_X'))),
+                         Term('exp', (Variable('neg_X'), Variable('exp_res'))),
+                         Term('add', (1, Variable('exp_res'), Variable('sum_res'))),
+                         Term('times', (Variable('sum_res'), Variable(1), 1))  # this is a division
+                     )))
+    rewrites.define_user_rewrite(
+        'in', 2,
+        Term('aggregator',
+             ('sum', Variable(1), Variable('agg_in'),
+              make_project(
+                'I', 'J', 'out_res', 'edge_res',
+                  Term('out', (Variable(0), Variable('out_res'))),
+                  Term('edge', (Variable(0), Variable('J'), Variable('edge_res'))),
+                  Term('times', (Variable('out_res'), Variable('edge_res'), Variable('agg_in'))),
+              ))))
+    rewrites.define_user_rewrite(
+        'out', 2,
+        Term('aggregator',
+             ('sum', Variable(1), Variable('agg_in'),
+              make_disjunction(
+                  make_project('in_res',
+                               make_conjunction(
+                                   Term('in', (Variable(0), Variable('in_res'))),
+                                   Term('sigmoid', (Variable('in_res'), Variable('agg_in')))
+                               )),
+                  make_project('X', 'Y',
+                               make_conjunction(
+                                   Term('=', (Variable(0), Term('input', (Variable('X'), Variable('Y'))))),
+                                   Term('pixel_brightness', (Variable('X'), Variable('Y'), Variable('agg_in')))
+                               ))
+              ))))
+    rewrites.define_user_rewrite(
+        'loss', 1,
+        Term('aggregator',
+             ('sum', Variable(0), Variable('agg_in'),
+              make_project('J', 'out_res', 'target_res', 'diff_res',
+                           make_conjunction(
+                               Term('out', (Variable('J'), Variable('out_res'))),
+                               Term('target', (Variable('J'), Variable('target_res'))),
+                               Term('plus', (Variable('diff_res'), Variable('target_res'), Variable('out_res'))),  # the subtraction
+                               Term('pow', (Variable('diff_res'), 2, Variable('agg_in')))
+                           )
+                        ))))
+
+    rewrites.define_user_rewrite(
+        'edge', 3,
+        Term('aggregator',
+             ('equals', Variable(2), Variable('agg_in'),
+              make_disjunction(
+                  make_project('X', 'Y', 'DX', 'DY', 'Xsum', 'Ysum',
+                               make_conjunction(
+                                   Term('=', (Variable(0), Term('input', (Variable('X'), Variable('Y'))))),
+                                   Term('=', (Variable(1), Term('hidden', (Variable('Xsum'), Variable('Ysum'))))),
+                                   Term('add', (Variable('X'), Variable('DX'), Variable('Xsum'))),
+                                   Term('add', (Variable('Y'), Variable('DY'), Variable('Ysum'))),
+                                   Term('weight_conv', (Variable('DX'), Variable('DY'), Variable('agg_in')))
+                               )),
+                  make_project('XX', 'YY', 'Property',
+                               make_conjunction(
+                                   Term('=', (Variable(0), Term('hidden', (Variable('XX'), Variable('YY'))))),
+                                   Term('=', (Variable(1), Term('output', (Variable('Property'),)))),
+                                   # because this does not depend on the inputs at all, this is a "strange" neual network.  ends up being position invariant..
+                                   Term('weight_output', (Variable('Property'), Variable('agg_in'))),
+                               ))
+              ))))
+
+    weight_conv = {
+        (0,0): 1,
+        (-1,0): 2,
+        (0,1): 3
+    }
+
+    rewrites.define_user_rewrite(
+        'weight_conv', 3,
+        make_disjunction(*[make_conjunction(
+            Term('=', (Variable(0), x)),
+            Term('=', (Variable(1), y)),
+            Term('=', (Variable(2), val))
+        ) for (x,y), val in weight_conv.items()]))
+
+    weight_output = {
+        'cat': 2,
+        'dog': 1
+    }
+
+    rewrites.define_user_rewrite(
+        'weight_output', 2,
+        make_disjunction(*[make_conjunction(
+            Term('=', (Variable(0), x)),
+            Term('=', (Variable(1), val)),
+        ) for x, val in weight_output.items()]))
+
+
+    # edge_values = {
+    #     (0,0, 0): 123,
+    #     (0,1, 1): 456,
+    #     (1,0, 2): 789
+    # }
+
+    pixel_brightness = {
+        (0,0): 1,
+        (0,1): 2,
+        (1,0): 3,
+    }
+
+    rewrites.define_user_rewrite(
+        'pixel_brightness', 3,
+        make_disjunction(*[make_conjunction(
+            Term('=', (Variable(2), val)),
+            Term('=', (Variable(0), x)),
+            Term('=', (Variable(1), y))
+        ) for (x,y), val in pixel_brightness.items()]))
+
+    # rewrites.define_user_rewrite(
+    #     'edge', 3,
+    #     make_disjunction(*[make_conjunction(
+    #         Term('=', (Variable(0), Term('input', (x,y)))),
+    #         Term('=', (Variable(1), z)),
+    #         Term('=', (Variable(2), val))
+    #     ) for (x,y,z), val in edge_values.items()]))
+
+    rexpr = Term('loss', (Variable('loss_out'),))
+
+    log_event('original_rexpr', rexpr)
+
+    simplify.rewrite_fully(rexpr)
 
 
 
@@ -2113,6 +2690,13 @@ def main():
         globals()['example_'+generate_example]()
         return
 
+
+    #example_fib_4_memo()
+    global color_terminal, limit_printed_amount
+    color_terminal = True
+    limit_printed_amount = False
+    example_neural()
+    generate_latex_file()
 
     #rexpr = Term('peano', (make_peano(5), Variable('res')))
 
