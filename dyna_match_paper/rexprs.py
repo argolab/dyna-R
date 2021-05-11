@@ -441,7 +441,7 @@ if logging_rewrites:
         with open(os.environ.get('REWITE_LOG', 'rewrite.log') + '.tex', 'w+') as f:
             f.write(generate_latex())
 
-    atexit.register(generate_latex_file)
+    #atexit.register(generate_latex_file)
 
 indent_nested_amount = ' '
 
@@ -921,27 +921,37 @@ class RewriteContext(set):
                     if not isVariable(ot):
                         # then this is a term structure that this unifies with, if the name does not match, then we should throw
                         if ot.name != b.name or ot.arity != b.arity:
-                            #import ipdb; ipdb.set_trace()
+                            import ipdb; ipdb.set_trace()
                             raise UnificationFailure()
                 self._unifies_index[a].add(b)
             else:
                 self._set_variable(a, b)
 
     def _set_variable(self, var, val):
-        assert isVariable(var)
-        cv = self.get_value(var)
-        if cv is not None:
-            if cv != val:
-                raise UnificationFailure()
+        if isVariable(var):
+            cv = self.get_value(var)
+            if cv is not None:
+                if cv != val:
+                    raise UnificationFailure()
+            else:
+                assert not contains_any_variable(val)
+                #print(f'Variable assigned {var}={val}')
+                self._assign_index[var] = val
+                # set the value of all variables that this variable is unified with
+                # so this is eager propagating in the context for unification of constants
+                # which is maybe a slight difference from what is written in the paper currently?
+                for unified in self._get_unified(var):
+                    self._set_variable(unified, val)
         else:
-            assert not contains_any_variable(val)
-            #print(f'Variable assigned {var}={val}')
-            self._assign_index[var] = val
-            # set the value of all variables that this variable is unified with
-            # so this is eager propagating in the context for unification of constants
-            # which is maybe a slight difference from what is written in the paper currently?
-            for unified in self._get_unified(var):
-                self._set_variable(unified, val)
+            assert isinstance(var, Term)
+            # this is a nested structure term
+            if not isinstance(val, Term) or var.name != val.name or var.arity != val.arity:
+                # this means that the unified expressions for these two does not match
+                raise UnificationFailure()
+            else:
+                # this should attempt to make the two expressions unify together
+                for a, b in zip(var.arguments, val.arguments):
+                    self.add_rexpr(Term('=', (a,b)))
 
     def _get_unified(self, var):
         if self._parent is not None:
@@ -1540,7 +1550,7 @@ class RewriteEngine:
         #while True:
         while True:
             self.__kind = 'fast'  # first run fast rewrites
-            for _ in range(5):
+            for _ in range(2):
                 # this contains the context values inside of itself
                 old = rexpr
                 rexpr = self.apply(rexpr, top_level_apply=True)
@@ -2697,6 +2707,7 @@ def example_neural():
 
 
 def main():
+    global color_terminal, limit_printed_amount
     #rexpr = Term('plus', (1,2,Variable('x')))
 
     #rexpr = Term('aggregator', ('sum', Variable('x'), Variable('y'), Term('+', (Term('=', (Variable('y'), 7)), Term('=', (Variable('y'), 10))))  ))  # (X=sum(Y, (Y=7)))
@@ -2769,42 +2780,44 @@ def main():
         for _ in range(v): r = Term('s', (r,))
         return r
 
-
     generate_example = os.environ.get('GENERATE_EXAMPLE')
     if generate_example:
         generate_example = generate_example.replace('-', '_')
         globals()['example_'+generate_example]()
+        generate_latex_file()
         return
 
 
     #example_fib_4_memo()
-    global color_terminal, limit_printed_amount
+    #global color_terminal, limit_printed_amount
     color_terminal = True
     limit_printed_amount = False
     example_neural()
     generate_latex_file()
 
-    #rexpr = Term('peano', (make_peano(5), Variable('res')))
+    return
+
+    # #rexpr = Term('peano', (make_peano(5), Variable('res')))
 
 
-    #rewrites.set_memoized('fib', 2, 'unk')
+    # #rewrites.set_memoized('fib', 2, 'unk')
 
-    rexpr = Term('fib', (4, Variable('res')))
+    # rexpr = Term('fib', (4, Variable('res')))
 
-    #rexpr = Term('=', (Term('f', (1,2,3)), Term('f', (Variable('x'), Variable('y'), 3))))
+    # #rexpr = Term('=', (Term('f', (1,2,3)), Term('f', (Variable('x'), Variable('y'), 3))))
 
-    log_event('original_rexpr', rexpr)
+    # log_event('original_rexpr', rexpr)
 
-    simplify.rewrite_fully(rexpr)
+    # simplify.rewrite_fully(rexpr)
 
 
-    print('Original R-expr:', '-'*50)
-    print(rexpr.stylized_rexpr())
+    # print('Original R-expr:', '-'*50)
+    # print(rexpr.stylized_rexpr())
 
-    rexpr = simplify.rewrite_fully(rexpr)
+    # rexpr = simplify.rewrite_fully(rexpr)
 
-    print('-'*50)
-    print(rexpr)
+    # print('-'*50)
+    # print(rexpr)
 
 
     # for step in range(16):
