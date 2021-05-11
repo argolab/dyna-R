@@ -297,7 +297,7 @@ def generate_latex():
                 ret.append(r'{\centering \rule{4cm}{0.4pt}} \\')
 
                 if rewrites.user_defined_rewrites_used:
-                    ret.append(r'\textbf{Additional user defined rewrites used for rewritting:} \\')
+                    ret.append(r'\textbf{Additional user defined rewrites used for rewritting:} \\ \nopagebreak')
                     ret.append(r'\begin{longtable}{ccc}')
                     for (name, arity) in rewrites.user_defined_rewrites_used:
                         t = Term(name, (Variable(i) for i in range(arity)))
@@ -307,7 +307,7 @@ def generate_latex():
                         ret.append(r'& $\to$ &')
                         ret.append(r'\begin{minipage}{.4\textwidth}')
                         ret.append(latex_verbatim_block(rewrites.user_defined_rewrites[(name, arity)].stylized_rexpr()))
-                        ret.append(r'\end{minipage} \\')
+                        ret.append(r'\end{minipage} \\[2pt]')
                     ret.append(r'\end{longtable}')
 
             elif kind == 'simplify_fast' or kind == 'simplify_full':
@@ -340,7 +340,7 @@ def generate_latex():
                             if textual_description != last_textual_description:
                                 if generated_lines > 1:
                                     ret.append(r'[2pt] \hline \\[2pt]')
-                                ret.append(r'\multicolumn{3}{l}{' + textual_description + r'} \\[3pt] \nopagebreak')
+                                ret.append(r'\multicolumn{3}{l}{\parbox{.95\textwidth}{' + textual_description + r'}} \\[8pt] \nopagebreak')
                                 last_textual_description = textual_description
                             else:
                                 if generated_lines > 1:
@@ -540,7 +540,7 @@ class Term:
         print_control = getattr(self, '_debug_printer_controller', None)
         if print_control == 'NO' and limit_printed_amount and not isVariable(self):
             if generating_latex_output:
-                return r'[[[ $\cdots$ ]]]'
+                return r'[[[$\cdots$]]]'
             return '...'  # omit this item
         return self.stylized_rexpr_orig()
 
@@ -562,7 +562,7 @@ class Term:
             if isinstance(r, str):
                 # then this should wrap the expression in "" when it is printed
                 return '"' + r.replace('"', '\\"').replace('\n', '\\n') + '"'
-            return nested(r)
+            return nested(r).strip()
 
 
         def nested_p(ro):
@@ -574,7 +574,7 @@ class Term:
         if generating_latex_output and self.name == '...' and self.arity == 0:
             assert False  # I don't think that this is used anymore
             import ipdb; ipdb.set_trace()
-            return r'[[[ $\cdots$ ]]]'  # this is ommited
+            return r'[[[$\cdots$]]]'  # this is ommited
         elif generating_latex_output and isMultiplicity(self):
             # then generate some escape sequence for the multiplicity
             if self.get_argument(0) == float('inf'):
@@ -832,14 +832,21 @@ def gather_branches(rexpr, *, through_nested=True):
         yield from gather_branches(a, through_nested=through_nested)
 
 def gather_environment(rexpr):
-    if not isinstance(rexpr, Term) or rexpr.name == '+' or isVariable(rexpr):
+    if not isinstance(rexpr, Term):
         return
-    if rexpr.name == 'if' and rexpr.arity == 3:
-        # we do not know which branch of an if expression is going to run yet, so it is like a disjunction in that way
-        return
+    # or rexpr.name == '+' or isVariable(rexpr):
+    #     return
+    # if rexpr.name == 'if' and rexpr.arity == 3:
+    #     # we do not know which branch of an if expression is going to run yet, so it is like a disjunction in that way
+    #     return
     yield rexpr
-    for a in rexpr.arguments:
-        yield from gather_environment(a)
+    if rexpr.name == 'proj' and rexpr.arity == 2:
+        yield from gather_environment(rexpr.get_argument(1))
+    elif rexpr.name == 'aggregator' and rexpr.arity == 4:
+        yield from gather_environment(rexpr.get_argument(3))
+    elif rexpr.name == '*':
+        for a in rexpr.arguments:
+            yield from gather_environment(a)
 
 
 ####################################################################################################
@@ -905,21 +912,20 @@ class RewriteContext(set):
                 if av != b:
                     # the value of b does not match
                     raise UnificationFailure()
-            elif not contains_any_variable(b):  # this means that it is an
-                                                # expression like (A=f(X,Y,Z))
-                                                # which means that the rhs still
-                                                # contains variables, so there
-                                                # is nothing to propagate here
-                                                # save the result of this
-                                                # assignment in the index
+            elif contains_any_variable(b):
+                # this means that it is an expression like (A=f(X,Y,Z)) which
+                # means that the rhs still contains variables, so there is
+                # nothing to propagate here save the result of this assignment
+                # in the index
+                for ot in self._unifies_index[a]:
+                    if not isVariable(ot):
+                        # then this is a term structure that this unifies with, if the name does not match, then we should throw
+                        if ot.name != b.name or ot.arity != b.arity:
+                            #import ipdb; ipdb.set_trace()
+                            raise UnificationFailure()
+                self._unifies_index[a].add(b)
+            else:
                 self._set_variable(a, b)
-
-    # def _build_indexes(self, adding):
-    #     for r in adding:
-    #         self.add_rexpr(r)
-    #         # if r.name == '=' and r.arity == 2:
-    #         #     # if there are two values for the
-    #         #     self._index_unify_rexpr(r)
 
     def _set_variable(self, var, val):
         assert isVariable(var)
@@ -1080,6 +1086,8 @@ class RewriteContext(set):
             # this is giong to take everything from the child which does not mention the variable
             if not contains_variable(c, not_include_variable):
                 self.add(c)
+            elif c.name == '=' and c.arity == 2 and contains_variable(c.get_argument(1), not_include_variable):
+                import ipdb; ipdb.set_trace()
 
 class RewriteCollection:
     """A class for tracking rewrite operators.  Operators are segmented such that
@@ -1529,15 +1537,17 @@ class RewriteEngine:
         return make_conjunction(self.context.local_to_rexpr(), rexpr)
 
     def rewrite_fully(self, rexpr, *, add_context=True):
+        #while True:
         while True:
             self.__kind = 'fast'  # first run fast rewrites
-            while True:
+            for _ in range(5):
                 # this contains the context values inside of itself
                 old = rexpr
                 rexpr = self.apply(rexpr, top_level_apply=True)
                 if old == rexpr: break
                 log_event('simplify_fast', old, rexpr)
-                import ipdb; ipdb.set_trace()
+                #import ipdb; ipdb.set_trace()
+            #break
             self.__kind = 'full'  # run the full rewrites to make this
             old = rexpr
             rexpr = self.apply(rexpr, top_level_apply=True)
@@ -1971,6 +1981,7 @@ def unify(self, rexpr):
     if not isVariable(rexpr.get_argument(1)) and contains_any_variable(rexpr.get_argument(1)):
         # this r-expr represents a unification with structure, which is not recreated by the Context by default
         # so we keep this r-expr around in the expression
+        #import ipdb; ipdb.set_trace()
         return rexpr
     return multiplicity(1)
 
@@ -2077,7 +2088,7 @@ def proj(self, rexpr):
                         make_conjunction(*not_depends, Term('proj', (v, make_conjunction(*depends)))),
                         'rr:push-in-proj',
                         r'Sub expressions which do not depend on the projected variable are moved out, e.g. '
-                        r'\rterm{proj(X, (Y=2)*R)} $\to$ \rterm{(Y=2)*proj(X, R)}',
+                        r'\rterm{proj(X, (Y=2)*R)} $\to$ \rterm{(Y=2)*proj(X, R)}.',
                         rexpr)
 
 
@@ -2240,8 +2251,9 @@ def aggregator(self, rexpr):
                 for nv in intermediate_vars:
                     nested_r = Term('proj', (nv, nested_r))
                 nested_r = track_constructed(nested_r, 'rr:agg_sum3',
-                                             r'Disjunctions in the aggregators body are split, new intermediate variables are introdcued for the results of these aggregators, and then the final value is set the the output varible',
+                                             r'Disjunctions in the aggregators body are split, new intermediate variables are introdcued for the results of these aggregators, and then the final value is set the the output varible.',
                                              rexpr)
+                assert not self.context
                 return nested_r
 
             # no aggregator specific rewrites could be done, but there are likely rewrites which have been done on the inner part
@@ -2252,6 +2264,8 @@ def aggregator(self, rexpr):
 
             rxp = make_conjunction(self.context.local_to_rexpr(), rxp)  # anything from the environment that is set, track that here
 
+            # lc = self.context
+            # assert not lc
             return Term('aggregator', (op, resulting, incoming, rxp))
         finally:
             self.context = outer_context
