@@ -145,7 +145,7 @@ def latex_verbatim_block(text):
     assert color_idx == 0  # make sure everything matched
     text = ''.join(res)
 
-    text = text.strip().replace('"', '\\Verb"\\Verb|"|\\Verb"').replace('\n', '" \\\\\n\\Verb"').replace('[[[', '"').replace(']]]', '\\Verb"')
+    text = text.strip().replace('"', r'"\Verb|"|\Verb"').replace('\n', '" \\\\\n\\Verb"').replace('[[[', '"').replace(']]]', '\\Verb"')
     text = '\\Verb"' + text + '"'
     text = text.replace(r'\Verb""', '')  # delete useless verb blocks
     return text
@@ -181,9 +181,6 @@ def identify_interesting_part_of_rewrite(from_source, destination):
     both_count = 0
     both = []
     uniques = []
-
-    # if from_source.name == 'proj' and 'M' in str(from_source.arguments[0]):
-    #     import ipdb; ipdb.set_trace()
 
     def similar_exprs(a,b):
         if a == b:
@@ -265,9 +262,6 @@ def identify_interesting_part_of_rewrite(from_source, destination):
 
     # something which is not contained in both should be printed, though this will want
     # to select the smallest objects which
-
-    # if both_count > 5:
-    #     import ipdb; ipdb.set_trace()
 
 
 
@@ -373,8 +367,6 @@ def generate_latex():
                             ret.append(r' & ${\todocolor{red}\xrightarrow{{\todocolor{blue!50}\footnotesize' + which_rewrite_str + r'}}}\xspace$ & \begin{minipage}{.4\textwidth}')
                             #ret.append(r'} & junk & \mbox{')
                             #dest_limit = focus_term_print(dest_rexpr, ns)
-                            # if dest_limit != dest_rexpr:
-                            #     import ipdb; ipdb.set_trace()
                             ret.append(latex_verbatim_block(dest_rexpr.stylized_rexpr()))
                             ret.append(r' \end{minipage} \\')
 
@@ -639,8 +631,6 @@ class Term:
                 j = len(s) - 1
                 while j > 0 and s[j] in '\n\t ':
                     j -= 1
-                # if '\n' in s:
-                #     import ipdb; ipdb.set_trace()
                 s = s[0:j+1] + ', ' + s[j+1:]
                 args[i] = s
             args[-1] = args[-1].lstrip()
@@ -690,7 +680,7 @@ def multiplicity(val):
     if isinstance(val, _multiplicityTerm):
         return val
     if val == float('inf'):
-        import ipdb; ipdb.set_trace()
+        #import ipdb; ipdb.set_trace()
         return _multiplicityTerm(val)
     assert False  # wtf
 
@@ -1252,8 +1242,6 @@ class RewriteCollection:
 
             self.user_defined_rewrites_memo[n] = rxp2
 
-            #import ipdb; ipdb.set_trace()
-
             # fall through to return memos_returned
         elif match(rewrite_engine, res_rexpr, '(if rexpr rexpr rexpr)'):
             # then this is the indeterminate case for the memo where it can not determine if the value is contained
@@ -1261,8 +1249,6 @@ class RewriteCollection:
         else:
             # have to construct an expression which includes the assignment to the variables which might be stored in the context
             memos_returned = make_conjunction(local_simplify.context.local_to_rexpr(), res_rexpr)
-            # import ipdb; ipdb.set_trace()
-            # assert False
 
         var_map = {}
         for i, new_name in enumerate(rexpr.arguments):
@@ -1395,6 +1381,7 @@ class RewriteCollection:
                                 # their old name rather than getting replaced
             v = Variable(i)
             var_map[v] = v
+            assert contains_variable(rexpr, v)
         if not logging_rewrites:
             # becuase we want something that is nice to print, keeping the origional names should make this a little easier to read
             rexpr = uniquify_variables(rexpr, var_map)
@@ -1550,6 +1537,7 @@ class RewriteEngine:
                 rexpr = self.apply(rexpr, top_level_apply=True)
                 if old == rexpr: break
                 log_event('simplify_fast', old, rexpr)
+                import ipdb; ipdb.set_trace()
             self.__kind = 'full'  # run the full rewrites to make this
             old = rexpr
             rexpr = self.apply(rexpr, top_level_apply=True)
@@ -1980,6 +1968,10 @@ def unify(self, rexpr):
     # this is going to go into the environment, and then later pulled back out of the environment
     # so we don't want this to remain as it would end up duplicated
     self.context.add_rexpr(rexpr)
+    if not isVariable(rexpr.get_argument(1)) and contains_any_variable(rexpr.get_argument(1)):
+        # this r-expr represents a unification with structure, which is not recreated by the Context by default
+        # so we keep this r-expr around in the expression
+        return rexpr
     return multiplicity(1)
 
 # @register_rewrite('(structure ground any)')
@@ -2024,8 +2016,12 @@ def proj(self, rexpr):
         outer_context = self.context
         try:
             self.context = outer_context.copy()
+            #cinit = contains_variable(r, v)
+
             rr = self.apply(r)  # this is going to apply rewrites to the inner body
             vv = self.context.get_value(v)
+
+            #assert vv is not None or contains_variable(rr, v)
 
             if vv is not None:
                 # then we are going to go through and do a replace and then just return the body
@@ -2034,7 +2030,6 @@ def proj(self, rexpr):
                                         f'The projected variable has been assigned and read from the context, its value is propagated through the \\rexpr.',
                                         Term('proj', (v, Term('*', (Term('=', (v,vv)), rr)))))
                 outer_context.update_except(self.context, v)
-                #import ipdb; ipdb.set_trace()
                 return rr2
 
             for _ in match(self, rr, '(mul 0)'):
@@ -2046,6 +2041,7 @@ def proj(self, rexpr):
             for _ in match(self, rr, '(any-disjunction (mul >= 1))'):
                 # this is an expression like proj(X, 1+Q)  which rewrites as infinity as the variable X can take on any number of values
                 # to match the paper this requires two rewrites
+                assert vv is None # otherwise this somehow has some expression which resulted in the expression
                 rr2 = track_constructed(multiplicity(float('inf')), ('rr:proj_no_var', 'rr:distribute-in-proj'),
                                          r'The expression \rterm{proj(X, 1)} is rewritten as $\infty$',
                                          rexpr)
@@ -2098,10 +2094,6 @@ def proj(self, rexpr):
                                              r'This rewrites expressions like \rterm{proj(X, (X=sum(Y, R)))} $\to$ \rterm{1} as \rterm{(X=sum(Y, R)} will always \emph{eventually} rewrite as \rterm{(X=}\emph{some value}\rterm{)}',
                                              rexpr)
 
-            # ll = self.context.local_to_rexpr()
-            # if self.context:
-            #     import ipdb; ipdb.set_trace()
-
             assert contains_variable(rr, v)
 
             return Term('proj', (v, rr))
@@ -2140,10 +2132,6 @@ def proj_full(self, rexpr):
             for b in best_branch.arguments:
                 nb = replace_term(r, {best_branch: b})
                 ret.append(Term('proj', (v, nb)))
-
-
-            # import ipdb; ipdb.set_trace()
-            # assert False  # Trying to see if we _need_ this rewrite, as this increase the energy, and isn't quite something that we have in the paper atm
 
             # this rewrite should be a combination of a distributive rule and the above rule to split a disjunction.
             # though this requires
@@ -2204,8 +2192,6 @@ def aggregator(self, rexpr):
         try:
             self.context = outer_context.copy()
 
-            #import ipdb; ipdb.set_trace()
-
             rxp = self.apply(rxp_orig)  # this should attempt to simplify the expression
             for _ in match(self, rxp, '(mul 0)'):
                 return track_constructed(Term('=', (resulting, identity[op])), 'rr:agg_sum1',
@@ -2217,7 +2203,9 @@ def aggregator(self, rexpr):
                                          rexpr)
             if (inc_val := self.context.get_value(incoming)) is not None and isMultiplicity(rxp):
                 # if the body is a multiplicity, then we should just return the resulting value
-                assert rxp == 1  # TODO handle other multiplicies, will require knowing the sum_many operation
+                if rxp != 1:
+                    import ipdb; ipdb.set_trace()
+                    assert rxp == 1  # TODO handle other multiplicies, will require knowing the sum_many operation
                 return track_constructed(Term('=', (resulting, inc_val)), 'rr:agg_sum2',
                                          r"The aggregator knows its value as \rterm{(X=sum(Y, (Y=x)))}$\to$\rterm{(X=x)}, and the variable's value is looked up from the context",
                                          rexpr)
@@ -2322,10 +2310,6 @@ def if_rr(self, rexpr):
             self.context = self.context.copy()
             cond = self.apply(cond)
             cond = make_conjunction(self.context.local_to_rexpr(), cond)  # if there is an assignment, this should not get removed yet so unless it is already present in a higher context, then this needs to ignore this
-
-            # oadd = self.context._parent.add_rexpr
-            # self.context._parent.add_rexpr = lambda x: oadd(x) if x.name != '=' else 1/0
-            #import ipdb; ipdb.set_trace()
 
             if isMultiplicity(cond):
                 # check if the expression is like if(0,R,S) or if(1, R,S)
