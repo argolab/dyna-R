@@ -635,7 +635,8 @@ class Term:
                     j -= 1
                 s = s[0:j+1] + ', ' + s[j+1:]
                 args[i] = s
-            args[-1] = args[-1].lstrip()
+            if args:
+                args[-1] = args[-1].lstrip()
 
             return f'{self.name}(' + ''.join(args) + ')'   #', '.join(map(lambda s: s.strip(), map(nested, self.arguments))) + ')'
 
@@ -795,6 +796,31 @@ def replace_term(expr, mapping):
     else:
         return expr
 
+def filter_out_variable(rexpr, variable):
+    # if the term contains the variable, then just remove it from the expression
+    # if not isinstance(rexpr, Term):
+    #     return rexpr
+    if rexpr.name == 'aggregator' and rexpr.arity == 4:
+        if rexpr.get_argument(1) == variable or rexpr.get_argument(2) == variable:
+            return multiplicity(1)
+        r = filter_out_variable(rexpr.get_argument(3), variable)
+        if r != rexpr.get_argument(3):
+            return Term('aggregator', (rexpr.get_argument(0), rexpr.get_argument(1), rexpr.get_argument(2), r))
+        return rexpr
+    elif rexpr.name == 'proj' and rexpr.arity == 2:
+        assert rexpr.get_argument(0) != variable  # this should be projected out, so this should not be used for this
+        r = filter_out_variable(rexpr.get_argument(1), variable)
+        if r != rexpr.get_argument(1):
+            return Term('proj', (rexpr.get_argument(0), r))
+        return rexpr
+    elif rexpr.name == '*':
+        return make_conjunction(*(filter_out_variable(r, variable) for r in rexpr.arguments))
+    elif rexpr.name == '+':
+        return make_disjunction(*(filter_out_variable(r, variable) for r in rexpr.arguments))
+    elif rexpr.name == 'if' and rexpr.arity == 3:
+        return Term('if', (filter_out_variable(r, variable) for r in rexpr.arguments))
+    return rexpr
+
 class IdentityWrapper:
     def __init__(self, v): self.v = v
     def __eq__(self, o): return isinstance(IdentityWrapper, o) and self.v is o.v
@@ -830,8 +856,13 @@ def gather_branches(rexpr, *, through_nested=True):
     if not through_nested and ((rexpr.name == 'proj' and rexpr.arity == 2) or (rexpr.name == 'aggregate' and rexpr.arity == 4)):
         # in this case, we are not going to want to pass through nested projection or aggregators.
         return
-    for a in rexpr.arguments:
-        yield from gather_branches(a, through_nested=through_nested)
+    if rexpr.name == '*':
+        for a in rexpr.arguments:
+            yield from gather_branches(a, through_nested=through_nested)
+    if rexpr.name == 'aggregator' and rexpr.arity == 4:
+        yield from gather_branches(rexpr.get_argument(4), through_nested=through_nested)
+    if rexpr.name == 'proj' and rexpr.arity == 2:
+        yield from gather_branches(rexpr.get_argument(1), through_nested=through_nested)
 
 def gather_environment(rexpr):
     if not isinstance(rexpr, Term):
@@ -1582,7 +1613,7 @@ class RewriteEngine:
 
     def rewrite_fully(self, rexpr, *, add_context=True):
         #while True:
-        for _ in range(4):
+        for _ in range(5):
             self.__kind = 'fast'  # first run fast rewrites
             for _ in range(2):
                 # this contains the context values inside of itself
@@ -2222,7 +2253,7 @@ agg_identity = {
     'prod': 1,
     'min': float('inf'),
     'max': float('-inf'),
-    'equals': Term('nil', ()),
+    'equals': Term('$null', ()),
 }
 agg_split_op = {
     'sum': 'plus',
@@ -2232,6 +2263,9 @@ agg_split_op = {
     'equals': 'equals_agg_merge',
 }
 
+def make_aggregator(op, result, incoming, rexpr):
+    # this needs to eleminate null expressions from these
+    return make_conjunction(Term('is_not_null', (result,)), Term('aggregator', (op, result, incoming, rexpr)))
 
 
 @register_rewrite('(aggregator ground var var rexpr)')
@@ -2265,25 +2299,34 @@ def aggregator(self, rexpr):
             rxp = self.apply(rxp_orig, top_disjunct_apply=True)
 
             for _ in match(self, rxp, '(mul 0)'):
-                import ipdb; ipdb.set_trace()  # we might want to return dyna's $null here rather than the identity of the aggregator, though it might not matter for the examples that we are using this with
-                return track_constructed(Term('=', (resulting, identity[op])), 'rr:agg_sum1',
+                #import ipdb; ipdb.set_trace()  # we might want to return dyna's $null here rather than the identity of the aggregator, though it might not matter for the examples that we are using this with
+                #ident_val = identity[op]
+                ident_val = null_val
+                return track_constructed(Term('=', (resulting, ident_val)), 'rr:agg_sum1',
                                          r"The body of the aggregator is empty, hence the aggregator rewrites as the aggregator's identity: \rterm{(X=sum(Y, 0))}$\to$\rterm{(X=}\emph{identity}\rterm{)}",
                                          rexpr)
             for res in match(self, rxp, '(= (param 0) ground)', incoming):
                 return track_constructed(Term('=', (resulting, res)), 'rr:agg_sum2',
                                          r'The aggregator knows its value as \rterm{(X=sum(Y, (Y=x)))}$\to$\rterm{(X=x)}.',
                                          rexpr)
-            if (inc_val := self.context.get_value(incoming)) is not None and isMultiplicity(rxp):
+            if ((inc_val := self.context.get_value(incoming)) is not None  # the variable is set
+                and isMultiplicity(rxp)  # the body is trivial with begin only a multiplicty
+                and len(self.context) == 1):
                 # if the body is a multiplicity, then we should just return the resulting value
-                if self.context:
-                    import ipdb; ipdb.set_trace()
+                # if len(self.context) > 1:
+                #     # then this needs to read the other operations which are in the context,
+                #     import ipdb; ipdb.set_trace()
                 if rxp != 1:
                     import ipdb; ipdb.set_trace()
                     assert rxp == 1  # TODO handle other multiplicies, will require knowing the sum_many operation
                 return track_constructed(Term('=', (resulting, inc_val)), 'rr:agg_sum2',
                                          r"The aggregator knows its value as \rterm{(X=sum(Y, (Y=x)))}$\to$\rterm{(X=x)}, and the variable's value is looked up from the context",
                                          rexpr)
-            for ags in match(self, rxp, '(+ any)'):
+
+            rxp = make_conjunction(self.context.local_to_rexpr(), rxp)
+
+            for ags in []:#match(self, rxp, '(+ any)'):
+                assert False
                 # this is a disjunction between many different variables
                 # this is going to have to construct many projects and new variables
                 intermediate_vars = [generate_var() for _ in range(len(ags))]
@@ -2314,10 +2357,9 @@ def aggregator(self, rexpr):
                 for nv in intermediate_vars:
                     nested_r = Term('proj', (nv, nested_r))
                 nested_r = track_constructed(nested_r, 'rr:agg_sum3',
-                                             r'Disjunctions in the aggregators body are split, new intermediate variables are introdcued for the results of these aggregators, and then the final value is set the the output varible.',
+                                             r'Disjunctions in the aggregators body are split, new intermediate variables are introdcued for '
+                                             r'the results of these aggregators, and then the final value is set the the output varible.',
                                              rexpr)
-                # ll = self.context
-                # assert not ll
                 return make_conjunction(self.context.local_to_rexpr(), nested_r)
 
             for ags in match(self, rexpr, '(* any)'):
@@ -2334,7 +2376,7 @@ def aggregator(self, rexpr):
 
             # no aggregator specific rewrites could be done, but there are likely rewrites which have been done on the inner part
             # so we are going to want to return that
-            if rxp == rxp_orig:
+            if rxp == rxp_orig and not self.context:
                 # don't make something new as this would be the same expression (optimization)
                 return rexpr
 
@@ -2350,38 +2392,105 @@ def aggregator(self, rexpr):
         #return rexpr
 
 
+# @register_rewrite('(aggregator ground var var rexpr)', kind='full')
+# def aggregator_full(self, rexpr):
+#     return rexpr
+
+#     split_op = agg_split_op
+#     for op, result, incoming, rxp_orig in match(self, rexpr, '(aggregator ground var var rexpr)'):
+#         branches = list(gather_branches(rxp_orig, through_nested=False))
+#         assert len(branches) == len(set(branches))  # make sure there are no duplicates (for now) as it makes the code easier
+#         if branches:
+#             # TODO: this could break the expression part here using on of the nested branches
+#             # this would be something like `A=sum(B, Q*(R+S)) -> ...sum(B, Q*R) + sum(B, Q*S)
+#             branch = branches[0]
+#             assert branch.name == '+'
+#             intermediate_vars = [generate_var() for _ in range(branch.arity)]
+#             nested_exprs = []
+#             for iv, b in zip(intermediate_vars, branch.arguments):
+#                 nested_exprs.append(Term('aggregator', (op, iv, incoming, replace_term(rxp_orig, {branch: b}))))
+#             while len(intermediate_vars) > 2:
+#                 # this is going to combine two of the variables together and generate a new variable to be the result
+#                 new_var = generate_var()
+#                 *intermediate_vars, v1, v2 = [new_var] + intermediate_vars
+#                 nested_exprs.append(Term(split_op[op], (v1, v2, new_var)))  # this is going to be like plus or times in the case
+#             assert len(intermediate_vars) == 2
+#             nested_exprs.append(Term(split_op[op], (intermediate_vars[0], intermediate_vars[1], result)))
+#             nested_r = make_conjunction(*nested_exprs)
+#             for nv in intermediate_vars:
+#                 nested_r = Term('proj', (nv, nested_r))
+
+
+
+#             nested_r = track_constructed(nested_r, ('rr:agg_sum3', 'rr:distributivity'),
+#                                          r'Nested disjunctions in an aggregator are split',
+#                                          rexpr)
+#             import ipdb; ipdb.set_trace()
+
+#             return nested_r
+#     return rexpr
+
 @register_rewrite('(aggregator ground var var rexpr)', kind='full')
 def aggregator_full(self, rexpr):
-    split_op = agg_split_op
     for op, result, incoming, rxp_orig in match(self, rexpr, '(aggregator ground var var rexpr)'):
-        branches = list(gather_branches(rxp_orig, through_nested=False))
-        assert len(branches) == len(set(branches))  # make sure there are no duplicates (for now) as it makes the code easier
-        if branches:
-            # TODO: this could break the expression part here using on of the nested branches
-            # this would be something like `A=sum(B, Q*(R+S)) -> ...sum(B, Q*R) + sum(B, Q*S)
-            branch = branches[0]
-            assert branch.name == '+'
-            intermediate_vars = [generate_var() for _ in range(branch.arity)]
-            nested_exprs = []
-            for iv, b in zip(intermediate_vars, branch.arguments):
-                nested_exprs.append(Term('aggregator', (op, iv, incoming, replace_term(rxp_orig, {branch: b}))))
-            while len(intermediate_vars) > 2:
-                # this is going to combine two of the variables together and generate a new variable to be the result
-                new_var = generate_var()
-                *intermediate_vars, v1, v2 = [new_var] + intermediate_vars
-                nested_exprs.append(Term(split_op[op], (v1, v2, new_var)))  # this is going to be like plus or times in the case
-            assert len(intermediate_vars) == 2
-            nested_exprs.append(Term(split_op[op], (intermediate_vars[0], intermediate_vars[1], result)))
-            nested_r = make_conjunction(*nested_exprs)
-            for nv in intermediate_vars:
-                nested_r = Term('proj', (nv, nested_r))
-
-            nested_r = track_constructed(nested_r, ('rr:agg_sum3', 'rr:distributivity'),
-                                         r'Nested disjunctions in an aggregator are split',
-                                         rexpr)
-
-            return nested_r
+        has_not_null = Term('is_not_null', (result,)) in self.context.get_associated_with_var(result)
+        if has_not_null:
+            def lift_out(rx):
+                if rx.name != '*':
+                    return rx, multiplicity(1)
+                depends, not_depends = [], []
+                for a in rx.arguments:
+                    if not contains_variable(a, incoming) and is_constraint(a):
+                        not_depends.append(a)
+                    else:
+                        depends.append(a)
+                if not not_depends:
+                    return rx, multiplicity(1)
+                return make_conjunction(*depends), make_conjunction(*not_depends)
+            branches = list(gather_branches(rxp_orig, through_nested=False))
+            if branches:
+                # this finds expressions like `is_not_null(A)*(A=sum(B,
+                # (X=123)*(B=3)+(X=22)*(B=3)))` and rewrites it as
+                # `is_not_null(A)*((A=sum(B, (X=123)*(B=3)))+(A=sum(B,
+                # (X=22)*(B=3))))` as we know that these two expressions will be
+                # disjoint and when the result does not match it can be removed.  So there is no
+                # need to leave them under the aggregator.  This will then
+                assert branches[0].name == '+'
+                original_elements = list(branches[0].arguments)
+                branch_elements = [filter_out_variable(b, incoming) for b in branches[0].arguments]
+                groupped_rexprs = []
+                while branch_elements:
+                    e = branch_elements.pop(0)
+                    grp = [original_elements.pop(0)]
+                    i = 0
+                    while i < len(branch_elements):
+                        if not is_disjoint(e, branch_elements[i]):
+                            # then this needs to add to the group as an overlapping element
+                            branch_elements.pop(i)
+                            grp.append(original_elements.pop(i))
+                        else:
+                            i += 1
+                    groupped_rexprs.append(grp)
+                if len(groupped_rexprs) > 1:
+                    # then we can split this aggregator up
+                    res = []
+                    for g in groupped_rexprs:
+                        a,b = lift_out(make_disjunction(*g))
+                        res.append(make_conjunction(b, Term('aggregator', (op, result, incoming, a))))
+                    return make_disjunction(*res)
+            # then we can instead try to lift out expressions which do not have to be included in the aggregator
+            a,b = lift_out(rxp_orig)
+            if not isMultiplicity(b):
+                return make_disjunction(b, Term('aggregator', (op, result, incoming, a)))
     return rexpr
+
+
+
+
+@register_rewrite('(aggregator_copies args 4)')
+def aggregator_copies(self, rexpr):
+    for op, result, incoming, n_copies_rexpr in match(self, rexpr, '(aggregator_copies ground var (OR ground var) rexpr)'):
+        pass
 
 
 # @register_rewrite('(exists var var rexpr)')
@@ -2427,16 +2536,17 @@ def if_rr(self, rexpr):
     return rexpr
 
 
+def is_disjoint(a,b):
+    local_simplify = RewriteEngine()
+    r = make_conjunction(a,b)
+    r = local_simplify.rewrite_fully(r)
+    if match(local_simplify, r, '(mul 0)'):
+        return True
+    return False
+
 
 @register_rewrite('(if args 3)', kind='full')
 def if_rr_full(self, rexpr):
-    def is_disjoint(a,b):
-        local_simplify = RewriteEngine(rewrites=self.rewrites)
-        r = make_conjunction(a,b)
-        r = local_simplify.rewrite_fully(r)
-        if match(local_simplify, r, '(mul 0)'):
-            return True
-        return False
 
     for cond, true_r, cond2, true2_r, false_both in match(self, rexpr, '(if rexpr rexpr (if rexpr rexpr rexpr))'):
 
@@ -2450,32 +2560,50 @@ def if_rr_full(self, rexpr):
     return rexpr
 ##################################################
 
+null_val = Term('$null', ())
+
+@register_rewrite('(is_not_null args 1)')
+def is_not_null(self, rexpr):
+    for v in match(self, rexpr, '(is_not_null ground)'):
+        return multiplicity(1 if v != null_val else 0)
+    return rexpr
+
+def cast_null(val, to):
+    if val == null_val:
+        return to
+    return val
+
+def is_null(*args):
+    return all(v == null_val for v in args)
+
+# somewhat conflated null casting rules so that it matches the aggregator, this should not
 
 @register_rewrite('(plus args 3)')
 def plus(self, rexpr):
     for a,b,c in match(self, rexpr, '(plus ground ground ground)'):
         # then this will match the ground values
-        return multiplicity(1 if a+b == c else 0)
+        return multiplicity(1 if cast_null(a,0)+cast_null(b, 0) == cast_null(c, 0) else 0)
     for a,b, vc in match(self, rexpr, '(plus ground ground var)'):
-        return Term('=', (vc, a+b))
+        return Term('=', (vc, null_val if is_null(a,b) else cast_null(a,0) + cast_null(b, 0)))
     for a, vb, c in match(self, rexpr, '(plus ground var ground)'):
-        return Term('=', (vb, c-a))
+        return Term('=', (vb, null_val if is_null(c,a) else cast_null(c,0)-cast_null(a,0)))
     for va, b, c in match(self, rexpr, '(plus var ground ground)'):
-        return Term('=', (va, c-b))
+        return Term('=', (va, null_val if is_null(c,b) else cast_null(c,0)-cast_null(b,0)))
 
     # return unchanged in the case that nothing matches
     return rexpr
 
 @register_rewrite('(times args 3)')
 def times(self, rexpr):
+    cc = lambda x: cast_null(x, 1)
     for a,b,c in match(self, rexpr, '(times ground ground ground)'):
-        return multiplicity(1 if a*b == c else 0)
+        return multiplicity(1 if cc(a)*cc(b) == cc(c) else 0)
     for a,b, vc in match(self, rexpr, '(times ground ground var)'):
-        return Term('=', (vc, a*b))
+        return Term('=', (vc, null_val if is_null(a,b) else cc(a)*cc(b)))
     for a, vb, c in match(self, rexpr, '(times ground var ground)'):
-        return Term('=', (vb, c/a))
+        return Term('=', (vb, null_val if is_null(a,c) else cc(c)/cc(a)))
     for va, b,c in match(self, rexpr, '(times var ground ground)'):
-        return Term('=', (va, c/b))
+        return Term('=', (va, null_val if is_null(c,b) else cc(c)/cc(b)))
     return rexpr
 
 @register_rewrite('(pow args 3)')
@@ -2492,33 +2620,36 @@ def power(self, rexpr):
 
 @register_rewrite('(min args 3)')
 def min_rr(self, rexpr):
+    cc = lambda x: cast_null(x, float('inf'))
     for a,b,c in match(self, rexpr, '(min ground ground ground)'):
-        return multiplicity(1 if min(a,b) == c else 0)
+        return multiplicity(1 if min(cc(a),cc(b)) == cc(c) else 0)
     for a,b,vc in match(self, rexpr, '(min ground ground var)'):
-        return Term('=', (vc, min(a,b)))
+        return Term('=', (vc, null_val if is_null(a,b) else min(cc(a),cc(b))))
     return rexpr
 
 @register_rewrite('(max args 3)')
 def max_rr(self, rexpr):
+    cc = lambda x: cast_null(x, float('-inf'))
     for a,b,c in match(self, rexpr, '(min ground ground ground)'):
-        return multiplicity(1 if max(a,b) == c else 0)
+        return multiplicity(1 if max(cc(a),cc(b)) == cc(c) else 0)
     for a,b,vc in match(self, rexpr, '(max ground ground var)'):
-        return Term('=', (vc, max(a,b)))
+        return Term('=', (vc, null_val if is_null(a,b) else max(cc(a),cc(b))))
     return rexpr
 
 @register_rewrite('(equals_agg_merge args 3)')
 def equals_agg_merge(self, rexpr):
     for a,b,c in match(self, rexpr, '(equals_agg_merge ground ground ground)'):
-        if a != c or b != c:
+        if not ((a == c or is_null(a)) and (b == c or is_null(b))):
             return multiplicity(0)
         return multiplicity(1)
     for a,b,cv in match(self, rexpr, '(equals_agg_merge ground grond var)'):
-        if a == Term('nil', ()):
+        if is_null(a):
             return Term('=', (cv, b))
-        elif b == Term('nil', ()):
+        elif is_null(b):
             return Term('=', (cv, a))
         else:
-            return Term('=', (cv, a)) # return nil
+            assert a == b  # otherwise this means there are two different values for the equals expression, and this needs to return an "error"
+            return Term('=', (cv, a)) # return null
     return rexpr
 
 # technically these operations need to have an additional argument which is for
@@ -2601,6 +2732,13 @@ def exp_rr(self, rexpr):
     return rexpr
 
 
+def is_constraint(rexpr):
+    # meaning that the arity of this expression is at _most_ 1
+    return (rexpr.name, rexpr.arity) in (('=', 2), ('aggregator', 4), ('plus', 3),
+                                         ('times', 3), ('pow', 3), ('min', 3), ('max', 3),
+                                         ('equals_agg_merge', 3), ('lessthan', 2), ('bool_and', 3), ('bool_or', 3), ('is_not_null', 1))
+
+
 ####################################################################################################
 
 
@@ -2608,14 +2746,14 @@ def example_fib_4_nomemo():
     simplify = RewriteEngine()
     rexpr = Term('fib', (4, Variable('res')))
     log_event('original_rexpr', rexpr)
-    simplify.rewrite_fully(rexpr)
+    return simplify.rewrite_fully(rexpr)
 
 def example_fib_4_memo():
     simplify = RewriteEngine()
     rewrites.set_memoized('fib', 2, 'unk')
     rexpr = Term('fib', (4, Variable('res')))
     log_event('original_rexpr', rexpr)
-    simplify.rewrite_fully(rexpr)
+    return simplify.rewrite_fully(rexpr)
 
 
 def example_peano():
@@ -2636,8 +2774,7 @@ def example_neural():
                      )))
     rewrites.define_user_rewrite(
         'in', 2,
-        Term('aggregator',
-             ('sum', Variable(1), Variable('agg_in'),
+        make_aggregator('sum', Variable(1), Variable('agg_in'),
               make_project(
                 'I', 'out_res', 'edge_res',
                   make_conjunction(
@@ -2645,27 +2782,25 @@ def example_neural():
                       Term('edge', (Variable('I'), Variable(0), Variable('edge_res'))),
                       Term('times', (Variable('out_res'), Variable('edge_res'), Variable('agg_in')))
                   )
-              ))))
+              )))
     rewrites.define_user_rewrite(
         'out', 2,
-        Term('aggregator',
-             ('sum', Variable(1), Variable('agg_in'),
+        make_aggregator('sum', Variable(1), Variable('agg_in'),
               make_disjunction(
-                  # make_project('in_res',
-                  #              make_conjunction(
-                  #                  Term('in', (Variable(0), Variable('in_res'))),
-                  #                  Term('sigmoid', (Variable('in_res'), Variable('agg_in')))
-                  #              )),
+                  make_project('in_res',
+                               make_conjunction(
+                                   Term('in', (Variable(0), Variable('in_res'))),
+                                   Term('sigmoid', (Variable('in_res'), Variable('agg_in')))
+                               )),
                   make_project('X', 'Y',
                                make_conjunction(
                                    Term('=', (Variable(0), Term('input', (Variable('X'), Variable('Y'))))),
                                    Term('pixel_brightness', (Variable('X'), Variable('Y'), Variable('agg_in')))
                                ))
-              ))))
+              )))
     rewrites.define_user_rewrite(
         'loss', 1,
-        Term('aggregator',
-             ('sum', Variable(0), Variable('agg_in'),
+        make_aggregator('sum', Variable(0), Variable('agg_in'),
               make_project('J', 'out_res', 'target_res', 'diff_res',
                            make_conjunction(
                                Term('out', (Variable('J'), Variable('out_res'))),
@@ -2673,12 +2808,11 @@ def example_neural():
                                Term('plus', (Variable('diff_res'), Variable('target_res'), Variable('out_res'))),  # the subtraction
                                Term('pow', (Variable('diff_res'), 2, Variable('agg_in')))
                            )
-                        ))))
+                        )))
 
     rewrites.define_user_rewrite(
         'edge', 3,
-        Term('aggregator',
-             ('equals', Variable(2), Variable('agg_in'),
+        make_aggregator('equals', Variable(2), Variable('agg_in'),
               make_disjunction(
                   make_project('X', 'Y', 'DX', 'DY', 'Xsum', 'Ysum',
                                make_conjunction(
@@ -2695,7 +2829,7 @@ def example_neural():
                                    # because this does not depend on the inputs at all, this is a "strange" neual network.  ends up being position invariant..
                                    Term('weight_output', (Variable('Property'), Variable('agg_in'))),
                                ))
-              ))))
+              )))
 
     weight_conv = {
         (0,0): 1,
@@ -2766,9 +2900,11 @@ def example_neural():
 
     rexpr = Term('loss', (Variable('loss_out'),))
 
+    rexpr = Term('in', (Variable(0), Variable(1)))
+
     log_event('original_rexpr', rexpr)
 
-    simplify.rewrite_fully(rexpr)
+    return simplify.rewrite_fully(rexpr)
 
 
 
@@ -2806,8 +2942,7 @@ def main():
     else:
         rewrites.define_user_rewrite(
             'fib', 2,
-            Term('aggregator',
-                 ('sum', Variable(1), Variable('res'),
+            make_aggregator('sum', Variable(1), Variable('res'),
                   make_disjunction(
                       make_conjunction(Term('=', (Variable(0), 0)), Term('=', (Variable('res'), 0))),
                       make_conjunction(Term('=', (Variable(0), 1)), Term('=', (Variable('res'), 1))),
@@ -2821,7 +2956,7 @@ def main():
                               Term('fib', (Variable('sub2'), Variable('res2'))),  # res2 is fib(var_0 - 2)
                               Term('plus', (Variable('res1'), Variable('res2'), Variable('res')))
                           ))
-                  )))
+                  ))
         )
 
 
@@ -2858,10 +2993,14 @@ def main():
     #global color_terminal, limit_printed_amount
     color_terminal = True
     limit_printed_amount = False
-    example_neural()
+    res = example_neural()
     generate_latex_file()
 
+
+    print('-'*50)
+    print(res)
     return
+
 
     # #rexpr = Term('peano', (make_peano(5), Variable('res')))
 
