@@ -118,7 +118,7 @@ def latex_verbatim_block(text):
     # the escape sequnce will be [[[ raw latex code ]]]
     # so we
 
-    color_options = ['green', 'blue', 'orange', 'purple']
+    color_options = ['green', 'blue', 'orange', 'purple', 'brown', 'cyan', 'magenta']
     color_idx = 0
     res = []
     paren_order = []
@@ -225,7 +225,7 @@ def identify_interesting_part_of_rewrite(from_source, destination):
             both_count += 1
             both.append(x)
         else:
-            assert x not in sources or x._debug_term_size < 15
+            #assert x not in sources or x._debug_term_size < 15
             dests.add(x)
             x._debug_identified_as_same = obj_dest
 
@@ -564,9 +564,6 @@ class Term:
             return s
 
         # def nested_value(r):
-        #     if isinstance(r, str):
-        #         # then this should wrap the expression in "" when it is printed
-        #         return '"' + r.replace('"', '\\"').replace('\n', '\\n') + '"'
         #     return nested(r).strip()
 
 
@@ -606,7 +603,7 @@ class Term:
             else:
                 return color('vargreen', str(v).capitalize())
         elif self.name == '=' and self.arity == 2:
-            return f'({nested(self.get_argument(0))}={nested(self.get_argument(1))})'
+            return f'({nested(self.get_argument(0)).strip()}={nested(self.get_argument(1)).strip()})'
         elif self.name == 'aggregator' and self.arity == 4:
             return (
                 '('+color('aggblue', f'{nested(self.get_argument(1))}={self.get_argument(0)}({nested(self.get_argument(2))},')+
@@ -1092,7 +1089,10 @@ class RewriteContext(set):
         # this is going to have to take all of the local conjunctive information and turn it into a R-expr which can
         res = []
         for var, val in self._assign_index.items():
-            res.append(Term('=', (var, val)))  # this is just the assignments to ground variables, all of the other expressions should still be in the R-expr
+            var_name = var.get_argument(0)
+            if not contains_any_variable(val) and not (isinstance(var_name, tuple) and var_name[0] == 'internal_dummy'):  # otherwise this is internal
+                res.append(Term('=', (var, val)))  # this is just the assignments to ground variables, all of the other expressions should still be in the R-expr
+        #assert '<object object' not in str(res)
         r = make_conjunction(*res)  # this is just a conjunction of the constraints which are present
         return r
 
@@ -1111,7 +1111,7 @@ class RewriteContext(set):
 
     def update_except(self, child, not_include_variable):
         assert child._parent is self
-        dummy_variable_name = object()  # if this is used, then it will keep around
+        dummy_variable_name = ('internal_dummy', object())  # if this is used, then it will keep around
         for c in child.iter_local():
             # this is giong to take everything from the child which does not mention the variable
             if not contains_variable(c, not_include_variable):
@@ -1120,7 +1120,7 @@ class RewriteContext(set):
                   and not contains_variable(c.get_argument(0), not_include_variable)
                   and contains_variable(c.get_argument(1), not_include_variable)):
                 z = replace_term(c, {not_include_variable: Variable(dummy_variable_name)})
-                # self.add(z)
+                self.add_rexpr(z)
                 #import ipdb; ipdb.set_trace()
                 # this could construct new temp variable variable names for the rhs, which would then allow this representation to stay around
                 # but those temp variable names would not be associated with the expression anymore?
@@ -1437,10 +1437,13 @@ class RewriteCollection:
             self.set_memoized(name, arity, 'unk')
 
     def get_matching_rewrites(self, rexpr, context=None):
+        found_something = False
         if rexpr.name in self.name_match:
+            found_something = True
             yield from self.name_match[rexpr.name]
         n = (rexpr.name, rexpr.arity)
         if n in self.name_arity_match:
+            found_something = True
             yield from self.name_arity_match[n]
         # these full matches require that there is more contextual information for this
         # which means that this is going to be looking.
@@ -1459,7 +1462,12 @@ class RewriteCollection:
         # in the case that the name/arity matches the user defined rewrite, then the generic user
         # rewrite handler will handle it
         if n in self.user_defined_rewrites:
+            found_something = True
             yield self.do_user_defined_rewrite
+
+        # if not found_something and not isMultiplicity(rexpr):
+        #     import ipdb; ipdb.set_trace()
+        assert found_something or isMultiplicity(rexpr) or rexpr.name == '$compute_fallback' # if we do not find some rewrite, then this is probably a typo with how the program was written
 
     def __str__(self):
         matches = []
@@ -1574,7 +1582,7 @@ class RewriteEngine:
 
     def rewrite_fully(self, rexpr, *, add_context=True):
         #while True:
-        for _ in range(5):
+        for _ in range(4):
             self.__kind = 'fast'  # first run fast rewrites
             for _ in range(2):
                 # this contains the context values inside of itself
@@ -1690,8 +1698,7 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
                     val = self.get_value(rexpr)
                     if val is not None:
                         return [val]
-                else:
-                     return None  # not ground, so fail match
+                return None  # not ground, so fail match
             elif contains_any_variable(rexpr):
                 # then this would require looking up the variables to match a given expression
                 # if there is something that does not match, then that means that this would
@@ -1778,6 +1785,7 @@ def match(self :RewriteContext, rexpr, pattern, *pattern_args):
         if rexpr.name != name:
             # the match has failed on the name alone
             assert '-' not in name  # otherwise something is a typo
+            #print(f'attempting to match R-expr {name}')
             return None
         if isinstance(pattern, str):
             if rexpr.arity == 0:
@@ -2095,6 +2103,12 @@ def proj(self, rexpr):
                 outer_context.update_except(self.context, v)
                 return rr2
 
+            rr = make_conjunction(self.context.local_to_rexpr(), rr)
+            #assert isMultiplicity(self.context.local_to_rexpr())
+
+            # for gg in gather_environment(rr):
+            #     if gg.name == '=' and gg.get_argument(0) == v:# and not contains_any_variable(gg.get_argument(1)):
+            #         import ipdb; ipdb.set_trace()
 
             # remove disjunctive and conjunctive expressions out
             for ags in match(self, rr, '(+ any)'):
@@ -2102,11 +2116,13 @@ def proj(self, rexpr):
                 for a in ags:
                     if vv is not None:
                         a = make_conjunction(Term('=', (v, vv)), a)
-                    a = track_constructed(Term('proj', (v, a)), 'rr:distribute-in-proj',
-                                          r'Disjunctive expressions like \rterm{proj(X, R+S)} are split into \rterm{proj(X, R)+proj(X, S)}',
-                                          rexpr)
+                    a = Term('proj', (v, a))
                     ret.append(a)
-                return make_disjunction(*ret)
+                res = make_disjunction(*ret)
+                res = track_constructed(res, 'rr:distribute-in-proj',
+                                        r'Disjunctive expressions like \rterm{proj(X, R+S)} are split into \rterm{proj(X, R)+proj(X, S)}',
+                                        rexpr)
+                return res
 
             for ags in match(self, rr, '(* any)'):
                 not_depends = []
@@ -2120,6 +2136,7 @@ def proj(self, rexpr):
                     else:
                         not_depends.append(a)
                 if not_depends:
+                    outer_context.update(self.context)
                     return track_constructed(
                         make_conjunction(*not_depends, Term('proj', (v, make_conjunction(*depends)))),
                         'rr:push-in-proj',
@@ -2137,6 +2154,7 @@ def proj(self, rexpr):
             for _, _, nested_rexpr in match(self, rr, '(aggregator ground (param 0) var rexpr)', v):
                 # this is proj(X, (X=sum(Y, ...)))
                 if not contains_variable(nested_rexpr, v):
+                    outer_context.update(self.context)
                     return track_constructed(multiplicity(1), 'rr:proj_nested_agg',
                                              r'This rewrites expressions like \rterm{proj(X, (X=sum(Y, R)))} $\to$ \rterm{1} as \rterm{(X=sum(Y, R)} will always \emph{eventually} rewrite as \rterm{(X=}\emph{some value}\rterm{)}',
                                              rexpr)
@@ -2183,7 +2201,7 @@ def proj_full(self, rexpr):
             # this rewrite should be a combination of a distributive rule and the above rule to split a disjunction.
             # though this requires
             return track_constructed(make_disjunction(*ret), ('rr:distributivity', 'rr:distribute-in-proj'),
-                                     r'Nested distributive expressions under projections such as \rterm{proj(X, R*(Q+S))} is rewritten.',
+                                     r'Nested distributive expressions under projections such as \rterm{proj(X, R*(Q+S))} are rewritten to \rterm{proj(X, R*Q)+proj(X, R*S)}.',
                                      rexpr)
 
         if not contains_variable(r, v):
@@ -2191,6 +2209,11 @@ def proj_full(self, rexpr):
                                      'rr:proj_no_var',
                                      'The projected variable does not appear in the expression, thus the projection can be removed',
                                      rexpr)
+
+        # for gg in gather_environment(r):
+        #     if gg.name == '=' and gg.get_argument(0) == v and not contains_any_variable(gg.get_argument(1)):
+        #         import ipdb; ipdb.set_trace()
+
 
     return rexpr
 
@@ -2239,8 +2262,10 @@ def aggregator(self, rexpr):
         try:
             self.context = outer_context.copy()
 
-            rxp = self.apply(rxp_orig, top_disjunct_apply=True)  # this should attempt to simplify the expression
+            rxp = self.apply(rxp_orig, top_disjunct_apply=True)
+
             for _ in match(self, rxp, '(mul 0)'):
+                import ipdb; ipdb.set_trace()  # we might want to return dyna's $null here rather than the identity of the aggregator, though it might not matter for the examples that we are using this with
                 return track_constructed(Term('=', (resulting, identity[op])), 'rr:agg_sum1',
                                          r"The body of the aggregator is empty, hence the aggregator rewrites as the aggregator's identity: \rterm{(X=sum(Y, 0))}$\to$\rterm{(X=}\emph{identity}\rterm{)}",
                                          rexpr)
@@ -2250,6 +2275,8 @@ def aggregator(self, rexpr):
                                          rexpr)
             if (inc_val := self.context.get_value(incoming)) is not None and isMultiplicity(rxp):
                 # if the body is a multiplicity, then we should just return the resulting value
+                if self.context:
+                    import ipdb; ipdb.set_trace()
                 if rxp != 1:
                     import ipdb; ipdb.set_trace()
                     assert rxp == 1  # TODO handle other multiplicies, will require knowing the sum_many operation
@@ -2455,7 +2482,7 @@ def times(self, rexpr):
 def power(self, rexpr):
     for a,b,c in match(self, rexpr, '(pow ground ground ground)'):
         return multiplicity(1 if a**b == c else 0)
-    for a,b, vc in match(self, rexpr, '(pow ground gournd var)'):
+    for a,b, vc in match(self, rexpr, '(pow ground ground var)'):
         return Term('=', (vc, a**b))
     for a,vb,c in match(self, rexpr, '(pow ground var ground)'):
         return Term('=', (vb, math.log(c)/math.log(a)))
@@ -2604,7 +2631,7 @@ def example_neural():
                      make_conjunction(
                          Term('times', (Variable(0), -1, Variable('neg_X'))),
                          Term('exp', (Variable('neg_X'), Variable('exp_res'))),
-                         Term('add', (1, Variable('exp_res'), Variable('sum_res'))),
+                         Term('plus', (1, Variable('exp_res'), Variable('sum_res'))),
                          Term('times', (Variable('sum_res'), Variable(1), 1))  # this is a division
                      )))
     rewrites.define_user_rewrite(
@@ -2624,11 +2651,11 @@ def example_neural():
         Term('aggregator',
              ('sum', Variable(1), Variable('agg_in'),
               make_disjunction(
-                  make_project('in_res',
-                               make_conjunction(
-                                   Term('in', (Variable(0), Variable('in_res'))),
-                                   Term('sigmoid', (Variable('in_res'), Variable('agg_in')))
-                               )),
+                  # make_project('in_res',
+                  #              make_conjunction(
+                  #                  Term('in', (Variable(0), Variable('in_res'))),
+                  #                  Term('sigmoid', (Variable('in_res'), Variable('agg_in')))
+                  #              )),
                   make_project('X', 'Y',
                                make_conjunction(
                                    Term('=', (Variable(0), Term('input', (Variable('X'), Variable('Y'))))),
@@ -2657,8 +2684,8 @@ def example_neural():
                                make_conjunction(
                                    Term('=', (Variable(0), Term('input', (Variable('X'), Variable('Y'))))),
                                    Term('=', (Variable(1), Term('hidden', (Variable('Xsum'), Variable('Ysum'))))),
-                                   Term('add', (Variable('X'), Variable('DX'), Variable('Xsum'))),
-                                   Term('add', (Variable('Y'), Variable('DY'), Variable('Ysum'))),
+                                   Term('plus', (Variable('X'), Variable('DX'), Variable('Xsum'))),
+                                   Term('plus', (Variable('Y'), Variable('DY'), Variable('Ysum'))),
                                    Term('weight_conv', (Variable('DX'), Variable('DY'), Variable('agg_in')))
                                )),
                   make_project('XX', 'YY', 'Property',
