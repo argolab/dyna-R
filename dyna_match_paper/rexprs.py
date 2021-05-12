@@ -536,6 +536,9 @@ class Term:
             ret.append(' '*indent + ')')
         return ''.join(ret)
 
+    def style_raw_latex(self):
+        return latex_verbatim_block(self.stylized_rexpr())
+
     def stylized_rexpr(self):
         print_control = getattr(self, '_debug_printer_controller', None)
         if print_control == 'NO' and limit_printed_amount and not isVariable(self):
@@ -549,7 +552,9 @@ class Term:
 
         def nested(r):
             # print out a nested R-expr, if the expression is big, then it will indent, otherwise it will try and make it inline
-            if isinstance(r, Term):
+            if isinstance(r, str):
+                return '"' + r.replace('"', '\\"').replace('\n', '\\n') + '"'
+            elif isinstance(r, Term):
                 s = r.stylized_rexpr()
             else:
                 s = str(r)
@@ -558,11 +563,11 @@ class Term:
                 s = '\n' + indent(s, indent_nested_amount) + '\n'
             return s
 
-        def nested_value(r):
-            if isinstance(r, str):
-                # then this should wrap the expression in "" when it is printed
-                return '"' + r.replace('"', '\\"').replace('\n', '\\n') + '"'
-            return nested(r).strip()
+        # def nested_value(r):
+        #     if isinstance(r, str):
+        #         # then this should wrap the expression in "" when it is printed
+        #         return '"' + r.replace('"', '\\"').replace('\n', '\\n') + '"'
+        #     return nested(r).strip()
 
 
         def nested_p(ro):
@@ -601,10 +606,10 @@ class Term:
             else:
                 return color('vargreen', str(v).capitalize())
         elif self.name == '=' and self.arity == 2:
-            return f'({nested_value(self.get_argument(0))}={nested_value(self.get_argument(1))})'
+            return f'({nested(self.get_argument(0))}={nested(self.get_argument(1))})'
         elif self.name == 'aggregator' and self.arity == 4:
             return (
-                '('+color('aggblue', f'{nested(self.get_argument(1))}={nested(self.get_argument(0))}({nested(self.get_argument(2))},')+
+                '('+color('aggblue', f'{nested(self.get_argument(1))}={self.get_argument(0)}({nested(self.get_argument(2))},')+
                 f'{nested(self.get_argument(3))}))')
         # elif self.name == 'structure':
         #     return f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}(' + ', '.join(map(nested, self.arguments[2:])) + '))'
@@ -842,8 +847,10 @@ def gather_environment(rexpr):
     yield rexpr
     if rexpr.name == 'proj' and rexpr.arity == 2:
         yield from gather_environment(rexpr.get_argument(1))
-    elif rexpr.name == 'aggregator' and rexpr.arity == 4:
-        yield from gather_environment(rexpr.get_argument(3))
+    # in the case that the body of an aggregator goes to zero, it will just result in the identity element
+    # which does not mean there is some conjunction between the different values
+    # elif rexpr.name == 'aggregator' and rexpr.arity == 4:
+    #     yield from gather_environment(rexpr.get_argument(3))
     elif rexpr.name == '*':
         for a in rexpr.arguments:
             yield from gather_environment(a)
@@ -921,7 +928,6 @@ class RewriteContext(set):
                     if not isVariable(ot):
                         # then this is a term structure that this unifies with, if the name does not match, then we should throw
                         if ot.name != b.name or ot.arity != b.arity:
-                            import ipdb; ipdb.set_trace()
                             raise UnificationFailure()
                 self._unifies_index[a].add(b)
             else:
@@ -1026,8 +1032,20 @@ class RewriteContext(set):
             # then the other thing is empty, so we can just return ourselves without changes
             return self
 
-        import ipdb; ipdb.set_trace()
-        assert False
+        # this will make a blank copy of ourselves, and then identify what is not getting removed
+        # those items will then be added to the new copy
+        if self._parent is not None:
+            ns = self._parent.copy()
+        else:
+            ns = RewriteContext()
+        for a in self.iter_all():
+            if a not in o:
+                ns.add(a)
+
+        return ns
+
+        # import ipdb; ipdb.set_trace()
+        # assert False
 
     # don't use the inplace expressions for now, though these might make it more efficient in the future?
     def __iand__(self, o):
@@ -1037,12 +1055,13 @@ class RewriteContext(set):
             return self
         return NotImplemented
 
-    def __isub__(self, o):
-        assert isinstance(o, RewriteContext) and o._parent is self._parent
-        if self is o:
-            # this is going to have to return an empty value, which means that
-            return NotImplemented
-        return NotImplemented
+    # def __isub__(self, o):
+    #     assert isinstance(o, RewriteContext) and o._parent is self._parent
+    #     if bool(
+    #     if self is o:
+    #         # this is going to have to return an empty value, which means that
+    #         return NotImplemented
+    #     return NotImplemented
 
     def get_value(self, variable):
         if isVariable(variable):
@@ -1092,12 +1111,19 @@ class RewriteContext(set):
 
     def update_except(self, child, not_include_variable):
         assert child._parent is self
+        dummy_variable_name = object()  # if this is used, then it will keep around
         for c in child.iter_local():
             # this is giong to take everything from the child which does not mention the variable
             if not contains_variable(c, not_include_variable):
-                self.add(c)
-            elif c.name == '=' and c.arity == 2 and contains_variable(c.get_argument(1), not_include_variable):
-                import ipdb; ipdb.set_trace()
+                self.add_rexpr(c)
+            elif (c.name == '=' and c.arity == 2
+                  and not contains_variable(c.get_argument(0), not_include_variable)
+                  and contains_variable(c.get_argument(1), not_include_variable)):
+                z = replace_term(c, {not_include_variable: Variable(dummy_variable_name)})
+                # self.add(z)
+                #import ipdb; ipdb.set_trace()
+                # this could construct new temp variable variable names for the rhs, which would then allow this representation to stay around
+                # but those temp variable names would not be associated with the expression anymore?
 
 class RewriteCollection:
     """A class for tracking rewrite operators.  Operators are segmented such that
@@ -1510,10 +1536,10 @@ class RewriteEngine:
     def rewrites(self): return self.__rewrites
 
     @track_rexpr_constructed
-    def apply(self, rexpr, *, top_level_apply=False):
+    def apply(self, rexpr, *, top_disjunct_apply=False):
         old_context = self.context
         try:
-            if top_level_apply and self.kind == 'full':
+            if top_disjunct_apply and self.kind == 'full':
                 # then this will want to go through the expression and identify
                 # which expressions this will know all of the conjunctive
                 # constraints which are present.  Variable names should already
@@ -1548,19 +1574,19 @@ class RewriteEngine:
 
     def rewrite_fully(self, rexpr, *, add_context=True):
         #while True:
-        while True:
+        for _ in range(5):
             self.__kind = 'fast'  # first run fast rewrites
             for _ in range(2):
                 # this contains the context values inside of itself
                 old = rexpr
-                rexpr = self.apply(rexpr, top_level_apply=True)
+                rexpr = self.apply(rexpr, top_disjunct_apply=True)
                 if old == rexpr: break
                 log_event('simplify_fast', old, rexpr)
                 #import ipdb; ipdb.set_trace()
             #break
             self.__kind = 'full'  # run the full rewrites to make this
             old = rexpr
-            rexpr = self.apply(rexpr, top_level_apply=True)
+            rexpr = self.apply(rexpr, top_disjunct_apply=True)
             if old == rexpr: break
             log_event('simplify_full', old, rexpr)
 
@@ -1880,7 +1906,7 @@ def add_base(self, rexpr):
             # which means that this will need
             self.context = env_outer.copy()
             try:
-                r = self.apply(r)
+                r = self.apply(r, top_disjunct_apply=True)
                 if not (isMultiplicity(r) and r == 0):  # ignore branches hwich are eleminated with 0 mult
                     ret.append((r, self.context))
             except UnificationFailure:
@@ -2213,7 +2239,7 @@ def aggregator(self, rexpr):
         try:
             self.context = outer_context.copy()
 
-            rxp = self.apply(rxp_orig)  # this should attempt to simplify the expression
+            rxp = self.apply(rxp_orig, top_disjunct_apply=True)  # this should attempt to simplify the expression
             for _ in match(self, rxp, '(mul 0)'):
                 return track_constructed(Term('=', (resulting, identity[op])), 'rr:agg_sum1',
                                          r"The body of the aggregator is empty, hence the aggregator rewrites as the aggregator's identity: \rterm{(X=sum(Y, 0))}$\to$\rterm{(X=}\emph{identity}\rterm{)}",
@@ -2263,8 +2289,21 @@ def aggregator(self, rexpr):
                 nested_r = track_constructed(nested_r, 'rr:agg_sum3',
                                              r'Disjunctions in the aggregators body are split, new intermediate variables are introdcued for the results of these aggregators, and then the final value is set the the output varible.',
                                              rexpr)
-                assert not self.context
-                return nested_r
+                # ll = self.context
+                # assert not ll
+                return make_conjunction(self.context.local_to_rexpr(), nested_r)
+
+            for ags in match(self, rexpr, '(* any)'):
+                not_depends = []
+                depends = []
+                for a in ags:
+                    if contains_variable(a, incoming) or contains_variable(a, resulting):
+                        depends.append(a)
+                    else:
+                        not_depends.append(a)
+                if not_depends:
+                    # then this could split the expression using sum copies rewrite rr:agg_split_conjunct
+                    import ipdb; ipdb.set_trace()
 
             # no aggregator specific rewrites could be done, but there are likely rewrites which have been done on the inner part
             # so we are going to want to return that
