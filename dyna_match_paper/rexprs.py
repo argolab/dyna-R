@@ -953,13 +953,17 @@ class RewriteContext(set):
                 # means that the rhs still contains variables, so there is
                 # nothing to propagate here save the result of this assignment
                 # in the index
+                typ = self.get_variable_type(a)
+                if typ is not None and (b.name, b.arity) != typ:
+                    import ipdb; ipdb.set_trace()
+                    raise UnificationFailure()
+                self._variable_type_index[a] = (b.name, b.arity)
                 for ot in self._unifies_index[a]:
                     if not isVariable(ot):
                         # then this is a term structure that this unifies with, if the name does not match, then we should throw
                         if ot.name != b.name or ot.arity != b.arity:
                             raise UnificationFailure()
                 self._unifies_index[a].add(b)
-                self._variable_type_index[a] = (b.name, b.arity)
             else:
                 self._set_variable(a, b)
 
@@ -1110,6 +1114,13 @@ class RewriteContext(set):
             assert not contains_any_variable(variable)
             # this is not a variable, so just return the value back.  if there is nothing here,
             return variable
+
+    def get_variable_type(self, variable):
+        if self._parent is not None:
+            r = self._parent.get_variable_type(variable)
+            if r is not None:
+                return r
+        return self._variable_type_index.get(variable)
 
     def get_all_kinds(self, name, arity):
         r = self._kind_index.get((name, arity), set())
@@ -2068,7 +2079,7 @@ def make_unify(a,b):
 def unify_full(self, rexpr):
     for var, s in match(self, rexpr, '(= var rexpr)'):
         if not isVariable(s) and contains_any_variable(s):
-            import ipdb; ipdb.set_trace()
+            #import ipdb; ipdb.set_trace()
             # then try to check if there are other unify expresions on this structure
             # and replace this structure with those variable names.  This could pass through /some/ distance
             for other in self.context.get_associated_with_var(var):
@@ -2132,33 +2143,6 @@ def unify(self, rexpr):
         #import ipdb; ipdb.set_trace()
         return rexpr
     return multiplicity(1)
-
-# @register_rewrite('(structure ground any)')
-# def unify_structure(self, rexpr):
-#     # there are a variable number of arguments
-#     for name, res_variable, args in match(self, rexpr, '(structure ground ground any)'):
-#         # this needs to unpack the variables in the expression
-#         if res_variable.name != name or res_variable.arity != len(args):
-#             # this has failed to match the given expression
-#             return multiplicity(0)
-#         ret = tuple(Term('=', (var, val)) for val, var in zip(res_variable.arguments, args))
-#         if len(ret) > 1:
-#             return Term('*', ret)
-#         else:
-#             return ret[0]
-#     for name, res_variable, args in match(self, rexpr, '(structure ground var any)'):
-#         # if all of the variables are ground, then we can construct the resulting term
-#         all_ground = True
-#         for var in args:
-#             if not match(self, var, 'ground'):
-#                 all_ground = False
-#                 break
-#         if all_ground:
-#             # then we can construct the resulting term for this expression
-#             values = []
-#             for var in args:
-#                 for val in match(self, var, 'ground'):
-#                     values.append(val)
 
 
 def make_project(*args):
@@ -2314,6 +2298,11 @@ def proj_full(self, rexpr):
                                      'The projected variable does not appear in the expression, thus the projection can be removed',
                                      rexpr)
 
+        # using = list(self.context.get_associated_with_var(v))
+        # if len(using) == 2:
+        #     # an expression like `proj(X, (X=f(Z))*R)` can just become `R` as `X` is dependent on `Z`
+        #     import ipdb; ipdb.set_trace()
+
         # for gg in gather_environment(r):
         #     if gg.name == '=' and gg.get_argument(0) == v and not contains_any_variable(gg.get_argument(1)):
         #         import ipdb; ipdb.set_trace()
@@ -2344,16 +2333,6 @@ def make_aggregator(op, result, incoming, rexpr):
 @register_rewrite('(aggregator ground var var rexpr)')
 def aggregator(self, rexpr):
     # op, resulting, incoming, rexpr
-
-    # as described in the paper, the only way in which aggregators run is when there is a single element
-    # though in practice we would like to handle multiple values directly.  Given that we are trying to be as close as possible to the paper
-    # we are just going to always cause an aggregator R-expr to split before teh result is returned
-    # operator = {
-    #     'sum': sum,
-    #     'prod': lambda a,b: a*b,
-    #     'min': min,
-    #     'max': max,
-    # }
 
     identity = agg_identity
     split_op = agg_split_op
@@ -2549,12 +2528,15 @@ def aggregator_full(self, rexpr):
                     res = []
                     for g in groupped_rexprs:
                         a,b = lift_out(make_disjunction(*g))
+                        # if not isMultiplicity(b):
+                        #     import ipdb; ipdb.set_trace()
                         res.append(make_conjunction(b, Term('aggregator', (op, result, incoming, a))))
                     return make_disjunction(*res)
             # # then we can instead try to lift out expressions which do not have to be included in the aggregator
-            # a,b = lift_out(rxp_orig)
-            # if not isMultiplicity(b):
-            #     return make_disjunction(b, Term('aggregator', (op, result, incoming, a)))
+            a,b = lift_out(rxp_orig)
+            if not isMultiplicity(b):
+                import ipdb; ipdb.set_trace()
+                return make_disjunction(b, Term('aggregator', (op, result, incoming, a)))
 
         # all_branches = list(gather_branches(rxp_orig, through_nested=True))
         # # if len(all_branches) > 2:
