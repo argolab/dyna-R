@@ -554,6 +554,8 @@ class Term:
             # print out a nested R-expr, if the expression is big, then it will indent, otherwise it will try and make it inline
             if isinstance(r, str):
                 return '"' + r.replace('"', '\\"').replace('\n', '\\n') + '"'
+            elif isinstance(r, float):
+                return f'{r:.3f}'
             elif isinstance(r, Term):
                 s = r.stylized_rexpr()
             else:
@@ -611,6 +613,8 @@ class Term:
         # elif self.name == 'structure':
         #     return f'({nested(self.get_argument(1))}={nested(self.get_argument(0))}(' + ', '.join(map(nested, self.arguments[2:])) + '))'
         elif self.name in ('+', '*'):
+            if generating_latex_output:
+                return (self.name + r'[[[\allowbreak ]]]').join(map(nested_p,self.arguments))
             return self.name.join(map(nested_p,self.arguments))
         elif self.name == 'proj' and self.arity == 2:
             # then this is a projection expression, if the nested expression is
@@ -891,6 +895,9 @@ def gather_environment(rexpr):
 
 
 class UnificationFailure(Exception):
+    # def __init__(self):
+    #     super().__init__()
+    #     import ipdb; ipdb.set_trace()
     pass
 
 class RewriteContext(set):
@@ -946,8 +953,16 @@ class RewriteContext(set):
             av = self.get_value(a)
             if av is not None:
                 if av != b:
-                    # the value of b does not match
-                    raise UnificationFailure()
+                    if contains_any_variable(b):
+                        # then this contains free vraiables, which means that this should do unification on the new added expression
+                        assert isinstance(b, Term)
+                        if not isinstance(av, Term) or av.name != b.name or av.arity != b.arity:
+                            raise UnificationFailure()
+                        for avv, bv in zip(av.arguments, b.arguments):
+                            self.add_rexpr(Term('=', (avv,bv)))
+                    else:
+                        # the value of b does not match
+                        raise UnificationFailure()
             elif contains_any_variable(b):
                 # this means that it is an expression like (A=f(X,Y,Z)) which
                 # means that the rhs still contains variables, so there is
@@ -955,7 +970,6 @@ class RewriteContext(set):
                 # in the index
                 typ = self.get_variable_type(a)
                 if typ is not None and (b.name, b.arity) != typ:
-                    import ipdb; ipdb.set_trace()
                     raise UnificationFailure()
                 self._variable_type_index[a] = (b.name, b.arity)
                 for ot in self._unifies_index[a]:
@@ -1058,7 +1072,7 @@ class RewriteContext(set):
 
         for var, typ in set(self._variable_type_index.items()) & set(o._variable_type_index.items()):
             # this should invent some dummy expression for this to track the type of this variable
-            res.add_rexpr(Term('=', (var, Term(typ[0], (('internal_dummy', object()) for _ in range(typ[1]))))))
+            res.add_rexpr(Term('=', (var, Term(typ[0], (Variable(('internal_dummy', object())) for _ in range(typ[1]))))))
 
         return res
 
@@ -1107,6 +1121,7 @@ class RewriteContext(set):
     def get_value(self, variable):
         if isVariable(variable):
             r = self._assign_index.get(variable)
+            assert not contains_any_variable(r)
             if r is None and self._parent is not None:
                 return self._parent.get_value(variable)
             return r
@@ -1162,7 +1177,7 @@ class RewriteContext(set):
 
     def update_except(self, child, not_include_variable):
         assert child._parent is self
-        dummy_variable_name = ('internal_dummy', object())  # if this is used, then it will keep around
+        dummy_variable_name = Variable(('internal_dummy', object()))  # if this is used, then it will keep around
         for c in child.iter_local():
             # this is giong to take everything from the child which does not mention the variable
             if not contains_variable(c, not_include_variable):
@@ -1626,7 +1641,8 @@ class RewriteEngine:
             self.context.add_rexpr(rexpr)  # still add to the environment to track
             return rexpr
         except UnificationFailure:
-            return multiplicity(0)
+            #import ipdb; ipdb.set_trace()
+            return track_constructed(multiplicity(0), (), 'An inconsistency was detected using the environment.', rexpr)
         finally:
             # this should be the same item
             assert old_context is self.context
@@ -1640,8 +1656,9 @@ class RewriteEngine:
         log_event('simplify_'+self.kind, old, rexpr)
         return make_conjunction(self.context.local_to_rexpr(), rexpr)
 
-    def rewrite_fully(self, rexpr, *, add_context=True):
+    def rewrite_fully_v1(self, rexpr, *, add_context=True):
         #while True:
+
         for _ in range(5):
             self.__kind = 'fast'  # first run fast rewrites
             for _ in range(2):
@@ -1661,6 +1678,62 @@ class RewriteEngine:
         if not add_context:
             return rexpr
         return make_conjunction(self.context.local_to_rexpr(), rexpr)
+
+    def rewrite_fully(self, rexpr, *, add_context=True):
+        old_douser = self.__do_user_rewrites
+        call_depth_limit = 10
+        try:
+            for _ in range(15): #while True:
+                self.__kind = 'fast'
+                while True:
+                    old = rexpr
+                    rexpr = self.apply(rexpr, top_disjunct_apply=True)
+                    if old == rexpr: break
+                    log_event('simplify_fast', old, rexpr)
+                    self.__do_user_rewrites = False  # make this converge first with what it has
+                self.__kind = 'full'
+                old = rexpr
+                rexpr = self.apply(rexpr, top_disjunct_apply=True)
+                log_event('simplify_full', old, rexpr)
+                if old == rexpr:
+                    if old_douser:
+                        self.__do_user_rewrites = True
+                        self.__kind = 'fast'
+                        rexpr = self.apply(rexpr, top_disjunct_apply=True)
+                        if old == rexpr:
+                            break
+                        self.__do_user_rewrites = False
+                        log_event('simplify_fast', old, rexpr)
+                        call_depth_limit -= 1
+                        if call_depth_limit <= 0: break
+                    else:
+                        break
+            if not add_context:
+                return rexpr
+            return make_conjunction(self.context.local_to_rexpr(), rexpr)
+        finally:
+            self.__do_user_rewrites = old_douser
+
+        # for _ in range(5):
+        #     self.__kind = 'fast'  # first run fast rewrites
+        #     for _ in range(2):
+        #         # this contains the context values inside of itself
+        #         old = rexpr
+        #         rexpr = self.apply(rexpr, top_disjunct_apply=True)
+        #         if old == rexpr: break
+        #         log_event('simplify_fast', old, rexpr)
+        #         #import ipdb; ipdb.set_trace()
+        #     #break
+        #     self.__kind = 'full'  # run the full rewrites to make this
+        #     old = rexpr
+        #     rexpr = self.apply(rexpr, top_disjunct_apply=True)
+        #     if old == rexpr: break
+        #     log_event('simplify_full', old, rexpr)
+
+        # if not add_context:
+        #     return rexpr
+        # return make_conjunction(self.context.local_to_rexpr(), rexpr)
+
 
     def rewrite_fast(self, rexpr, *, add_context=True):
         self.__kind = 'fast'
@@ -1926,24 +1999,24 @@ register_rewrite = rewrites.register_function
 # Rewrites
 
 
-@register_rewrite('(* any) (proj args 2) (aggregator ground var var rexpr)', kind='full')
-def dead_branch_elemination(self, rexpr):
-    return rexpr
-    all_branches = list(gather_branches(rexpr, through_nested=True))
+# @register_rewrite('(* any) (proj args 2) (aggregator ground var var rexpr)', kind='full')
+# def dead_branch_elemination(self, rexpr):
+#     return rexpr
+#     all_branches = list(gather_branches(rexpr, through_nested=True))
 
-    if all_branches:
-        assert len(set(all_branches)) == len(all_branches) # this just makes the code easier to write on the next lines...
-        for branch in all_branches:
-            # we are going to check if there is some way to
-            for child in branch.arguments:
-                nr = replace_term(rexpr, {branch: child})
-                if is_empty(nr, 'fast'):
-                    import ipdb; ipdb.set_trace()
+#     if all_branches:
+#         assert len(set(all_branches)) == len(all_branches) # this just makes the code easier to write on the next lines...
+#         for branch in all_branches:
+#             # we are going to check if there is some way to
+#             for child in branch.arguments:
+#                 nr = replace_term(rexpr, {branch: child})
+#                 if is_empty(nr, 'fast'):
+#                     import ipdb; ipdb.set_trace()
 
-        # print(rexpr)
-        # if rexpr.name == 'aggregator':
-        #     import ipdb; ipdb.set_trace()
-    return rexpr
+#         # print(rexpr)
+#         # if rexpr.name == 'aggregator':
+#         #     import ipdb; ipdb.set_trace()
+#     return rexpr
 
 
 @register_rewrite('(* any)')
@@ -2113,19 +2186,22 @@ def unify(self, rexpr):
     for va, vb in match(self, rexpr, '(AND (NOT (= var rexpr)) (NOT (= rexpr var)) (= rexpr rexpr))'):
         # then either this is a structured term, and we need to expand this out, or there  is some variable.
         # in this case, we do not want to track it as an assignment
-        assert isinstance(va, Term) and isinstance(vb, Term)
+        if not (isinstance(va, Term) and isinstance(vb, Term)):
+            return track_constructed(multiplicity(0), 'rr:struct_unify1',
+                                     r'Unification has failed due to mismatched functor names and values',
+                                     rexpr)
 
         if va.name != vb.name or va.arity != vb.arity:
             # the arity on these expressions does not match
             return track_constructed(multiplicity(0), 'rr:struct_unify1',
-                                     r'Unification has failed due to mismatched function names: \rterm{'
+                                     r'Unification has failed due to mismatched functor names: \rterm{'
                                      f'{va.name}/{va.arity}' r'} $\neq$ \rterm{' f'{vb.name}/{vb.arity}' r'}.',
                                      rexpr)
 
         # this is something like (f(x,y,z)=f(a,b,c)) so we want to expanded and construct a new term
 
         ret = [
-            make_unify('=', (aa,bb))
+            make_unify(aa,bb)
             for aa,bb in zip(va.arguments, vb.arguments)
         ]
         rr = track_constructed(make_conjunction(*ret), 'rr:struct_unify2',
@@ -2137,7 +2213,7 @@ def unify(self, rexpr):
     # this is going to go into the environment, and then later pulled back out of the environment
     # so we don't want this to remain as it would end up duplicated
     self.context.add_rexpr(rexpr)
-    if not isVariable(rexpr.get_argument(1)) and contains_any_variable(rexpr.get_argument(1)):
+    if contains_any_variable(rexpr.get_argument(1)): # not isVariable(rexpr.get_argument(1)) and
         # this r-expr represents a unification with structure, which is not recreated by the Context by default
         # so we keep this r-expr around in the expression
         #import ipdb; ipdb.set_trace()
@@ -2355,7 +2431,7 @@ def aggregator(self, rexpr):
                 #ident_val = identity[op]
                 ident_val = null_val
                 return track_constructed(make_unify(resulting, ident_val), 'rr:agg_sum1',
-                                         r"The body of the aggregator is empty, hence the aggregator rewrites as the aggregator's identity: \rterm{(X=sum(Y, 0))}$\to$\rterm{(X=}\emph{identity}\rterm{)}",
+                                         r"The body of the aggregator is empty, hence the aggregator rewrites as the aggregator's identity: e.g. \rterm{(X=sum(Y, 0))}$\to$\rterm{(X=}\emph{identity}\rterm{)}",
                                          rexpr)
             for res in match(self, rxp, '(= (param 0) ground)', incoming):
                 return track_constructed(make_unify(resulting, res), 'rr:agg_sum2',
@@ -2535,7 +2611,6 @@ def aggregator_full(self, rexpr):
             # # then we can instead try to lift out expressions which do not have to be included in the aggregator
             a,b = lift_out(rxp_orig)
             if not isMultiplicity(b):
-                import ipdb; ipdb.set_trace()
                 return make_disjunction(b, Term('aggregator', (op, result, incoming, a)))
 
         # all_branches = list(gather_branches(rxp_orig, through_nested=True))
@@ -2632,7 +2707,10 @@ null_val = Term('$null', ())
 @register_rewrite('(is_not_null args 1)')
 def is_not_null(self, rexpr):
     for v in match(self, rexpr, '(is_not_null ground)'):
-        return multiplicity(1 if v != null_val else 0)
+        return track_constructed(multiplicity(1 if v != null_val else 0),
+                                 ('sec:trans'),
+                                 r'Is not null checks its ground argument',
+                                 rexpr)
     return rexpr
 
 def cast_null(val, to):
@@ -2795,6 +2873,9 @@ def exp_rr(self, rexpr):
     for a,bv in match(self, rexpr, '(exp ground var)'):
         return Term('=', (bv, math.exp(a)))
     for av,b in match(self, rexpr, '(exp var ground)'):
+        return Term('=', (av, 777))
+        if b == 0:
+            return Term('=', (av, float('-inf')))  # sigh
         return Term('=', (av, math.log(b)))
     return rexpr
 
@@ -2946,8 +3027,8 @@ def example_neural():
         ) for (x,y), val in pixel_brightness.items()]))
 
     target_values = {
-        'cat': 10,
-        'dog': 5
+        Term('output', ('cat',)): 10,
+        Term('output', ('dog',)): 5
     }
 
     rewrites.define_user_rewrite(
@@ -2967,11 +3048,16 @@ def example_neural():
 
     rexpr = Term('loss', (Variable('loss_out'),))
 
-    rexpr = Term('in', (Variable(0), Variable(1)))
+    #rexpr = Term('in', (Variable(0), Variable(1)))
+    #rexpr = Term('edge', (Variable('X'), Variable('Y'), Variable('Z')))
+    #rexpr = Term('out', (Term('input', (Variable('x'), Variable('y'),)), Variable('z')))
 
     log_event('original_rexpr', rexpr)
 
-    return simplify.rewrite_fully(rexpr)
+    rr = simplify.rewrite_fully(rexpr)
+    # simplify2 = RewriteEngine(user_rewrites=False)
+    # rr2 = simplify2.rewrite_fully(rr)
+    return rr
 
 
 
