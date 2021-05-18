@@ -445,6 +445,27 @@ if logging_rewrites:
 
 indent_nested_amount = ' '
 
+####################################################################################################
+
+def get_exposed_variables(rexpr):
+    if isVariable(rexpr):
+        return {rexpr}
+    elif not isinstance(rexpr, Term):
+        return set()
+    elif rexpr.name == 'proj' and rexpr.arity == 2:
+        c = get_exposed_variables(rexpr.get_argument(1))
+        return c - {rexpr.get_argument(0)}
+    elif rexpr.name == 'aggregator' and rexpr.arity == 4:
+        c = get_exposed_variables(rexpr.get_argument(3))
+        return c - {rexpr.get_argument(2)} | {rexpr.get_argument(1)}
+    elif rexpr.name == 'if' and rexpr.arity == 3:
+        return get_exposed_variables(rexpr.get_argument(1)) | get_exposed_variables(rexpr.get_argument(2))
+    else:
+        c = set()
+        for a in rexpr.arguments:
+            c |= get_exposed_variables(a)
+        return c
+
 
 
 ####################################################################################################
@@ -482,6 +503,10 @@ class Term:
                 if isinstance(a, Term): s += a._debug_term_size
                 else: s += len(str(a))
             self._debug_term_size = len(self.name) + s + len(self.arguments)*2 + 2  # a rough estimate of how big this term is when printing
+
+        # if self.name == '+':
+        #     arg_sets = [get_exposed_variables(a) for a in self.arguments]
+        #     assert all(arg_sets[0] == a for a in arg_sets)
 
     @property
     def arity(self):
@@ -878,7 +903,9 @@ def gather_environment(rexpr):
     #     return
     yield rexpr
     if rexpr.name == 'proj' and rexpr.arity == 2:
-        yield from gather_environment(rexpr.get_argument(1))
+        for r in  gather_environment(rexpr.get_argument(1)):
+            if not contains_variable(r, rexpr.get_argument(0)):
+                yield r
     # in the case that the body of an aggregator goes to zero, it will just result in the identity element
     # which does not mean there is some conjunction between the different values
     # elif rexpr.name == 'aggregator' and rexpr.arity == 4:
@@ -930,6 +957,8 @@ class RewriteContext(set):
 
     def _index_unify_rexpr(self, r):
         a,b = r.arguments
+        # if a in self._variable_type_index:
+        #     import ipdb; ipdb.set_trace()
         if isVariable(a) and isVariable(b):
             # then this is a unification between two variables with neither ground
             # if either of these are set, then the other one should also become set
@@ -1038,8 +1067,6 @@ class RewriteContext(set):
         self._kind_index[(r.name, r.arity)].add(r)
         super().add(r)  # this is just tracking the standard r-expr term
 
-
-
         if r.name == '=' and r.arity == 2:
             self._index_unify_rexpr(r)
 
@@ -1056,8 +1083,10 @@ class RewriteContext(set):
     # for dealing with recursive operations, this will introduce a new copy and
     # then use set intersection and subtraction to extract the relevant parts of
     # the expression
-    def copy(self):
-        return RewriteContext(self)
+    def copy(self, constructing_rexpr=None):
+        r = RewriteContext(self)
+        r._constructing_rexpr = constructing_rexpr
+        return r
 
     def __and__(self, o):
         assert isinstance(o, RewriteContext) and o._parent is self._parent
@@ -1072,6 +1101,7 @@ class RewriteContext(set):
 
         for var, typ in set(self._variable_type_index.items()) & set(o._variable_type_index.items()):
             # this should invent some dummy expression for this to track the type of this variable
+            #import ipdb; ipdb.set_trace()
             res.add_rexpr(Term('=', (var, Term(typ[0], (Variable(('internal_dummy', object())) for _ in range(typ[1]))))))
 
         return res
@@ -1158,6 +1188,12 @@ class RewriteContext(set):
             var_name = var.get_argument(0)
             if not contains_any_variable(val) and not (isinstance(var_name, tuple) and var_name[0] == 'internal_dummy'):  # otherwise this is internal
                 res.append(Term('=', (var, val)))  # this is just the assignments to ground variables, all of the other expressions should still be in the R-expr
+        for var, typ in self._variable_type_index.items():
+            if self._parent is None or self._parent.get_variable_type(var) != typ:
+                res.append(Term('enforce_type', (var, typ[0], typ[1])))
+
+        # if self._variable_type_index:
+        #     import ipdb; ipdb.set_trace()
         #assert '<object object' not in str(res)
         r = make_conjunction(*res)  # this is just a conjunction of the constraints which are present
         return r
@@ -1174,9 +1210,13 @@ class RewriteContext(set):
         # this neds to go through and update ourselves with everything from the child
         for c in child.iter_local():
             self.add(c)
+        for var, typ in child._variable_type_index.items():
+            assert self._variable_type_index[var] == typ
 
     def update_except(self, child, not_include_variable):
         assert child._parent is self
+        old = self._argument_index.get(not_include_variable)
+        if old is not None: old = old.copy()  # make a copy as we want to ensure it is not modified
         dummy_variable_name = Variable(('internal_dummy', object()))  # if this is used, then it will keep around
         for c in child.iter_local():
             # this is giong to take everything from the child which does not mention the variable
@@ -1190,6 +1230,21 @@ class RewriteContext(set):
                 #import ipdb; ipdb.set_trace()
                 # this could construct new temp variable variable names for the rhs, which would then allow this representation to stay around
                 # but those temp variable names would not be associated with the expression anymore?
+        for var, typ in child._variable_type_index.items():
+            if var != not_include_variable:
+                assert self._variable_type_index[var] == typ
+
+        assert self._argument_index.get(not_include_variable) == old
+
+
+    # def __del__(self):
+    #     a = False
+    #     for var, typ in self._variable_type_index.items():
+    #         if not self._parent.get_variable_type(var):
+    #             a = True
+    #     if a:
+    #         import ipdb; ipdb.set_trace()
+
 
 class RewriteCollection:
     """A class for tracking rewrite operators.  Operators are segmented such that
@@ -1218,12 +1273,16 @@ class RewriteCollection:
 
         self.memo_version_used = 2
 
+        self.rewrite_used_count = defaultdict(int)
+
     def _register_function(self, pattern, func, kind='fast'):
         # determine which of the patterns are required for a given expression
         if not hasattr(func, '_matching_pattern'):
             func._matching_pattern = []
         patterns = parse_sexp(pattern)
         func._matching_pattern += patterns
+        if func not in self.rewrite_used_count:
+            self.rewrite_used_count[func] = 0
         for pattern in patterns:
             any_arity = False
             complex_pattern = False
@@ -1258,6 +1317,8 @@ class RewriteCollection:
     def do_user_defined_rewrite(self, rewrite_engine, rexpr):
         # this should take the name arity of a given expression and then subsuite in new names for the variables
         n = (rexpr.name, rexpr.arity)
+        # if n == ('in', 2) and 'DB' in str(rexpr):
+        #     import ipdb; ipdb.set_trace()
         self.user_defined_rewrites_used[n] = True
         if n in self.user_defined_rewrites_memo:
             return self.do_access_memo(rewrite_engine, rexpr)
@@ -1503,6 +1564,11 @@ class RewriteCollection:
             self.set_memoized(name, arity, 'unk')
 
     def get_matching_rewrites(self, rexpr, context=None):
+        for x in self._get_matching_rewrites(rexpr, context):
+            self.rewrite_used_count[x] += 1
+            yield x
+
+    def _get_matching_rewrites(self, rexpr, context=None):
         found_something = False
         # these full matches require that there is more contextual information for this
         # which means that this is going to be looking.
@@ -1593,6 +1659,14 @@ class RewriteCollection:
 
     def __repr__(self): return str(self)
 
+    def get_user_defined_rewrites_in_rexpr(self, rexpr):
+        found = []
+        def f(x):
+            if (x.name, x.arity) in self.user_defined_rewrites:
+                found.append(x)
+        walk_rexpr(rexpr, f)
+        return found
+
 
 class RewriteEngine:
     """
@@ -1681,9 +1755,9 @@ class RewriteEngine:
 
     def rewrite_fully(self, rexpr, *, add_context=True):
         old_douser = self.__do_user_rewrites
-        call_depth_limit = 10
+        call_depth_limit = 12
         try:
-            for _ in range(15): #while True:
+            for loop_cnt in range(500): #while True:
                 self.__kind = 'fast'
                 while True:
                     old = rexpr
@@ -1695,18 +1769,22 @@ class RewriteEngine:
                 old = rexpr
                 rexpr = self.apply(rexpr, top_disjunct_apply=True)
                 log_event('simplify_full', old, rexpr)
+                if loop_cnt == 100:
+                    import ipdb; ipdb.set_trace()
                 if old == rexpr:
                     if old_douser:
                         self.__do_user_rewrites = True
                         self.__kind = 'fast'
                         rexpr = self.apply(rexpr, top_disjunct_apply=True)
                         if old == rexpr:
+                            print('>>>>>>>>>>>>>>>>>', loop_cnt)
                             break
                         self.__do_user_rewrites = False
                         log_event('simplify_fast', old, rexpr)
                         call_depth_limit -= 1
                         if call_depth_limit <= 0: break
                     else:
+                        print('>>>>>>>>>>>>>>>>>', loop_cnt)
                         break
             if not add_context:
                 return rexpr
@@ -2077,7 +2155,7 @@ def add_base(self, rexpr):
         for r in rexpr.arguments:
             # this will need to merge the common environments together
             # which means that this will need
-            self.context = env_outer.copy()
+            self.context = env_outer.copy(rexpr)
             try:
                 r = self.apply(r, top_disjunct_apply=True)
                 if not (isMultiplicity(r) and r == 0):  # ignore branches hwich are eleminated with 0 mult
@@ -2151,22 +2229,38 @@ def make_unify(a,b):
 @register_rewrite('(= args 2)', kind='full')
 def unify_full(self, rexpr):
     for var, s in match(self, rexpr, '(= var rexpr)'):
-        if not isVariable(s) and contains_any_variable(s):
+        if not isVariable(s) and contains_any_variable(s) and self.context._parent is not None:
             #import ipdb; ipdb.set_trace()
             # then try to check if there are other unify expresions on this structure
             # and replace this structure with those variable names.  This could pass through /some/ distance
-            for other in self.context.get_associated_with_var(var):
-                if other.name == '=' and other.arity == 2 and other is not rexpr:
+            ret = []
+            for other in self.context._parent.get_associated_with_var(var):
+                if other.name == '=' and other.arity == 2 and other is not rexpr and other.get_argument(0) == var:
                     # replace outselves with the other expression, so that this will find that this is
                     # this might want to only look into parent contexts so that we know that the other thing is at a higher level in the "stack"
-                    import ipdb; ipdb.set_trace()
-                    pass
+
+                    ufw = other.get_argument(1)
+                    if isinstance(ufw, Term) and not isVariable(ufw):
+                        if ufw.name == s.name and ufw.arity == s.arity:
+                            for a,b in zip(s.arguments, ufw.arguments):
+                                ret.append(make_unify(a,b))
+                        else:
+                            ret.append(multiplicity(0))
+            if ret:
+                return make_conjunction(*ret)
+                    # otherwise this is just some other variable, or a constant, or something, and we can not do the unification here
+
+                    # import ipdb; ipdb.set_trace()
+                    # pass
 
     return rexpr
 
 
 @register_rewrite('(= args 2)')
 def unify(self, rexpr):
+    # if 'C' in str(rexpr.get_argument(0)) and 'hidden' in str(rexpr):
+    #     print(rexpr)
+    #     import ipdb; ipdb.set_trace()
     for a,b in match(self, rexpr, '(= ground ground)'):
         return multiplicity(1 if a == b else 0)
     for va, vb in match(self, rexpr, '(= var var)'):
@@ -2217,6 +2311,9 @@ def unify(self, rexpr):
         # this r-expr represents a unification with structure, which is not recreated by the Context by default
         # so we keep this r-expr around in the expression
         #import ipdb; ipdb.set_trace()
+        z = rexpr.get_argument(1)
+        assert isVariable(z) or self.context.get_variable_type(rexpr.get_argument(0)) == (z.name, z.arity)
+
         return rexpr
     return multiplicity(1)
 
@@ -2231,10 +2328,16 @@ def make_project(*args):
 
 @register_rewrite('(proj var rexpr)')
 def proj(self, rexpr):
+    # if 'BB' in str(rexpr.get_argument(0)) and 'weight_output' in str(rexpr.get_argument(1)):
+    #     import ipdb; ipdb.set_trace()
+    # if 'AE' in str(rexpr.get_argument(0)):
+    #     import ipdb; ipdb.set_trace()
     for v, r in match(self, rexpr, '(proj var rexpr)'):
         outer_context = self.context
         try:
-            self.context = outer_context.copy()
+            if list(filter(lambda x: x.name != 'proj', outer_context.get_associated_with_var(v))):
+                import ipdb; ipdb.set_trace()
+            self.context = outer_context.copy(rexpr)
             #cinit = contains_variable(r, v)
 
             rr = self.apply(r)  # this is going to apply rewrites to the inner body
@@ -2267,6 +2370,7 @@ def proj(self, rexpr):
                 outer_context.update_except(self.context, v)
                 return rr2
 
+            outer_context.update_except(self.context, v)
             rr = make_conjunction(self.context.local_to_rexpr(), rr)
             #assert isMultiplicity(self.context.local_to_rexpr())
 
@@ -2300,7 +2404,9 @@ def proj(self, rexpr):
                     else:
                         not_depends.append(a)
                 if not_depends:
-                    outer_context.update(self.context)
+                    outer_context.update_except(self.context, v)
+                    # if 'AE' in str(not_depends):
+                    #     import ipdb; ipdb.set_trace()
                     return track_constructed(
                         make_conjunction(*not_depends, Term('proj', (v, make_conjunction(*depends)))),
                         'rr:push-in-proj',
@@ -2318,16 +2424,26 @@ def proj(self, rexpr):
             for _, _, nested_rexpr in match(self, rr, '(aggregator ground (param 0) var rexpr)', v):
                 # this is proj(X, (X=sum(Y, ...)))
                 if not contains_variable(nested_rexpr, v):
-                    outer_context.update(self.context)
+                    outer_context.update_except(self.context, v)
                     return track_constructed(multiplicity(1), 'rr:proj_nested_agg',
                                              r'This rewrites expressions like \rterm{proj(X, (X=sum(Y, R)))} $\to$ \rterm{1} as \rterm{(X=sum(Y, R)} will always \emph{eventually} rewrite as \rterm{(X=}\emph{some value}\rterm{)}',
                                              rexpr)
 
-            assert contains_variable(rr, v)
+            if not contains_variable(rr, v):
+                # this is "ok" in the case that the projection is going to eventually go to zero
+                # otherwise this is going to have to take an inf multiplicity
+                print('>>>>>>>>>>>>>>>>>>>>>>>>>>>> proj does not contain the variable that is being projected')
+
 
             return Term('proj', (v, rr))
         finally:
+            ccc2 = self.context
             self.context = outer_context
+            rrr = list(filter(lambda x: not (x.name == 'proj' and x.get_argument(0) == v), self.context.get_associated_with_var(v)))
+            ccc = self.context
+            if rrr:
+                import ipdb; ipdb.set_trace()
+                print('???')
 
 
 
@@ -2418,11 +2534,15 @@ def aggregator(self, rexpr):
         'exists': 'exists',
     }
 
+    if not isVariable(rexpr.get_argument(1)):
+        return multiplicity(0)  # TODO: hack for now
+
     for op, resulting, incoming, rxp_orig in match(self, rexpr, '(aggregator ground var var rexpr)'):
         # this will need to match against the body of the expression
         outer_context = self.context
         try:
-            self.context = outer_context.copy()
+            has_not_null = Term('is_not_null', (resulting,)) in self.context.get_associated_with_var(resulting)
+            self.context = outer_context.copy(rexpr)
 
             rxp = self.apply(rxp_orig, top_disjunct_apply=True)
 
@@ -2450,6 +2570,9 @@ def aggregator(self, rexpr):
                 return track_constructed(make_unify(resulting, inc_val), 'rr:agg_sum2',
                                          r"The aggregator knows its value as \rterm{(X=sum(Y, (Y=x)))}$\to$\rterm{(X=x)}, and the variable's value is looked up from the context",
                                          rexpr)
+
+            if has_not_null:
+                outer_context.update_except(self.context, incoming)
 
             rxp = make_conjunction(self.context.local_to_rexpr(), rxp)
 
@@ -2508,7 +2631,7 @@ def aggregator(self, rexpr):
                 # don't make something new as this would be the same expression (optimization)
                 return rexpr
 
-            rxp = make_conjunction(self.context.local_to_rexpr(), rxp)  # anything from the environment that is set, track that here
+            #rxp = make_conjunction(self.context.local_to_rexpr(), rxp)  # anything from the environment that is set, track that here
 
             # lc = self.context
             # assert not lc
@@ -2516,6 +2639,7 @@ def aggregator(self, rexpr):
         finally:
             self.context = outer_context
 
+    return rexpr
         # there are no rewrites which can be applied here
         #return rexpr
 
@@ -2611,7 +2735,7 @@ def aggregator_full(self, rexpr):
             # # then we can instead try to lift out expressions which do not have to be included in the aggregator
             a,b = lift_out(rxp_orig)
             if not isMultiplicity(b):
-                return make_disjunction(b, Term('aggregator', (op, result, incoming, a)))
+                return make_conjunction(b, Term('aggregator', (op, result, incoming, a)))
 
         # all_branches = list(gather_branches(rxp_orig, through_nested=True))
         # # if len(all_branches) > 2:
@@ -2641,7 +2765,7 @@ def if_rr(self, rexpr):
         env_prev = self.context
         condition_res = None
         try:
-            self.context = self.context.copy()
+            self.context = self.context.copy(rexpr)
             cond = self.apply(cond)
             cond = make_conjunction(self.context.local_to_rexpr(), cond)  # if there is an assignment, this should not get removed yet so unless it is already present in a higher context, then this needs to ignore this
 
@@ -2759,7 +2883,7 @@ def power(self, rexpr):
         return Term('=', (vc, a**b))
     for a,vb,c in match(self, rexpr, '(pow ground var ground)'):
         return Term('=', (vb, math.log(c)/math.log(a)))
-    for av,b,c in match(self, rexpr, '(pow var ground ground)'):
+    for va,b,c in match(self, rexpr, '(pow var ground ground)'):
         return Term('=', (va, c**(1/b)))
     return rexpr
 
@@ -2889,6 +3013,27 @@ def is_constraint(rexpr):
 
 ####################################################################################################
 
+@register_rewrite('(enforce_type args 3)')
+def enforce_type(self, rexpr):
+    return multiplicity(1)
+    for a,b,c in match(self, rexpr, '(enforce_type ground ground ground)'):
+        if isinstance(a, Term):
+            typ = a.name, a.arity
+            return multiplicity(1 if typ == (b, c) else 0)
+        return multiplicity(0)
+    for av,b,c in match(self, rexpr, '(enforce_type var ground ground)'):
+        # this will force this to be regenerated in the local context where this is created
+        typ = (b,c)
+        ctyp = self.context.get_variable_type(av)
+        if ctyp is None:
+            self.context._variable_type_index[av] = typ
+        else:
+            assert typ == ctyp  # this is really just mult 0
+        return multiplicity(1)
+
+
+
+####################################################################################################
 
 def example_fib_4_nomemo():
     simplify = RewriteEngine()
@@ -2926,8 +3071,8 @@ def example_neural():
               make_project(
                 'I', 'out_res', 'edge_res',
                   make_conjunction(
-                      Term('out', (Variable('I'), Variable('out_res'))),
                       Term('edge', (Variable('I'), Variable(0), Variable('edge_res'))),
+                      Term('out', (Variable('I'), Variable('out_res'))),
                       Term('times', (Variable('out_res'), Variable('edge_res'), Variable('agg_in')))
                   )
               )))
@@ -2974,6 +3119,9 @@ def example_neural():
                                make_conjunction(
                                    Term('=', (Variable(0), Term('hidden', (Variable('XX'), Variable('YY'))))),
                                    Term('=', (Variable(1), Term('output', (Variable('Property'),)))),
+                                   Term('=', (Variable('XX'), 0)),
+                                   Term('=', (Variable('YY'), 0)),
+
                                    # because this does not depend on the inputs at all, this is a "strange" neual network.  ends up being position invariant..
                                    Term('weight_output', (Variable('Property'), Variable('agg_in'))),
                                ))
@@ -3051,13 +3199,27 @@ def example_neural():
     #rexpr = Term('in', (Variable(0), Variable(1)))
     #rexpr = Term('edge', (Variable('X'), Variable('Y'), Variable('Z')))
     #rexpr = Term('out', (Term('input', (Variable('x'), Variable('y'),)), Variable('z')))
+    # rexpr = Term('out', (Term('hidden', (Variable('x'), Variable('y'))), Variable('z')))
+    # rexpr = Term('in',  (Term('hidden', (Variable('x'), Variable('y'))), Variable('z')))
+    # rexpr = Term('edge', (Variable('w'), Term('hidden', (Variable('x'), Variable('y'))), Variable('z')))
+    # rexpr = Term('out', (Term('input', (Variable('x'), Variable('y'))), Variable('z')))
+    # rexpr = make_conjunction(Term('out', (Variable('q'), Variable('z'))), Term('=', (Variable('q'), Term('input', (Variable('x'), Variable('y'))))))
+
+    #rexpr = Term('edge', (Variable('w'), Term('input', (Variable('x'), Variable('y'))), Variable('z')))
+
+    #rexpr = Term('edge', (Variable('X'), Term('hidden', (Variable('Q'), Variable('R'))), Variable('Z')))
+    # rexpr = Term('edge', (Variable('Z'), Term('output', (Variable('X'), )),  Variable('W')))
+    # rexpr = Term('edge', (Variable('Z'), Term('hidden', (Variable('X'), Variable('Y'))), Variable('W')))
 
     log_event('original_rexpr', rexpr)
 
     rr = simplify.rewrite_fully(rexpr)
     # simplify2 = RewriteEngine(user_rewrites=False)
     # rr2 = simplify2.rewrite_fully(rr)
-    return rr
+    print('----------')
+    print(rr)
+    import ipdb; ipdb.set_trace()
+    return rr, simplify.context
 
 
 
@@ -3147,14 +3309,14 @@ def main():
     #global color_terminal, limit_printed_amount
     color_terminal = True
     limit_printed_amount = False
-    res = example_neural()
+    res, ctx = example_neural()
     generate_latex_file()
 
 
     print('-'*50)
     print(res)
 
-    import ipdb; ipdb.set_trace()
+    # import ipdb; ipdb.set_trace()
 
     return
 
