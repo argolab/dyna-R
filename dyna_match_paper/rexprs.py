@@ -106,7 +106,7 @@ def track_constructed(rexpr, rewrite, text_description, source):
     return rexpr
 
 def log_event(event_kind, *args):
-    assert event_kind in ('simplify_fast', 'simplify_full', 'memo_indeterminate', 'memo_computed', 'memo_looked_up', 'applied_rewrite', 'original_rexpr', 'rewritten_result')
+    assert event_kind in ('simplify_fast', 'simplify_full', 'memo_indeterminate', 'memo_computed', 'memo_looked_up', 'applied_rewrite', 'original_rexpr', 'rewritten_result', 'memo_compute_start', 'memo_compute_end')
     if logging_rewrites and not logging_rewrites_temp_disabled:
         # we will want to somehow register that this is doing the different operations
         event_log.append((event_kind, args))
@@ -416,9 +416,23 @@ def generate_latex():
                 ret.append(latex_verbatim_block(returned_rexpr.stylized_rexpr()))
                 ret.append(r'\\')
 
+            elif kind == 'memo_compute_start':
+                (name, arity), arg_values = args
+                r = name + '(' + ', '.join(
+                    [str(a) if a is not None else r'[[[\textit{free}]]]' for a in arg_values]) + ')'
+                ret.append(r'\textbf{Computing the memo for ' + latex_verbatim_block(r) + r'}:')
+                ret.append(r'\begin{mdframed}[leftmargin=10,topline=false,bottomline=false,rightline=false]')
+                #ret.append(r'\begin{leftbar}')
+                #ret.append(r'\begin{longtable}{|l}')
+            elif kind == 'memo_compute_end':
+                #ret.append(r'\end{leftbar}')
+                ret.append(r'\end{mdframed}')
+                ret.append(r'\pagebreak')
+                #ret.append(r'\end{longtable}')
+
 
         if rewrites.user_defined_rewrites_memo:
-            ret.append(r'\textbf{Final Memo Tables} \\')
+            ret.append(r'\textbf{The Memoization tables after all the rewrites have been completed (\cref{sec:memoization})}: \\')
             ret.append(r'\begin{longtable}{ccc}')
             for (name, arity), rexpr in rewrites.user_defined_rewrites_memo.items():
                 r = name + '(' + ', '.join([color('vargreen', f'$arg_{i}') for i in range(arity)]) + ')'
@@ -957,6 +971,14 @@ class RewriteContext(set):
         # # self._multiplicity = 1  # a tracker on the multiplicity of the
         # #                         # expression so things get multiplied together
 
+    def _assert_variable_type(self, var, struct):
+        r = self.get_variable_type(var)
+        if r is not None:
+            if r != (struct.name, struct.arity):
+                raise UnificationFailure()
+        else:
+            self._variable_type_index[var] = (struct.name, struct.arity)
+
     def _index_unify_rexpr(self, r):
         a,b = r.arguments
         # if a in self._variable_type_index:
@@ -981,6 +1003,8 @@ class RewriteContext(set):
             if isVariable(b) and not isVariable(a):
                 # swap a and b so that a is always the variable
                 a,b = b,a
+            if isVariable(a) and isinstance(b, Term):
+                self._assert_variable_type(a, b)
             av = self.get_value(a)
             if av is not None:
                 if av != b:
@@ -1402,8 +1426,12 @@ class RewriteCollection:
                     new_contains_rexpr.append(r)
 
             original_rexpr = self.user_defined_rewrites[n]
-            with no_logging_rewrites():
+            try:
+                log_event('memo_compute_start', n, arg_values)
+                # with no_logging_rewrites():
                 memos_returned = memo_simplify.rewrite_fully(original_rexpr)
+            finally:
+                log_event('memo_compute_end')
 
             rxp = self.user_defined_rewrites_memo[n]  # reload the original expression as it might have changed
             # because we do not allow for self cycles in this paper, we know that the version which is contained in the memo table must
@@ -1421,17 +1449,25 @@ class RewriteCollection:
             # reoptimize the new expression in a new context to combine if expressions (if possible)
             optimize_memos_simplify = RewriteEngine(rewrites=self)
             with no_logging_rewrites():
+                # this is not logging the rewrites of the nested memo operation, so tihs is not seeing the different expressions
+                # if this were to represent that there is a siderule to show that this was inside of some nested context
+                # that might be interesting to see how this would represent those expressions
                 rxp2 = optimize_memos_simplify.rewrite_fully(rxp2)
 
             self.user_defined_rewrites_memo[n] = rxp2
 
+            log_event('memo_computed', n, arg_values, memos_returned)
+
             # fall through to return memos_returned
         elif match(rewrite_engine, res_rexpr, '(if rexpr rexpr rexpr)'):
             # then this is the indeterminate case for the memo where it can not determine if the value is contained
+            log_event('memo_indeterminate', n, arg_values)
             return rexpr
         else:
             # have to construct an expression which includes the assignment to the variables which might be stored in the context
             memos_returned = make_conjunction(local_simplify.context.local_to_rexpr(), res_rexpr)
+
+            log_event('memo_looked_up', n, arg_values, memos_returned)
 
         var_map = {}
         for i, new_name in enumerate(rexpr.arguments):
@@ -1440,8 +1476,6 @@ class RewriteCollection:
         memos_returned = uniquify_variables(memos_returned, var_map)
 
         return memos_returned
-
-            # then this should return the result and
 
     def do_access_memo_version1(self, rewrite_engine, rexpr):
         n = (rexpr.name, rexpr.arity)
@@ -1766,9 +1800,9 @@ class RewriteEngine:
             return rexpr
         return make_conjunction(self.context.local_to_rexpr(), rexpr)
 
-    def rewrite_fully(self, rexpr, *, add_context=True):
+    def rewrite_fully_v3(self, rexpr, *, add_context=True):
         old_douser = self.__do_user_rewrites
-        call_depth_limit = 7
+        call_depth_limit = 8  # 8 is the min number for the neural example to work
         try:
             for loop_cnt in range(500): #while True:
                 self.__kind = 'fast'
@@ -1793,7 +1827,7 @@ class RewriteEngine:
             self.__do_user_rewrites = old_douser
 
 
-    def rewrite_fully_v2(self, rexpr, *, add_context=True):
+    def rewrite_fully(self, rexpr, *, add_context=True):
         old_douser = self.__do_user_rewrites
         call_depth_limit = 12
         try:
@@ -1802,12 +1836,14 @@ class RewriteEngine:
                 while True:
                     old = rexpr
                     rexpr = self.apply(rexpr, top_disjunct_apply=True)
-                    if old == rexpr: break
+                    if old == rexpr or isMultiplicity(rexpr): break
                     log_event('simplify_fast', old, rexpr)
                     self.__do_user_rewrites = False  # make this converge first with what it has
+                if isMultiplicity(rexpr): break
                 self.__kind = 'full'
                 old = rexpr
                 rexpr = self.apply(rexpr, top_disjunct_apply=True)
+                if isMultiplicity(rexpr): break
                 log_event('simplify_full', old, rexpr)
                 if old == rexpr:
                     if old_douser:
@@ -2619,7 +2655,7 @@ def aggregator(self, rexpr):
                     # import ipdb; ipdb.set_trace()
                     # assert rxp == 1  # TODO handle other multiplicies, will require knowing the sum_many operation
                 return track_constructed(make_unify(resulting, inc_val), 'rr:agg_sum2',
-                                         r"The aggregator knows its value as \rterm{(X=sum(Y, (Y=x)))}$\to$\rterm{(X=x)}, and the variable's value is looked up from the context",
+                                         r"The aggregator knows its value as \rterm{(X=sum(Y, (Y=x)))}$\to$\rterm{(X=x)}, and the variable's value is looked up from the context \renv",
                                          rexpr)
 
             if has_not_null:
