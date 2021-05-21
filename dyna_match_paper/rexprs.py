@@ -2603,7 +2603,7 @@ agg_run_op = {
 
 def make_aggregator(op, result, incoming, rexpr):
     # this needs to eleminate null expressions from these
-    return make_conjunction(Term('is_not_null', (result,)), Term('aggregator', (op, result, incoming, rexpr)))
+    return make_conjunction(Term('notnull', (result,)), Term('aggregator', (op, result, incoming, rexpr)))
 
 
 @register_rewrite('(aggregator ground var var rexpr)')
@@ -2625,7 +2625,7 @@ def aggregator(self, rexpr):
         # this will need to match against the body of the expression
         outer_context = self.context
         try:
-            has_not_null = Term('is_not_null', (resulting,)) in self.context.get_associated_with_var(resulting)
+            has_not_null = Term('notnull', (resulting,)) in self.context.get_associated_with_var(resulting)
             self.context = outer_context.copy(rexpr)
 
             rxp = self.apply(rxp_orig, top_disjunct_apply=True)
@@ -2792,7 +2792,7 @@ def aggregator(self, rexpr):
 @register_rewrite('(aggregator ground var var rexpr)', kind='full')
 def aggregator_full(self, rexpr):
     for op, result, incoming, rxp_orig in match(self, rexpr, '(aggregator ground var var rexpr)'):
-        has_not_null = Term('is_not_null', (result,)) in self.context.get_associated_with_var(result)
+        has_not_null = Term('notnull', (result,)) in self.context.get_associated_with_var(result)
         if has_not_null:
             def lift_out(rx):
                 if rx.name != '*':
@@ -2808,9 +2808,9 @@ def aggregator_full(self, rexpr):
                 return make_conjunction(*depends), make_conjunction(*not_depends)
             branches = list(gather_branches(rxp_orig, through_nested=False))
             if branches:
-                # this finds expressions like `is_not_null(A)*(A=sum(B,
+                # this finds expressions like `notnull(A)*(A=sum(B,
                 # (X=123)*(B=3)+(X=22)*(B=3)))` and rewrites it as
-                # `is_not_null(A)*((A=sum(B, (X=123)*(B=3)))+(A=sum(B,
+                # `notnull(A)*((A=sum(B, (X=123)*(B=3)))+(A=sum(B,
                 # (X=22)*(B=3))))` as we know that these two expressions will be
                 # disjoint and when the result does not match it can be removed.  So there is no
                 # need to leave them under the aggregator.  This will then
@@ -2945,9 +2945,9 @@ def if_rr_full(self, rexpr):
 
 null_val = Term('$null', ())
 
-@register_rewrite('(is_not_null args 1)')
-def is_not_null(self, rexpr):
-    for v in match(self, rexpr, '(is_not_null ground)'):
+@register_rewrite('(notnull args 1)')
+def notnull(self, rexpr):
+    for v in match(self, rexpr, '(notnull ground)'):
         return track_constructed(multiplicity(1 if v != null_val else 0),
                                  ('sec:trans'),
                                  r'Is not null checks its ground argument',
@@ -3125,7 +3125,7 @@ def is_constraint(rexpr):
     # meaning that the arity of this expression is at _most_ 1
     return (rexpr.name, rexpr.arity) in (('=', 2), ('aggregator', 4), ('plus', 3),
                                          ('times', 3), ('pow', 3), ('min', 3), ('max', 3),
-                                         ('equals_agg_merge', 3), ('lessthan', 2), ('bool_and', 3), ('bool_or', 3), ('is_not_null', 1))
+                                         ('equals_agg_merge', 3), ('lessthan', 2), ('bool_and', 3), ('bool_or', 3), ('notnull', 1))
 
 
 ####################################################################################################
