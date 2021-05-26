@@ -13,7 +13,7 @@ import uuid
 import math
 
 from collections import defaultdict
-from functools import cache
+from functools import lru_cache
 from textwrap import indent
 
 from contextlib import contextmanager
@@ -22,7 +22,7 @@ from contextlib import contextmanager
 ####################################################################################################
 # utility functions
 
-@cache
+@lru_cache(None)
 def parse_sexp(s):
     # super basic s-expression parser
     sexpr = s.replace('(', ' ( ').replace(')', ' ) ').split()  # lex the expression
@@ -43,7 +43,7 @@ def parse_sexp(s):
 ####################################################################################################
 # for helping with tracking the rewrites (to generate "figures" in the paper)
 
-logging_rewrites = True
+logging_rewrites = False#True
 active_rewrite = []
 logging_rewrite_output = None
 color_output_latex = False
@@ -294,7 +294,7 @@ def generate_latex():
                 ret.append(r'\textbf{Original query represented as a \rexpr:} \\')
                 ret.append(latex_verbatim_block(rexpr.stylized_rexpr()))
                 ret.append(r'\\')
-                ret.append(r'{\centering \rule{4cm}{0.4pt}} \\')
+                ret.append(r'\noindent\hfill\rule{4cm}{0.4pt}}\hfill \\')
 
                 if rewrites.user_defined_rewrites_used:
                     ret.append(r'\textbf{Additional user defined rewrites used for rewritting:} \\ \nopagebreak')
@@ -382,7 +382,7 @@ def generate_latex():
 
                 ret.append(latex_verbatim_block(reset_print_everything(rexpr).stylized_rexpr()))
                 ret.append(r'\\')
-                ret.append(r'{\centering \rule{4cm}{0.4pt}} \\')
+                ret.append(r'\noindent\hfill\rule{4cm}{0.4pt}}\hfill \\')
                 rewrites_performed = defaultdict(list)
                 source_order = []
 
@@ -1214,9 +1214,9 @@ class RewriteContext(set):
             var_name = var.get_argument(0)
             if not contains_any_variable(val) and not (isinstance(var_name, tuple) and var_name[0] == 'internal_dummy'):  # otherwise this is internal
                 res.append(Term('=', (var, val)))  # this is just the assignments to ground variables, all of the other expressions should still be in the R-expr
-        for var, typ in self._variable_type_index.items():
-            if self._parent is None or self._parent.get_variable_type(var) != typ:
-                res.append(Term('enforce_type', (var, typ[0], typ[1])))
+        # for var, typ in self._variable_type_index.items():
+        #     if self._parent is None or self._parent.get_variable_type(var) != typ:
+        #         res.append(Term('enforce_type', (var, typ[0], typ[1])))
 
         # if self._variable_type_index:
         #     import ipdb; ipdb.set_trace()
@@ -2151,24 +2151,32 @@ register_rewrite = rewrites.register_function
 # Rewrites
 
 
-# @register_rewrite('(* any) (proj args 2) (aggregator ground var var rexpr)', kind='full')
-# def dead_branch_elemination(self, rexpr):
-#     return rexpr
-#     all_branches = list(gather_branches(rexpr, through_nested=True))
+@register_rewrite('(* any)', kind='full')  # (proj args 2) (aggregator ground var var rexpr)
+def dead_branch_elemination(self, rexpr):
+    #return rexpr
+    all_branches = list(gather_branches(rexpr, through_nested=True))
 
-#     if all_branches:
-#         assert len(set(all_branches)) == len(all_branches) # this just makes the code easier to write on the next lines...
-#         for branch in all_branches:
-#             # we are going to check if there is some way to
-#             for child in branch.arguments:
-#                 nr = replace_term(rexpr, {branch: child})
-#                 if is_empty(nr, 'fast'):
-#                     import ipdb; ipdb.set_trace()
+    if all_branches:
+        assert len(set(all_branches)) == len(all_branches) # this just makes the code easier to write on the next lines...
+        all_branches.sort(key=lambda x: x.arity)  # look at the branches with smaller number of elements first
+        for branch in all_branches:
+            # we are going to check if there is some way to
+            delete_children = []
+            for child in branch.arguments:
+                nr = replace_term(rexpr, {branch: child})
+                if is_empty(nr, 'fast'):
+                    delete_children.append(child)
+            if delete_children:
+                # then there are some branches that we can remove
+                new_children = [c for c in branch.arguments if c not in delete_children]
+                rr = replace_term(rexpr, {branch: make_disjunction(*new_children)})
+                return track_constructed(rr, (), 'Dead branches are removed', rexpr)
+                #import ipdb; ipdb.set_trace()
 
-#         # print(rexpr)
-#         # if rexpr.name == 'aggregator':
-#         #     import ipdb; ipdb.set_trace()
-#     return rexpr
+        # print(rexpr)
+        # if rexpr.name == 'aggregator':
+        #     import ipdb; ipdb.set_trace()
+    return rexpr
 
 
 @register_rewrite('(* any)')
@@ -2641,7 +2649,8 @@ def aggregator(self, rexpr):
                 return track_constructed(make_unify(resulting, res), 'rr:agg_sum2',
                                          r'The aggregator knows its value as \rterm{(X=sum(Y, (Y=x)))}$\to$\rterm{(X=x)}.',
                                          rexpr)
-            if ((inc_val := self.context.get_value(incoming)) is not None  # the variable is set
+            inc_val = self.context.get_value(incoming)
+            if (inc_val is not None  # the variable is set
                 and isMultiplicity(rxp)  # the body is trivial with begin only a multiplicty
                 and len(self.context) == 1):
                 # if the body is a multiplicity, then we should just return the resulting value
@@ -3335,7 +3344,37 @@ def example_neural():
     # rr2 = simplify2.rewrite_fully(rr)
     print('----------')
     print(rr)
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace()
+    return rr, simplify.context
+
+
+def example_simple_sat():
+    # a simple CNF formula to represent
+
+    simplify = RewriteEngine()
+
+    vs = [Variable(f'v{i}') for i in range(5)]
+    conjs  = [Term('bool', (v,)) for v in vs]
+
+    for a,b in zip(range(len(vs)-1), range(1, len(vs))):
+        # make these two variables not equal to each other
+        conjs.append(make_disjunction(
+            Term('=', (vs[a], False)),
+            Term('=', (vs[b], False))
+        ))
+        conjs.append(make_disjunction(
+            Term('=', (vs[a], True)),
+            Term('=', (vs[b], True))
+        ))
+
+    conjs.append(make_disjunction(
+        Term('=', (vs[0], True)),
+        Term('=', (vs[2], True))
+    ))
+
+    rexpr = make_conjunction(*conjs)
+    log_event('original_rexpr', rexpr)
+    rr = simplify.rewrite_fully(rexpr)
     return rr, simplify.context
 
 
@@ -3426,8 +3465,10 @@ def main():
     #global color_terminal, limit_printed_amount
     color_terminal = True
     limit_printed_amount = False
+    #res, ctx = example_simple_sat()
     res, ctx = example_neural()
-    generate_latex_file()
+    if logging_rewrites:
+        generate_latex_file()
 
 
     print('-'*50)
