@@ -14,7 +14,7 @@ import math
 
 from collections import defaultdict
 from functools import lru_cache
-from textwrap import indent
+from textwrap import indent, dedent
 
 from contextlib import contextmanager
 
@@ -43,7 +43,7 @@ def parse_sexp(s):
 ####################################################################################################
 # for helping with tracking the rewrites (to generate "figures" in the paper)
 
-logging_rewrites = False#True
+logging_rewrites = True
 active_rewrite = []
 logging_rewrite_output = None
 color_output_latex = False
@@ -284,6 +284,10 @@ def generate_latex():
     #simplify_count = 0
     simplify_fast_count = 0
     simplify_full_count = 0
+    center_line_break = r'''\begin{center}
+\vspace{-3mm}
+\rule{.33\textwidth}{.4pt}
+\end{center}'''
     try:
         ret = []
         source_order = []
@@ -294,7 +298,7 @@ def generate_latex():
                 ret.append(r'\textbf{Original query represented as a \rexpr:} \\')
                 ret.append(latex_verbatim_block(rexpr.stylized_rexpr()))
                 ret.append(r'\\')
-                ret.append(r'\noindent\hfill\rule{4cm}{0.4pt}}\hfill \\')
+                ret.append(center_line_break)
 
                 if rewrites.user_defined_rewrites_used:
                     ret.append(r'\textbf{Additional user defined rewrites used for rewritting:} \\ \nopagebreak')
@@ -359,16 +363,18 @@ def generate_latex():
 
                             if isinstance(which_rewrite, str):
                                 which_rewrite_str = r'\ref{' + which_rewrite + r'}'
-                            else:
+                            elif which_rewrite:
                                 # there might be multiple rewrites which applied here
                                 # so these were registered as some macro step. so report all of them combined
                                 which_rewrite_str = r'\ref{' + r'}, \ref{'.join(which_rewrite) + r'}'
+                            else:
+                                which_rewrite_str = ''
 
-                            ret.append(r' & ${\todocolor{red}\xrightarrow{{\todocolor{blue!50}\footnotesize' + which_rewrite_str + r'}}}\xspace$ & \begin{minipage}{.4\textwidth}')
+                            ret.append(r' & ${\color{red}\xrightarrow{{\color{blue!50}\footnotesize' + which_rewrite_str + r'}}}\xspace$ & \begin{minipage}{.4\textwidth}')
                             #ret.append(r'} & junk & \mbox{')
                             #dest_limit = focus_term_print(dest_rexpr, ns)
                             ret.append(latex_verbatim_block(dest_rexpr.stylized_rexpr()))
-                            ret.append(r' \end{minipage} \\')
+                            ret.append(r'\end{minipage} \\')
 
                     ret.append(r'\end{longtable}')
 
@@ -382,7 +388,7 @@ def generate_latex():
 
                 ret.append(latex_verbatim_block(reset_print_everything(rexpr).stylized_rexpr()))
                 ret.append(r'\\')
-                ret.append(r'\noindent\hfill\rule{4cm}{0.4pt}}\hfill \\')
+                ret.append(center_line_break)
                 rewrites_performed = defaultdict(list)
                 source_order = []
 
@@ -866,6 +872,14 @@ def filter_out_variable(rexpr, variable):
         return multiplicity(1)
     return rexpr
 
+def all_variables(rexpr):
+    if not isinstance(rexpr, Term):
+        return
+    if isVariable(rexpr):
+        yield rexpr
+    for a in rexpr.arguments:
+        yield from all_variables(a)
+
 class IdentityWrapper:
     def __init__(self, v): self.v = v
     def __eq__(self, o): return isinstance(IdentityWrapper, o) and self.v is o.v
@@ -1227,7 +1241,7 @@ class RewriteContext(set):
 
     def get_associated_with_var(self, var):
         for r in self._get_associated_with_var(var):
-            if 'internal_dummy' not in str(r):  # this is such a hacky way to do this.....
+            if not any('internal_dummy' in str(v) for v in all_variables(r)):  # this is such a hacky way to do this.....
                 yield r
 
     def _get_associated_with_var(self, var):
@@ -2170,7 +2184,7 @@ def dead_branch_elemination(self, rexpr):
                 # then there are some branches that we can remove
                 new_children = [c for c in branch.arguments if c not in delete_children]
                 rr = replace_term(rexpr, {branch: make_disjunction(*new_children)})
-                return track_constructed(rr, (), 'Dead branches are removed', rexpr)
+                return track_constructed(rr, (), r'Dead branches are removed using \cref{function:simplify_once_fully_partition}', rexpr)
                 #import ipdb; ipdb.set_trace()
 
         # print(rexpr)
