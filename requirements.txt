@@ -16,6 +16,9 @@ path
 pyjnius
 # alternate JVM wrapper, will pick one of these eventally
 jpype1
+#
+javabridge
+
 
 # for representing Neural networks
 # onnx
