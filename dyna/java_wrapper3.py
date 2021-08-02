@@ -12,7 +12,7 @@ def _configure_jvm():
     if build.close() is not None:
         print("compile has failed")
         print(res)
-        raise RuntimeError('compiling the ackend has failed')
+        raise RuntimeError('compiling the backend has failed')
 
     # this is the current classes which represent which
     # jnius_config.add_classpath(os.path.join(os.path.dirname(__file__), '../dyna_backend_java2/target/'))
@@ -60,7 +60,7 @@ class ThreadMonkeyPatchClass:
 
     def __our_run(self):
         try:
-            self.run()
+            return self.run()
         finally:
             # clean this thread from the jvm otherwise leaks
             jnius.detach()
@@ -69,10 +69,13 @@ class ThreadMonkeyPatchClass:
         self.__target(*self.__args, **self.__kwargs)
 
     def __getattr__(self, name):
+        # this is only called in the case that __getattribute__ does not find anything
+        # which means that the __names will be found first
         return getattr(self.__thread, name)
 
     def __setattr__(self, name, value):
-        if 'run' == name:
+        # `type(self).__name__ in name` allows for the private fields access with __name to be read
+        if type(self).__name__ in name or 'run' == name:
             object.__setattr__(self, name, value)
         else:
             setattr(self.__thread, name, value)
