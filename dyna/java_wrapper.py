@@ -26,11 +26,15 @@ _interface = _jpype.JClass('dyna_backend.DynaInterface')()
 def _construct_make_method(name):
     def f(*args):
         return _interface.make_rexpr(name, args)
-    f.__name__ = f'make_{name}'
+    f.__name__ = f'make_{name.replace("-", "_")}'
     return f
 
 make_variable = _interface.make_variable
 make_constant = _interface.make_constant
 
-for _name in {'unify', 'conjunct', 'disjunct', 'multiplicity', 'proj', 'aggregator', 'if'}:
-    globals()[f'make_{_name}'] = _construct_make_method(_name)
+for _name in {'unify', 'conjunct', 'disjunct', 'multiplicity', 'proj',
+              'aggregator', 'if', 'add', 'times', 'min', 'max', 'pow', 'exp',
+              'log', 'lessthan', 'lessthan-eq', 'greaterthan', 'greaterthan-eq',
+              'equals', 'not-equals', 'land', 'lor', 'not', 'sin', 'cos', 'tan',
+              'sinh', 'cosh', 'tanh', 'range', 'random'}:
+    globals()[f'make_{_name.replace("-", "_")}'] = _construct_make_method(_name)
