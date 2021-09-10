@@ -20,7 +20,7 @@ _jpype.startJVM()
 
 _jpype.JClass('java.lang.Object').__repr__ = lambda self: f'Backend<{str(self)}>'
 
-_interface = _jpype.JClass('dyna_backend.DynaInterface')()
+_interface = _jpype.JClass('dyna_backend.DynaInterfaceImpl')()
 
 
 def _construct_make_method(name):
