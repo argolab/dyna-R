@@ -369,3 +369,35 @@ Can represent this using an additional argument at the start of a sequence.
   from the context.  That should be handled by the parser, thoug that would
   require that
 - notes about how this can be implemented in the [[file:~/Dropbox/dyna/docs/ir/dyna-core-spec.org::*Dynabases][docs/ir/dyna-core]] file
+
+
+
+* distribution
++ looks like the backend / most of the implementation is going to end up in
+  java/clojure.  It would be nice if there was some way to integrate this into
+  the python eco system for machine learning applications.  As noted above, the
+  ~distutils.setup_keywords~ method and ~pkg_resources.iter_entry_points~ would
+  let the system hook into python's packaging system.  It would be nice of there
+  was some way in which we overloaded python's import and then allowed for .dyna
+  files to be directly imported.  The question would then be how would those
+  operations map into the procedural operations which are performed by python.
+  If it had all of the methods exposed to python, then that could allow that to
+  be easily used.  This would be like a totally different backend which is
+  transporting python values to the JVM and back.  If the system was efficient
+  enough then
+
+* AST definition
+** nodes -- which can come out of the parser directly
++ $compiler_expression(Term)
+  - for representing expressions which should get passed into the compiler via special operations
+  - ~:- dispose foo(quote1)~ => ~$compiler_expression(dispose(foo(quote1)))~
++ $define_term(Head_of_term, Dynabase_object_or_null, Aggregator_as_string, Body_of_term)
++ $with_key
++ $constant
++ $variable
++ $dynabase_create
++ $dynabase_call
++ $quote1
++ $anon_variable
+** nodes -- which include intermediate nodes
++ $define_term_normalized(Name_of_term_string, Arity_of_term_int, File_name_of_term, Body_of_term).
