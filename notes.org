@@ -388,10 +388,11 @@ Can represent this using an additional argument at the start of a sequence.
 
 * AST definition
 ** nodes -- which can come out of the parser directly
-+ $compiler_expression(Term)
-  - for representing expressions which should get passed into the compiler via special operations
++ for representing expressions which should get passed into the compiler via special operations
   - ~:- dispose foo(quote1)~ => ~$compiler_expression(dispose(foo(quote1)))~
++ $compiler_expression(Term)
 + $define_term(Head_of_term, Dynabase_object_or_null, Aggregator_as_string, Body_of_term)
+  + The head of the term will be the term structure with the names of variables.  In the case of
 + $with_key
 + $constant
 + $variable
@@ -400,4 +401,5 @@ Can represent this using an additional argument at the start of a sequence.
 + $quote1
 + $anon_variable
 ** nodes -- which include intermediate nodes
-+ $define_term_normalized(Name_of_term_string, Arity_of_term_int, File_name_of_term, Body_of_term).
++ $define_term_normalized(Name_of_term_string, Arity_of_term_int, File_name_of_term, aggregator Body_of_term).
++ $aggregator(resulting-variable, incoming-variable, aggregator-method, projected-out-variables,
