@@ -403,3 +403,21 @@ Can represent this using an additional argument at the start of a sequence.
 ** nodes -- which include intermediate nodes
 + $define_term_normalized(Name_of_term_string, Arity_of_term_int, File_name_of_term, aggregator Body_of_term).
 + $aggregator(resulting-variable, incoming-variable, aggregator-method, projected-out-variables,
+
+
+** meta programming
++ there needs to be some way of having an escaped variable.  The variable will
+  then want to match whatever is the surrounding context.  That escaped variable
+  would ideally have whatever the expression would represent.
++ the escaped variable could go into any place where a variable exists, but in
+  some places ,there are terms which are being created.  How would those terms
+  work in the representation
++ If there is something like <!{ }> then that would allow for it to make the
+  different expression.
+
++ would then like to have that there is some expression which corresponds with
+  what operations are going to be represented.
++ how would a quoted variable get used in the case of a string.  There
+
+* web demo?
+https://leaningtech.com/cheerpj/ -- could compile it into something that can run in the browser?

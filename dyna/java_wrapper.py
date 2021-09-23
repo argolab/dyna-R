@@ -14,9 +14,12 @@ def _configure_jvm():
     # this is the current classes which represent which
     _jpype.addClassPath(os.path.join(d, 'target/dyna_backend-0.1.0-SNAPSHOT-standalone.jar'))
 
-_configure_jvm()
+    memory = os.environ.get('DYNA_MEMORY', '2g')  # the amount of memory that the backend should allocate
 
-_jpype.startJVM()
+    # this should pass other property flags which configure the dyna runtime
+    _jpype.startJVM(None, '-Xmx'+memory)
+
+_configure_jvm()
 
 _jpype.JClass('java.lang.Object').__repr__ = lambda self: f'Backend<{str(self)}>'
 
