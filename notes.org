@@ -398,6 +398,8 @@ Can represent this using an additional argument at the start of a sequence.
 + $variable
 + $dynabase_create
 + $dynabase_call
+  - if there is a call which is to a dynabase with some qualified variable being used.
+  - implicit dynabase calls are problematic as everything is represented as a call, and because of the dynamic nature of a dynabase, we can
 + $quote1
 + $anon_variable
 ** nodes -- which include intermediate nodes
