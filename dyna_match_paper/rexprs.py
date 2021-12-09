@@ -384,7 +384,7 @@ def generate_latex():
                     assert kind == 'simplify_full'
                     simplify_full_count += 1
                 #simplify_count += 1
-                ret.append(r'\textbf{\rexpr after applying \hyperref[function:simplify_once_fast]{\textsc{\SimplifyOnceFast}} ' f'{simplify_fast_count} ' + ('time' if simplify_fast_count <= 1 else 'times') + ((r' and \hyperref[function:simplify_once_fully_partition]{\textsc{\SimplifyOnceFullyPartition}} ' f'{simplify_full_count} ' + ('time' if simplify_full_count <= 1 else 'times')) if simplify_full_count > 0 else '')+ r':} \\')
+                ret.append(r'\textbf{\rexpr after applying \hyperref[function:simplify_once_fast]{\MethodName{SimplifyOnceFast}} ' f'{simplify_fast_count} ' + ('time' if simplify_fast_count <= 1 else 'times') + ((r' and \hyperref[function:simplify_once_fully_partition]{\MethodName{SimplifyOnce}} ' f'{simplify_full_count} ' + ('time' if simplify_full_count <= 1 else 'times')) if simplify_full_count > 0 else '')+ r':} \\')
 
                 ret.append(latex_verbatim_block(reset_print_everything(rexpr).stylized_rexpr()))
                 ret.append(r'\\')
@@ -2184,7 +2184,7 @@ def dead_branch_elemination(self, rexpr):
                 # then there are some branches that we can remove
                 new_children = [c for c in branch.arguments if c not in delete_children]
                 rr = replace_term(rexpr, {branch: make_disjunction(*new_children)})
-                return track_constructed(rr, (), r'Dead branches are removed using \cref{function:simplify_once_fully_partition}', rexpr)
+                return track_constructed(rr, (), r'Dead branches are removed using \cref{sec:dpll}', rexpr)
                 #import ipdb; ipdb.set_trace()
 
         # print(rexpr)
