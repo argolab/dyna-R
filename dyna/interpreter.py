@@ -901,7 +901,9 @@ def simplify_partition(self :Partition, frame: Frame, *, map_function=None, redu
         for v in vv:
             if isinstance(v, Terminal):
                 multiplicity += v.multiplicity
-                assert None not in k
+                if None in k:
+                    print('WARNING, variable not groundable by rule, could be bug in user program')
+                #assert None not in k
             else:
                 r.append(v)
         if multiplicity != 0:

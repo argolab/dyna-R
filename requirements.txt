@@ -17,7 +17,7 @@ pyjnius
 # alternate JVM wrapper, will pick one of these eventally
 jpype1
 #
-javabridge
+#javabridge
 
 
 # for representing Neural networks
