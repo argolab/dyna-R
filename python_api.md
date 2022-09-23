@@ -9,7 +9,7 @@ without requiring too much knowledge about how the system is working internally.
 
 from dyna.api import DynaAPI
 
-dyna = dynaAPI()
+dyna = DynaAPI()
 
 # adding rules to the dyna program
 dyna.add_rules("""
